@@ -1,0 +1,34 @@
+# Build output
+build/
+*/build/
+.gradle/
+.gradle-home/
+.tmp/
+local.properties
+*.apk.idsig
+*.hprof
+captures/
+.cxx/
+.externalNativeBuild/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Bridge runtime
+bridge/.env
+bridge/node_modules/
+node_modules/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Keystore (never commit signing material)
+keystore/
+*.jks
+*.keystore
+
+# Local data
+*.log

@@ -1,0 +1,229 @@
+package dev.kagami.app
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ImageSearch
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import dev.kagami.app.ui.screens.music.MusicSearchScreen
+import dev.kagami.app.ui.screens.music.MusicSearchViewModel
+import dev.kagami.app.ui.screens.music.MusicSearchViewModelFactory
+import dev.kagami.app.ui.screens.music.TrackWikiScreen
+import dev.kagami.app.ui.screens.music.TrackWikiViewModel
+import dev.kagami.app.ui.screens.music.TrackWikiViewModelFactory
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import dev.kagami.app.core.AppContainer
+import dev.kagami.app.core.AppSettings
+import dev.kagami.app.ui.screens.framesearch.FrameSearchScreen
+import dev.kagami.app.ui.screens.framesearch.FrameSearchViewModel
+import dev.kagami.app.ui.screens.history.HistoryScreen
+import dev.kagami.app.ui.screens.settings.SettingsScreen
+import dev.kagami.app.ui.screens.settings.SettingsViewModel
+import dev.kagami.app.ui.screens.wiki.WikiScreen
+import dev.kagami.app.ui.screens.wiki.WikiViewModel
+import dev.kagami.app.ui.theme.KagamiTheme
+
+class MainActivity : ComponentActivity() {
+
+    private var sharedImage: Uri? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        sharedImage = intent.imageUriOrNull()
+
+        val container = (application as KagamiApp).container
+
+        setContent {
+            val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
+            KagamiTheme(themeMode = settings.themeMode) {
+                KagamiRoot(container = container, initialSharedImage = sharedImage)
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.imageUriOrNull()?.let { uri ->
+            sharedImage = uri
+            recreate()
+        }
+    }
+
+    private fun Intent.imageUriOrNull(): Uri? {
+        if (action != Intent.ACTION_SEND) return null
+        if (type?.startsWith("image/") != true) return null
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+    }
+}
+
+private object Routes {
+    const val FRAME = "frame"
+    const val WIKI = "wiki"
+    const val MUSIC = "music"
+    const val MUSIC_TRACK = "music/track"
+    const val SETTINGS = "settings"
+    const val HISTORY = "history"
+}
+
+private data class TabItem(val route: String, val label: String, val icon: ImageVector)
+
+@Composable
+private fun KagamiRoot(container: AppContainer, initialSharedImage: Uri?) {
+    val navController = rememberNavController()
+    val context = LocalContext.current
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = backStackEntry?.destination?.route
+
+    val frameViewModel: FrameSearchViewModel = viewModel(
+        factory = FrameSearchViewModel.Factory(
+            repository = container.frameRepository,
+            settings = container.settings,
+            appContext = context.applicationContext,
+        )
+    )
+    val wikiViewModel: WikiViewModel = viewModel(factory = WikiViewModel.Factory(container.frameRepository))
+    val musicViewModel: MusicSearchViewModel = viewModel(
+        factory = MusicSearchViewModelFactory(container.musicRepository)
+    )
+    val trackViewModel: TrackWikiViewModel = viewModel(
+        factory = TrackWikiViewModelFactory(container.musicRepository)
+    )
+    val settingsViewModel: SettingsViewModel = viewModel(
+        factory = SettingsViewModel.Factory(container.settings, container.bridge)
+    )
+
+    val frameState by frameViewModel.state.collectAsStateWithLifecycle()
+
+    // Keep the wiki screen pointed at the most recent successful lookup.
+    LaunchedEffect(frameState.page) {
+        frameState.page?.let(wikiViewModel::show)
+    }
+
+    // A frame shared from the gallery goes straight into the search screen.
+    var shared by remember { mutableStateOf(initialSharedImage) }
+    LaunchedEffect(shared) {
+        shared?.let { uri ->
+            frameViewModel.onImagePicked(uri)
+            shared = null
+            navController.navigateToTab(Routes.FRAME)
+        }
+    }
+
+    val tabs = listOf(
+        TabItem(Routes.FRAME, "Кадр", Icons.Default.ImageSearch),
+        TabItem(Routes.MUSIC, "Музыка", Icons.Default.MusicNote),
+        TabItem(Routes.SETTINGS, "Настройки", Icons.Default.Settings),
+    )
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            if (currentRoute in tabs.map { it.route }) {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    tabs.forEach { tab ->
+                        NavigationBarItem(
+                            selected = currentRoute == tab.route,
+                            onClick = { navController.navigateToTab(tab.route) },
+                            icon = { Icon(tab.icon, contentDescription = tab.label) },
+                            label = { Text(tab.label) },
+                        )
+                    }
+                }
+            }
+        },
+    ) { padding ->
+        NavHost(
+            navController = navController,
+            startDestination = Routes.FRAME,
+            modifier = Modifier.padding(padding),
+        ) {
+            composable(Routes.FRAME) {
+                FrameSearchScreen(
+                    viewModel = frameViewModel,
+                    onOpenWiki = { navController.navigate(Routes.WIKI) },
+                    onOpenSettings = { navController.navigateToTab(Routes.SETTINGS) },
+                    onOpenHistory = { navController.navigate(Routes.HISTORY) },
+                )
+            }
+            composable(Routes.WIKI) {
+                WikiScreen(
+                    viewModel = wikiViewModel,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(Routes.SETTINGS) {
+                SettingsScreen(viewModel = settingsViewModel)
+            }
+            composable(Routes.HISTORY) {
+                HistoryScreen(
+                    store = container.history,
+                    onOpenFrame = { entry ->
+                        entry.frame?.let(wikiViewModel::openStored)
+                        navController.navigate(Routes.WIKI)
+                    },
+                    onOpenTrack = { entry ->
+                        val trackId = container.musicRepository.openFromHistory(entry)
+                        if (trackId != null) navController.navigate(Routes.MUSIC_TRACK)
+                        else navController.navigateToTab(Routes.MUSIC)
+                    },
+                )
+            }
+            composable(Routes.MUSIC) {
+                MusicSearchScreen(
+                    viewModel = musicViewModel,
+                    onOpenTrack = { navController.navigate(Routes.MUSIC_TRACK) },
+                )
+            }
+            composable(Routes.MUSIC_TRACK) {
+                TrackWikiScreen(
+                    viewModel = trackViewModel,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+        }
+    }
+}
+
+private fun NavHostController.navigateToTab(route: String) {
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
+}

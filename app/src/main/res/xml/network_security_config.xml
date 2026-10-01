@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The bridge that proxies to the local MCP servers is reached over plain HTTP
+  on the home LAN (http://192.168.x.x:8787), so cleartext has to be allowed
+  for the bridge. Android matches hosts by name, not by CIDR range, so the
+  whole app opts in and every third-party call it makes (AniList, MusicBrainz,
+  iTunes, free music sources) is still pinned to HTTPS by those endpoints.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
