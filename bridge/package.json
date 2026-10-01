@@ -1,12 +1,12 @@
 {
-  "name": "kagami-bridge",
+  "name": "amps-bridge",
   "version": "1.0.0",
   "private": true,
   "description": "Zero-dependency HTTP bridge exposing local MCP servers (trace.moe + imgfind) to an Android phone on the same Wi-Fi.",
   "type": "module",
   "main": "src/server.mjs",
   "bin": {
-    "kagami-bridge": "src/server.mjs"
+    "amps-bridge": "src/server.mjs"
   },
   "engines": {
     "node": ">=18.17.0"

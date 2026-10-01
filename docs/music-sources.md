@@ -1,4 +1,4 @@
-# Music sources for the Kagami Android app — implementation-ready spec
+# Music sources for the AMPS Android app — implementation-ready spec
 
 **Verification date:** 2026-10-01 (all timestamps in responses are from that date)
 **Scope:** (a) metadata search by track title, (b) legally importable free-licensed audio.
@@ -167,7 +167,7 @@ From `https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting` (verified 200, 
 Kotlin value for this app:
 
 ```
-Kagami/1.0.0 ( https://github.com/<owner>/Kagami )
+AMPS/1.0.0 ( https://github.com/<owner>/AMPS )
 ```
 
 ### 2.3 "Anonymous" User-Agents get throttled HARD — critical for OkHttp
@@ -998,7 +998,7 @@ GET https://archive.org/download/mbid-{releaseMbid}/{name}
 ### 9.4 Cross-cutting Kotlin implementation notes
 
 * **Uniform UA interceptor** (required by MusicBrainz §2.3, good hygiene everywhere):
-  `Kagami/<version> ( <url-or-email> )`. **Never** ship the default
+  `AMPS/<version> ( <url-or-email> )`. **Never** ship the default
   `Apache-HttpClient` UA.
 * **Rate limiting:** a per-host token bucket — MusicBrainz **1.1 s** spacing (and a 503 →
   exponential backoff, honouring `X-RateLimit-Reset`), ccMixter **1.0 s**, iTunes ≥350 ms

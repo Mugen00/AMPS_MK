@@ -73,7 +73,7 @@ function printBanner(base) {
   const target = lan[0] ? `http://${lan[0].address}:${config.port}` : base;
   const lines = [
     '',
-    `  Kagami Bridge v${VERSION}`,
+    `  AMPS Bridge v${VERSION}`,
     `  listening on   http://${config.host}:${config.port}`,
     `  keys           trace.moe: ${view.keys.traceMoe ? 'configured' : 'NOT configured'} | SauceNAO: ${view.keys.sauceNao ? 'configured' : 'NOT configured'}`,
     ...(lan.length === 0 ? ['  LAN            no external IPv4 interface found (is Wi-Fi on?)'] : []),

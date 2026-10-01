@@ -1,13 +1,13 @@
-# Kagami release rules.
+# AMPS release rules.
 # kotlinx.serialization models are kept by their @Serializable companions.
 -keepattributes *Annotation*, InnerClasses, Signature, RuntimeVisibleAnnotations
 
 -keepclassmembers class kotlinx.serialization.json.** { *; }
--keep,includedescriptorclasses class dev.kagami.app.**$$serializer { *; }
--keepclassmembers class dev.kagami.app.** {
+-keep,includedescriptorclasses class dev.amps.app.**$$serializer { *; }
+-keepclassmembers class dev.amps.app.** {
     *** Companion;
 }
--keepclasseswithmembers class dev.kagami.app.** {
+-keepclasseswithmembers class dev.amps.app.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
 

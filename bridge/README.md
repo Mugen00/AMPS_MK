@@ -1,4 +1,4 @@
-# Kagami Bridge
+# AMPS Bridge
 
 Zero-dependency Node.js HTTP bridge that exposes your **local** MCP servers
 (trace.moe + imgfind) as a small JSON API, so an Android phone on the same
@@ -11,7 +11,7 @@ Wi-Fi can look up anime screenshots.
   tool as a path, and deleted in a `finally` block.
 
 ```
-Android app ──HTTP/JSON──▶ Kagami Bridge ──stdio JSON-RPC──▶ trace.moe MCP (node)
+Android app ──HTTP/JSON──▶ AMPS Bridge ──stdio JSON-RPC──▶ trace.moe MCP (node)
                                         └──────────────────▶ imgfind MCP   (node)
                                                                  └──▶ api.trace.moe / SauceNAO
 ```
@@ -29,14 +29,14 @@ already installed on this machine:
 ## Run
 
 ```powershell
-cd C:\Users\Miha2003\Documents\deepseek-harness\default-workspace\Kagami\bridge
+cd C:\Users\Miha2003\Documents\deepseek-harness\default-workspace\AMPS\bridge
 node src\server.mjs            # or: npm start
 ```
 
 Startup prints every LAN IPv4 address in copy-pasteable form:
 
 ```
-  Kagami Bridge v1.0.0
+  AMPS Bridge v1.0.0
   listening on   http://0.0.0.0:8787
   keys           trace.moe: configured | SauceNAO: NOT configured
   LAN            http://192.168.0.103:8787   (Wi-Fi)
@@ -160,7 +160,7 @@ Without `SAUCENAO_API_KEY` the response is still `200` with
 | Symptom | Fix |
 |---------|-----|
 | `spawn EPERM` / health shows `ready:false` | The bridge cannot create child processes — you are inside a restricted sandbox/container. Run it from a normal terminal. |
-| Phone says "connection refused" | Wrong address (use the LAN IP, not `localhost`), phone on a different Wi-Fi/guest network, or Windows Firewall blocking inbound TCP 8787 (`New-NetFirewallRule -DisplayName Kagami -Direction Inbound -LocalPort 8787 -Protocol TCP -Action Allow`). |
+| Phone says "connection refused" | Wrong address (use the LAN IP, not `localhost`), phone on a different Wi-Fi/guest network, or Windows Firewall blocking inbound TCP 8787 (`New-NetFirewallRule -DisplayName AMPS -Direction Inbound -LocalPort 8787 -Protocol TCP -Action Allow`). |
 | `matched:false` for every frame | trace.moe key missing/expired or the image is not an anime frame; check `GET /api/health` → `keys.traceMoe`. |
 | `sauce.configured:false` | `SAUCENAO_API_KEY` is not set for this process. |
 | `upstream_timeout` | Raise `REQUEST_TIMEOUT_MS`, or the upstream API is slow/overloaded. |

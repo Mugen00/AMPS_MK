@@ -6,12 +6,12 @@ plugins {
 }
 
 android {
-    namespace = "dev.kagami.app"
+    namespace = "dev.amps.app"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "dev.kagami.app"
+        applicationId = "dev.amps.app"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
@@ -21,14 +21,14 @@ android {
 
     signingConfigs {
         create("release") {
-            val storePath = rootProject.file("keystore/kagami.jks")
+            val storePath = rootProject.file("keystore/amps.jks")
             if (storePath.exists()) {
                 storeFile = storePath
                 storePassword = (rootProject.file("keystore/keystore.properties").takeIf { it.exists() }
                     ?.readLines()
                     ?.firstOrNull { it.startsWith("storePassword=") }
                     ?.substringAfter("=")) ?: ""
-                keyAlias = "kagami"
+                keyAlias = "amps"
                 keyPassword = storePassword
             }
         }
@@ -44,7 +44,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            val storePath = rootProject.file("keystore/kagami.jks")
+            val storePath = rootProject.file("keystore/amps.jks")
             signingConfig = if (storePath.exists()) {
                 signingConfigs.getByName("release")
             } else {

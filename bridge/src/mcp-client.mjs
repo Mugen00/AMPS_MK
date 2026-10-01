@@ -117,7 +117,7 @@ export class McpStdioClient {
     await this.#request('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: 'kagami-bridge', version: '1.0.0' },
+      clientInfo: { name: 'amps-bridge', version: '1.0.0' },
     }, this.handshakeTimeoutMs);
     this.#write({ jsonrpc: '2.0', method: 'notifications/initialized' });
     this.#ready = true;

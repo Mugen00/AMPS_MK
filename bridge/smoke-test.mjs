@@ -57,7 +57,7 @@ async function call(client, toolName, args = {}) {
 }
 
 async function main() {
-  process.stdout.write(`kagami-bridge smoke test (node ${process.version})\n`);
+  process.stdout.write(`amps-bridge smoke test (node ${process.version})\n`);
   process.stdout.write(`trace.moe key: ${config.traceMoeApiKey ? 'configured' : 'not configured'}\n`);
   process.stdout.write(`SauceNAO  key: ${config.sauceNaoApiKey ? 'configured' : 'not configured'}\n`);
 

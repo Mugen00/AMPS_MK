@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Kagami — вики-страница по кадру</title>
+<style>
+  :root {
+    --ink:#0B0B14; --surface:#15151F; --violet:#7C5CFF; --cyan:#3ED6D0;
+    --amber:#FFB454; --rose:#FF5470; --muted:#B9B4CC; --text:#ECEBF5;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--ink); color:var(--text);
+         font:16px/1.55 "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 18px 60px; }
+  .hero { position:relative; height:380px; border-radius:0 0 26px 26px; overflow:hidden; }
+  .hero img { width:100%; height:100%; object-fit:cover; }
+  .hero::after { content:""; position:absolute; inset:0;
+    background:linear-gradient(180deg, rgba(0,0,0,.25), rgba(0,0,0,.1) 40%, rgba(11,11,20,.95)); }
+  .hero .text { position:absolute; left:24px; right:24px; bottom:22px; z-index:2; }
+  .kicker { color:var(--cyan); font-size:13px; letter-spacing:.16em; font-weight:700; }
+  h1 { font-size:42px; margin:6px 0 2px; line-height:1.1; }
+  .native { color:var(--muted); font-size:17px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+  .chip { background:rgba(255,255,255,.10); color:#fff; border-radius:999px;
+          padding:5px 12px; font-size:13px; font-weight:600; }
+  .chip.cyan { background:rgba(62,214,208,.16); color:var(--cyan); }
+  .chip.amber { background:rgba(255,180,84,.16); color:var(--amber); }
+  .dial { position:absolute; right:24px; top:20px; z-index:2; width:118px; height:118px;
+          border-radius:50%; background:rgba(11,11,20,.72); display:grid; place-items:center;
+          border:4px solid var(--cyan); text-align:center; }
+  .dial b { display:block; font-size:26px; color:var(--cyan); }
+  .dial span { font-size:12px; color:var(--muted); }
+  .card { background:var(--surface); border-radius:22px; padding:20px; margin-top:18px; }
+  .card h2 { margin:0 0 12px; font-size:22px; display:flex; align-items:center; gap:10px; }
+  .card h2::before { content:""; width:8px; height:22px; border-radius:4px; background:var(--violet); }
+  .row { display:flex; justify-content:space-between; gap:16px; padding:7px 0;
+         border-bottom:1px solid rgba(255,255,255,.05); font-size:15px; }
+  .row span:first-child { color:var(--muted); }
+  .row span:last-child { text-align:right; }
+  .still { width:100%; border-radius:18px; margin-top:18px; display:block; }
+  .gallery { display:flex; gap:10px; overflow-x:auto; padding-bottom:6px; }
+  .gallery figure { margin:0; flex:0 0 200px; }
+  .gallery img { width:200px; height:150px; object-fit:cover; border-radius:14px; }
+  .gallery figcaption { font-size:12px; color:var(--muted); margin-top:6px; }
+  .cast { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:14px; }
+  .cast img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:50%; }
+  .cast .name { font-size:14px; font-weight:600; margin-top:8px; }
+  .cast .role { font-size:12px; color:var(--cyan); }
+  a { color:var(--cyan); }
+  .foot { color:var(--muted); font-size:13px; margin-top:26px; line-height:1.7; }
+  code { background:rgba(255,255,255,.07); padding:2px 6px; border-radius:6px; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <img src="img/banner.jpg" alt="" />
+    <div class="dial"><div><b>99.6%</b><span>сходство</span></div></div>
+    <div class="text">
+      <div class="kicker">КАДР НАЙДЕН ЗА 1,2 С</div>
+      <h1>Heroines Run the Show</h1>
+      <div class="native">ヒロインたるもの！〜嫌われヒロインと内緒のお仕事〜</div>
+      <div class="chips">
+        <span class="chip">7 апреля 2022</span><span class="chip">TV</span>
+        <span class="chip">12 серий</span><span class="chip">24 мин</span>
+        <span class="chip cyan">Finished</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Кадр найден</h2>
+    <div class="chips">
+      <span class="chip amber">Серия 8 / 12</span>
+      <span class="chip amber">Таймкод 11:36</span>
+      <span class="chip cyan">Сходство 99.6%</span>
+    </div>
+    <div class="row"><span>Движок</span><span>trace.moe (через локальный MCP-мост)</span></div>
+    <div class="row"><span>Сцена</span><span><a href="https://api.trace.moe/video/xOtmcng8seldGtVDqy28lN">api.trace.moe/video/xOtm…</a></span></div>
+    <div class="row"><span>SauceNAO</span><span>92.35% — индекс AniDB</span></div>
+    <div class="row"><span>SHA-256 кадра</span><span><code>fba21fb19b5f12dd…</code></span></div>
+  </div>
+
+  <img class="still" src="img/frame-preview.jpg" alt="Найденный кадр" />
+
+  <div class="card">
+    <h2>О произведении</h2>
+    <p>Hiyori left her hometown to pursue her passion, track and field, by enrolling in Tokyo's
+      Sakuragaoka High School. Looking for a part-time job in Tokyo, she ended up working as an
+      apprentice manager for her classmates (and LIP×LIP members) Yuujirou Someya and Aizou Shibasaki.</p>
+    <div class="chips">
+      <span class="chip">Drama</span><span class="chip">Music</span><span class="chip">Slice of Life</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Факты</h2>
+    <div class="row"><span>Синоним</span><span>To Become a Real Heroine! The Unpopular Girl and the Secret Task</span></div>
+    <div class="row"><span>Студия</span><span>Lay-duce</span></div>
+    <div class="row"><span>Оценка</span><span>71 / 100</span></div>
+    <div class="row"><span>Популярность</span><span>24 893</span></div>
+    <div class="row"><span>В избранном</span><span>341</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Похожие изображения</h2>
+    <div class="gallery">
+      <figure><img src="img/frame-preview.jpg" /><figcaption>Найденный кадр · trace.moe</figcaption></figure>
+      <figure><img src="img/cover.jpg" /><figcaption>Обложка · AniList</figcaption></figure>
+      <figure><img src="img/char1.jpg" /><figcaption>Hiyori Suzumi · AniList</figcaption></figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Персонажи серии</h2>
+    <div class="cast">
+      <div><img src="img/char1.jpg" /><div class="name">Hiyori Suzumi</div><div class="role">главный</div></div>
+      <div><img src="img/char2.jpg" /><div class="name">Yuujirou Someya</div><div class="role">главный</div></div>
+      <div><img src="img/char3.jpg" /><div class="name">Aizou Shibasaki</div><div class="role">главный</div></div>
+      <div><img src="img/char4.jpg" /><div class="name">Juri Hattori</div><div class="role">второстепенный</div></div>
+      <div><img src="img/char5.jpg" /><div class="name">Chizuru Nakamura</div><div class="role">второстепенный</div></div>
+      <div><img src="img/char6.jpg" /><div class="name">Saku Akechi</div><div class="role">второстепенный</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Источники</h2>
+    <div class="row"><span>Кадр</span><span>trace.moe · AniList id 138459 · MAL 49692</span></div>
+    <div class="row"><span>Изображение</span><span>Wikimedia Commons, CC BY 3.0, HoneyWorks OFFICIAL</span></div>
+  </div>
+
+  <p class="foot">
+    Прогон выполнен тем же кодом, что и приложение: кадр отправлен в локальный мост
+    (<code>POST /api/frame/identify</code>), мост вызвал MCP-серверы <code>trace-moe-mcp</code> и
+    <code>imgfind-mcp</code>, ответ разобран на телефоне и дополнен данными AniList GraphQL.
+    Видеокадр не содержит тегов персонажа, поэтому приложение показывает список кандидатов
+    и даёт выбрать вручную; с ключом <code>SAUCENAO_API_KEY</code> в <code>bridge/.env</code>
+    определение персонажа становится автоматическим.
+  </p>
+</div>
+</body>
+</html>

@@ -132,7 +132,7 @@ function inspectBody(ctx) {
 /** Write the upload to a unique temp file; always delete it afterwards. */
 async function withTempImage(ctx, fn) {
   const { buffer, ext } = inspectBody(ctx);
-  const filePath = path.join(os.tmpdir(), `kagami-${crypto.randomUUID()}${ext}`);
+  const filePath = path.join(os.tmpdir(), `amps-${crypto.randomUUID()}${ext}`);
   await writeFile(filePath, buffer);
   try {
     return await fn(filePath);
@@ -189,7 +189,7 @@ async function sauceNaoDetail(deps, filePath) {
   const res = await fetch(url, {
     method: 'POST',
     body: form,
-    headers: { 'User-Agent': 'kagami-bridge/1.0' },
+    headers: { 'User-Agent': 'amps-bridge/1.0' },
     signal: AbortSignal.timeout(deps.requestTimeoutMs),
   });
   if (!res.ok) throw new Error(`SauceNAO HTTP ${res.status}`);
