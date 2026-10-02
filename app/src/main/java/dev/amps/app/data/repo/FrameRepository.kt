@@ -16,6 +16,8 @@ import dev.amps.app.data.model.SourceRef
 import dev.amps.app.data.model.Titles
 import dev.amps.app.data.remote.AniListClient
 import dev.amps.app.data.remote.BridgeClient
+import dev.amps.app.data.remote.BridgeUnreachableException
+import dev.amps.app.data.remote.DirectTraceClient
 import dev.amps.app.util.htmlToPlainText
 import dev.amps.app.util.readableMessage
 import dev.amps.app.util.sha256
@@ -32,6 +34,7 @@ import java.util.UUID
  */
 class FrameRepository(
     private val bridge: BridgeClient,
+    private val direct: DirectTraceClient,
     private val aniList: AniListClient,
     private val history: HistoryStore,
 ) {
@@ -49,6 +52,15 @@ class FrameRepository(
     ): Outcome {
         val digest = bytes.sha256()
         val response = runCatching { bridge.identify(bytes, fileName, mime) }
+            // 1.0.1: no bridge on the network is not a failure. trace.moe answers
+            // over plain HTTPS on its own, we only lose the SauceNAO tags.
+            .recoverCatching { error ->
+                if (error is BridgeUnreachableException) {
+                    direct.identify(bytes, fileName, mime)
+                } else {
+                    throw error
+                }
+            }
             .getOrElse { error ->
                 return Outcome.Miss(
                     EmptyResult(

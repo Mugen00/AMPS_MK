@@ -4,8 +4,10 @@ import android.content.Context
 import dev.amps.app.data.local.HistoryStore
 import dev.amps.app.data.remote.AniListClient
 import dev.amps.app.data.remote.BridgeClient
+import dev.amps.app.data.remote.BridgeDiscovery
 import dev.amps.app.data.remote.CcMixterClient
 import dev.amps.app.data.remote.CoverArtClient
+import dev.amps.app.data.remote.DirectTraceClient
 import dev.amps.app.data.remote.InternetArchiveClient
 import dev.amps.app.data.remote.ItunesClient
 import dev.amps.app.data.remote.MusicBrainzClient
@@ -39,6 +41,10 @@ class AppContainer(private val context: Context) {
     }
 
     val bridge: BridgeClient by lazy { BridgeClient(httpClient, settings) }
+    val bridgeDiscovery: BridgeDiscovery by lazy {
+        BridgeDiscovery(httpClient, context.applicationContext)
+    }
+    val directTrace: DirectTraceClient by lazy { DirectTraceClient(httpClient) }
     val aniList: AniListClient by lazy { AniListClient(httpClient) }
 
     val itunes: ItunesClient by lazy { ItunesClient(plainHttpClient) }
@@ -49,7 +55,9 @@ class AppContainer(private val context: Context) {
 
     val history: HistoryStore by lazy { HistoryStore(context) }
 
-    val frameRepository: FrameRepository by lazy { FrameRepository(bridge, aniList, history) }
+    val frameRepository: FrameRepository by lazy {
+        FrameRepository(bridge, directTrace, aniList, history)
+    }
     val musicRepository: MusicRepository by lazy {
         MusicRepository(
             itunes = itunes,

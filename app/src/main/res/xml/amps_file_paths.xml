@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The update flow hands the downloaded release APK to the system package
+  installer through a content:// URI instead of a file:// one: a file:// URI
+  would throw FileUriExposedException since API 24.
+
+  <external-files-path> is resolved by FileProvider against
+  Context.getExternalFilesDir(null) — that is .../Android/data/dev.amps.app/files
+  — and the path below narrows it to the single `updates` sub-folder the
+  installer uses. Nothing else on external storage is shared: no grant can be
+  minted for another folder, because none is configured here.
+-->
+<paths>
+    <external-files-path name="updates" path="updates/" />
+</paths>

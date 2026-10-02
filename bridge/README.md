@@ -9,11 +9,13 @@ Wi-Fi can look up anime screenshots.
   restarts it once if it crashes.
 * Everything the phone sends is written to a unique temp file, handed to the MCP
   tool as a path, and deleted in a `finally` block.
+* Answers `AMPS_DISCOVER_V1` on UDP **8788**, so the app finds the bridge by
+  itself — no manual IP entry (protocol: [below](#lan-discovery-udp)).
 
 ```
 Android app ──HTTP/JSON──▶ AMPS Bridge ──stdio JSON-RPC──▶ trace.moe MCP (node)
-                                        └──────────────────▶ imgfind MCP   (node)
-                                                                 └──▶ api.trace.moe / SauceNAO
+       │                              └──────────────────▶ imgfind MCP   (node)
+       └───UDP/JSON :8788──────────────▶                       └──▶ api.trace.moe / SauceNAO
 ```
 
 ## Requirements
@@ -38,6 +40,7 @@ Startup prints every LAN IPv4 address in copy-pasteable form:
 ```
   AMPS Bridge v1.0.0
   listening on   http://0.0.0.0:8787
+  discovery: UDP 0.0.0.0:8788 (AMPS_DISCOVER_V1)
   keys           trace.moe: configured | SauceNAO: NOT configured
   LAN            http://192.168.0.103:8787   (Wi-Fi)
 
@@ -46,10 +49,10 @@ Startup prints every LAN IPv4 address in copy-pasteable form:
     ...
 ```
 
-On the phone: connect to the **same Wi-Fi**, then point the app at
-`http://<LAN-IP>:8787`. Use the IP, never `localhost` (that would be the phone).
-Logs are JSON lines on stdout/stderr; `Ctrl+C` shuts down cleanly and kills both
-child processes.
+On the phone: connect to the **same Wi-Fi** and open the app. From v1.0.1 it
+finds the bridge over UDP on its own; the manual `http://<LAN-IP>:8787` field in
+the settings stays as a fallback. Logs are JSON lines on stdout/stderr; `Ctrl+C`
+shuts down cleanly and kills both child processes plus the UDP socket.
 
 ### Verify the installation
 
@@ -57,9 +60,11 @@ child processes.
 node smoke-test.mjs
 ```
 
-It spawns both MCP servers, performs the real `initialize` handshake, prints
-`tools/list` for each, then calls `get_account_quota` / `config_status` when the
-keys are configured. Exit code is non-zero if a handshake or `tools/list` fails.
+It starts the UDP responder in-process, sends `AMPS_DISCOVER_V1` to it over
+loopback and checks the JSON reply, then spawns both MCP servers, performs the
+real `initialize` handshake, prints `tools/list` for each, and finally calls
+`get_account_quota` / `config_status` when the keys are configured. Exit code is
+non-zero if the discovery round trip, a handshake or a `tools/list` fails.
 
 ## Configuration
 
@@ -68,6 +73,7 @@ Priority: **CLI args > environment variables > `.env` file next to `bridge/` > d
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `PORT` | `8787` | TCP port |
+| `DISCOVERY_PORT` | `8788` | UDP auto-discovery port; `0` disables the responder |
 | `HOST` | `0.0.0.0` | bind address (`127.0.0.1` keeps it off the LAN) |
 | `TRACE_MOE_API_KEY` | — | passed to both MCP servers as-is |
 | `SAUCENAO_API_KEY` | — | passed to imgfind; without it `sauce.configured` is `false` |
@@ -78,13 +84,75 @@ Priority: **CLI args > environment variables > `.env` file next to `bridge/` > d
 
 ```powershell
 node src\server.mjs --port 9000 --log-level debug
+node src\server.mjs --discovery-port 0          # UDP auto-discovery off
+node src\server.mjs --discovery-port 9999       # responder on another port
+$env:AMPS_DISCOVERY_PORT = '9999'; node src\server.mjs
 $env:SAUCENAO_API_KEY = 'xxx'; node src\server.mjs
 # .env file
 PORT=8787
+DISCOVERY_PORT=8788
 TRACE_MOE_API_KEY=xxx
 ```
 
+CLI flags are `--port`, `--host`, `--discovery-port`, `--log-level`,
+`--trace-moe-api-key`, `--sauce-nao-api-key`, `--tracemoe-cmd`, `--imgfind-cmd`,
+`--request-timeout-ms` (`--key value` and `--key=value` both work). The
+environment variable for the UDP port is **`AMPS_DISCOVERY_PORT`**, the `.env`
+key is `DISCOVERY_PORT`.
+
 Key **values are never logged** — only `configured: true/false`.
+
+## LAN discovery (UDP)
+
+One request packet, one answer packet, no connection state. It exists so the
+Android app never has to be told the PC's IP address.
+
+| | |
+|---|---|
+| Port | **8788** UDP, bound to `0.0.0.0` (Windows answers a busy bind with `EACCES`/`EADDRINUSE`) |
+| Request | UTF-8 text `AMPS_DISCOVER_V1`, case-insensitive, surrounding whitespace ignored |
+| Answer | one UTF-8 JSON datagram back to the sender's address and port |
+| Anything else | dropped silently (logged only at `--log-level debug`) |
+| Answer timeout | none — if the bridge is off, the phone simply finds nothing |
+
+The URL in the answer is **the bridge's own** address, never the sender's: a
+datagram's source is the phone, so echoing it back would point the phone at
+itself. The source address only selects *which* local NIC to advertise — the one
+whose subnet the phone is in (compared through the interface netmask), so a PC
+with Wi-Fi + VPN + virtual adapters answers with the address the phone can
+actually reach. `ips` carries every other candidate as a fallback.
+
+Observed reply (real output, probe from `192.168.0.103` on a dual-homed machine
+that also owns `172.16.0.2`):
+
+```json
+{
+  "service": "amps-bridge",
+  "protocol": 1,
+  "version": "1.0.0",
+  "http": "http://192.168.0.103:8802",
+  "port": 8802,
+  "host": "Animeshnik",
+  "ips": ["172.16.0.2", "192.168.0.103"],
+  "keys": { "traceMoe": false, "sauceNao": false },
+  "mcp": { "tracemoe": true, "imgfind": true }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `service` | always `amps-bridge` |
+| `protocol` | discovery schema version, `1`; the app should refuse anything it does not know |
+| `version` | bridge version string (same value as `GET /api/health` → `version`) |
+| `http` / `port` | the HTTP endpoint to talk to |
+| `host` | hostname of the machine running the bridge (display only) |
+| `ips` | every non-internal IPv4 of the bridge — try them in order if `/api/health` on `http` does not answer |
+| `keys` | whether `TRACE_MOE_API_KEY` / `SAUCENAO_API_KEY` are configured — never the keys themselves |
+| `mcp` | last known handshake state of the two MCP nodes, the same one `/api/health` → `nodes` reports; the field (or a single key of it) is **omitted** while the state is unknown, which happens until the first HTTP call. Never guess `false` — unknown ≠ failed. |
+
+The UDP handler never spawns, probes or awaits anything: it reads two in-memory
+values and writes one packet. A busy UDP port only produces a warning — HTTP
+keeps working.
 
 ## HTTP API
 
@@ -97,11 +165,15 @@ All responses are JSON. CORS is open (`Access-Control-Allow-Origin: *`,
 {"ok":true,"version":"1.0.0","uptimeSec":42,
  "keys":{"traceMoe":true,"sauceNao":false},
  "nodes":{"tracemoe":{"ready":true,"tools":["search_anime_by_image_url", "..."]},
-          "imgfind":{"ready":true,"tools":["find_image_source", "..."]}}}
+          "imgfind":{"ready":true,"tools":["find_image_source", "..."]}},
+ "discovery":{"port":8788,"active":true}}
 ```
 
 Never fails because a node is down: a broken node reports
 `{"ready":false,"error":"…","tools":[],"stderr":"…"}` and the HTTP status stays `200`.
+`discovery.port` is `null` when the responder is disabled (`--discovery-port 0`);
+`active:false` means the UDP port could not be bound and the app has to fall back
+to a manually entered URL. All pre-1.0.1 fields are unchanged.
 
 ### `POST /api/frame/lookup`
 
@@ -161,6 +233,8 @@ Without `SAUCENAO_API_KEY` the response is still `200` with
 |---------|-----|
 | `spawn EPERM` / health shows `ready:false` | The bridge cannot create child processes — you are inside a restricted sandbox/container. Run it from a normal terminal. |
 | Phone says "connection refused" | Wrong address (use the LAN IP, not `localhost`), phone on a different Wi-Fi/guest network, or Windows Firewall blocking inbound TCP 8787 (`New-NetFirewallRule -DisplayName AMPS -Direction Inbound -LocalPort 8787 -Protocol TCP -Action Allow`). |
+| App finds nothing over UDP | Firewall also blocks **UDP** 8788: `New-NetFirewallRule -DisplayName AMPS-Discovery -Direction Inbound -LocalPort 8788 -Protocol UDP -Action Allow`. Check `/api/health` → `discovery.active`; some Wi-Fi (guest/AP isolation) blocks client-to-client traffic entirely. |
+| Bridge starts but the banner shows `discovery: выключен` | `--discovery-port 0` / `AMPS_DISCOVERY_PORT=0`, or the port was taken — the warning above the banner says which, and suggests the next free port. |
 | `matched:false` for every frame | trace.moe key missing/expired or the image is not an anime frame; check `GET /api/health` → `keys.traceMoe`. |
 | `sauce.configured:false` | `SAUCENAO_API_KEY` is not set for this process. |
 | `upstream_timeout` | Raise `REQUEST_TIMEOUT_MS`, or the upstream API is slow/overloaded. |
@@ -176,6 +250,9 @@ This server has **no authentication** by design (it is meant for a home LAN):
   tunnel, or a private Wi-Fi (no guest network).
 * If the port must be exposed, restrict it with a firewall rule to your LAN
   subnet and never port-forward it on the router.
+* The UDP responder on 8788 is equally open: anyone who can reach the port gets
+  the bridge IP, hostname, version and which API keys are configured (never the
+  keys themselves). Disable it with `--discovery-port 0` when it is not needed.
 * API keys are only read from your environment and forwarded to the child
   processes; they are never echoed in responses or logs — but the child process
   command line is yours, so keep the `.env` file readable only by your user.
@@ -185,7 +262,8 @@ This server has **no authentication** by design (it is meant for a home LAN):
 | File | Purpose |
 |------|---------|
 | `src/server.mjs` | HTTP server, CORS, body limit, JSON-lines logging, banner, shutdown |
+| `src/discovery.mjs` | UDP responder for `AMPS_DISCOVER_V1` (port 8788) |
 | `src/routes.mjs` | Routing + response normalization (`trace` / `sauce`) |
 | `src/mcp-client.mjs` | `McpStdioClient`: spawn, handshake, request correlation, restart |
 | `src/config.mjs` | `.env` parser, CLI/env/defaults, JSON-lines logger |
-| `smoke-test.mjs` | Live handshake + `tools/list` check for both nodes |
+| `smoke-test.mjs` | UDP round trip + live handshake + `tools/list` check for both nodes |

@@ -2,7 +2,8 @@ import http from 'node:http';
 import os from 'node:os';
 import { loadConfig, createLogger, describeConfig } from './config.mjs';
 import { McpStdioClient } from './mcp-client.mjs';
-import { createRouter, VERSION } from './routes.mjs';
+import { startDiscoveryResponder, DISCOVERY_MAGIC } from './discovery.mjs';
+import { createRouter, VERSION, lastKnownNodeState } from './routes.mjs';
 
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
 
@@ -67,14 +68,18 @@ function lanAddresses() {
   return out;
 }
 
-function printBanner(base) {
+function printBanner(base, discovery) {
   const view = describeConfig(config);
   const lan = lanAddresses();
   const target = lan[0] ? `http://${lan[0].address}:${config.port}` : base;
+  const discoveryLine = discovery.active
+    ? `  discovery: UDP 0.0.0.0:${discovery.port} (${DISCOVERY_MAGIC})`
+    : '  discovery: выключен (--discovery-port 0) — IP моста придётся ввести вручную';
   const lines = [
     '',
     `  AMPS Bridge v${VERSION}`,
     `  listening on   http://${config.host}:${config.port}`,
+    discoveryLine,
     `  keys           trace.moe: ${view.keys.traceMoe ? 'configured' : 'NOT configured'} | SauceNAO: ${view.keys.sauceNao ? 'configured' : 'NOT configured'}`,
     ...(lan.length === 0 ? ['  LAN            no external IPv4 interface found (is Wi-Fi on?)'] : []),
     ...lan.map(({ name, address }) => `  LAN            http://${address}:${config.port}   (${name})`),
@@ -85,7 +90,7 @@ function printBanner(base) {
     `    curl -X POST --data-binary @frame.jpg -H "x-filename: frame.jpg" ${target}/api/frame/lookup`,
     `    curl -X POST --data-binary @frame.jpg ${target}/api/frame/identify`,
     '',
-    '  On Android: same Wi-Fi, then enter that http://<LAN-IP>:<port> URL. Ctrl+C to stop.',
+    '  On Android: same Wi-Fi, then open the app — it finds this bridge over UDP by itself.',
     '',
   ];
   process.stdout.write(`${lines.join('\n')}\n`);
@@ -110,6 +115,31 @@ const imgfind = new McpStdioClient({
   log,
 });
 
+/**
+ * What `/api/health` last saw, or `undefined` while a node has never been
+ * probed: unknown is dropped from the reply, never reported as `false`.
+ */
+function nodeReadiness(client) {
+  const state = lastKnownNodeState(client);
+  return state ? Boolean(state.ready) : undefined;
+}
+
+const discovery = await startDiscoveryResponder({
+  port: config.discoveryPort,
+  httpPort: config.port,
+  version: VERSION,
+  keys: { traceMoe: Boolean(config.traceMoeApiKey), sauceNao: Boolean(config.sauceNaoApiKey) },
+  mcp: () => {
+    const tracemoeReady = nodeReadiness(tracemoe);
+    const imgfindReady = nodeReadiness(imgfind);
+    return {
+      ...(tracemoeReady === undefined ? {} : { tracemoe: tracemoeReady }),
+      ...(imgfindReady === undefined ? {} : { imgfind: imgfindReady }),
+    };
+  },
+  log,
+});
+
 const dispatch = createRouter({
   tracemoe,
   imgfind,
@@ -117,6 +147,7 @@ const dispatch = createRouter({
   traceMoeKey: config.traceMoeApiKey,
   sauceNaoKey: config.sauceNaoApiKey,
   requestTimeoutMs: config.requestTimeoutMs,
+  discovery,
 });
 
 const server = http.createServer(async (req, res) => {
@@ -156,7 +187,7 @@ server.on('error', (err) => {
 });
 
 server.listen(config.port, config.host, () => {
-  printBanner(`http://${config.host}:${config.port}`);
+  printBanner(`http://${config.host}:${config.port}`, discovery);
   log.info('bridge started', { version: VERSION, port: config.port, host: config.host, ...describeConfig(config) });
 });
 
@@ -168,7 +199,7 @@ async function shutdown(signal) {
   server.close();
   const force = setTimeout(() => process.exit(0), 3000);
   force.unref?.();
-  await Promise.allSettled([tracemoe.close(), imgfind.close()]);
+  await Promise.allSettled([discovery.close(), tracemoe.close(), imgfind.close()]);
   process.exit(0);
 }
 

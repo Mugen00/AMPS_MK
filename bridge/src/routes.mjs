@@ -242,8 +242,19 @@ async function nodeState(client, cache) {
   return state;
 }
 
+/** Shared with the discovery responder so both report one and the same state. */
+const nodeStates = new Map();
+
+/**
+ * Last known handshake state of a node, or `null` when it has never been probed.
+ * `/api/health` is what fills this cache; UDP must not probe on its own.
+ */
+export function lastKnownNodeState(client) {
+  return nodeStates.get(client)?.state ?? null;
+}
+
 export function createRouter(deps) {
-  const toolsCache = new Map();
+  const toolsCache = nodeStates;
   const log = deps.log;
 
   const handlers = new Map([
@@ -258,6 +269,10 @@ export function createRouter(deps) {
         uptimeSec: Math.round(process.uptime()),
         keys: { traceMoe: Boolean(deps.traceMoeKey), sauceNao: Boolean(deps.sauceNaoKey) },
         nodes: { tracemoe, imgfind },
+        discovery: {
+          port: deps.discovery?.port ?? null,
+          active: Boolean(deps.discovery?.active),
+        },
       };
     }],
 

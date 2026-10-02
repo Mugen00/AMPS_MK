@@ -15,6 +15,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 
 /**
+ * Thrown when the local bridge cannot be reached at all. The repository catches
+ * this specific type and falls back to talking to trace.moe directly, so the
+ * app keeps working when the PC bridge is simply not running.
+ */
+class BridgeUnreachableException(message: String) : IOException(message)
+
+/**
  * Talks to the local bridge (bridge/src/server.mjs) that proxies the trace.moe
  * and imgfind MCP servers. Everything the phone knows about reverse image search
  * arrives through these four calls.
@@ -56,7 +63,9 @@ class BridgeClient(
         mime: String,
         anilistId: Int? = null,
     ): FrameIdentifyResponse = withContext(Dispatchers.IO) {
-        val base = currentBaseUrl() ?: throw IOException("Адрес моста не задан — укажите его в настройках")
+        val base = currentBaseUrl() ?: throw BridgeUnreachableException(
+            "Мост не найден. Запустите bridge на компьютере или отключите автообнаружение и впишите адрес вручную.",
+        )
         val body = bytes.toRequestBody(mime.toMediaType())
         val request = Request.Builder()
             .url("$base/api/frame/identify")
@@ -64,15 +73,27 @@ class BridgeClient(
             .apply { anilistId?.let { header("x-anilist-id", it.toString()) } }
             .post(body)
             .build()
-        client.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            if (text.isBlank()) throw IOException("Мост вернул пустой ответ (HTTP ${response.code})")
-            json.decodeFromString(FrameIdentifyResponse.serializer(), text)
+        runCatching {
+            client.newCall(request).execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                if (text.isBlank()) throw IOException("Мост вернул пустой ответ (HTTP ${response.code})")
+                json.decodeFromString(FrameIdentifyResponse.serializer(), text)
+            }
+        }.getOrElse { error ->
+            if (error is IOException && error !is BridgeUnreachableException) {
+                throw BridgeUnreachableException("Мост на $base не отвечает: ${error.readableMessage()}")
+            }
+            throw error
         }
     }
 
-    private suspend fun currentBaseUrl(): String? {
-        val raw = settings.settings.first().bridgeUrl.trim()
+    /** Address in use right now, discovery first and the typed fallback second. */
+    suspend fun currentBaseUrl(): String? {
+        val current = settings.settings.first()
+        if (current.autoBridge) {
+            BridgeDiscovery.cachedUrl()?.let { return it }
+        }
+        val raw = current.bridgeUrl.trim()
         if (raw.isEmpty()) return null
         val withScheme = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "http://$raw"
         return withScheme.trimEnd('/')

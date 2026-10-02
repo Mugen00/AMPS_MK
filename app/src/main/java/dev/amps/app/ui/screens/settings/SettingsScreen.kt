@@ -36,6 +36,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
@@ -51,8 +53,14 @@ import dev.amps.app.ui.theme.AmpsColors
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel) {
+fun SettingsScreen(viewModel: SettingsViewModel, onOpenUpdates: () -> Unit = {}) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val installedVersion = remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull().orEmpty().ifBlank { "—" }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -80,19 +88,50 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = state.bridgeUrl,
-                    onValueChange = viewModel::onBridgeUrl,
-                    label = { Text("Адрес моста") },
-                    placeholder = { Text("http://192.168.1.10:8787") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Uri,
-                        imeAction = ImeAction.Done,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
+                SwitchRow(
+                    title = "Искать мост автоматически",
+                    checked = state.autoBridge,
+                    onChange = viewModel::setAutoBridge,
                 )
                 Spacer(Modifier.height(12.dp))
+                if (state.autoBridge) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (state.discovering) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(
+                            text = state.discoveredUrl?.let { "Мост найден: $it" }
+                                ?: "Мост не найден — поиск продолжится в интернете, без тегов персонажа",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (state.discoveredUrl != null) AmpsColors.cyan
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = viewModel::discover,
+                        enabled = !state.discovering,
+                    ) {
+                        Text("Искать заново")
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
+                if (!state.autoBridge) {
+                    OutlinedTextField(
+                        value = state.bridgeUrl,
+                        onValueChange = viewModel::onBridgeUrl,
+                        label = { Text("Адрес моста вручную") },
+                        placeholder = { Text("http://192.168.1.10:8787") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Uri,
+                            imeAction = ImeAction.Done,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = viewModel::save) { Text(if (state.dirty) "Сохранить и проверить" else "Проверить") }
                     Spacer(Modifier.width(10.dp))
@@ -158,10 +197,13 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
 
             SectionCard(title = "О приложении", icon = Icons.Default.Info) {
                 StatRow("Название", "AMPS · поиск кадра и музыки")
-                StatRow("Версия", "1.0.0")
+                // Read from the package so it can never go stale next to the build.
+                StatRow("Версия", installedVersion)
                 StatRow("Поиск кадра", "trace.moe + SauceNAO через локальный мост")
                 StatRow("Данные о серии", "AniList GraphQL")
                 StatRow("Музыка", "iTunes · MusicBrainz · Internet Archive · ccMixter")
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onOpenUpdates) { Text("Проверить обновления") }
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "Лицензии: trace.moe и AniList дают только метаданные. Аудио берётся лишь из источников со свободной лицензией или из файла, который вы импортировали сами.",

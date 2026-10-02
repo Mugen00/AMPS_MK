@@ -21,6 +21,11 @@ bridge/.env
 bridge/node_modules/
 node_modules/
 
+# Scratch files from tooling and tests
+.tmp/
+.tmp-*
+*.tmp
+
 # OS
 Thumbs.db
 .DS_Store

@@ -6,6 +6,7 @@ export const BRIDGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 
 const DEFAULTS = {
   PORT: 8787,
+  DISCOVERY_PORT: 8788,
   HOST: '0.0.0.0',
   MCP_TRACEMOE_CMD: 'C:\\Users\\Miha2003\\.dsh\\mcp\\trace-moe-mcp\\node_modules\\trace.moe-mcp\\dist\\index.js',
   MCP_IMGFIND_CMD: 'C:\\Users\\Miha2003\\.dsh\\mcp\\imgfind-mcp\\index.js',
@@ -65,9 +66,16 @@ export function loadConfig({ argv, env = process.env, bridgeDir = BRIDGE_DIR } =
     const n = Number(pick(key));
     return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULTS[key];
   };
+  const uint16 = (key) => {
+    const raw = pick(key);
+    if (raw === undefined) return DEFAULTS[key];
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 && n <= 65535 ? n : DEFAULTS[key];
+  };
 
   return Object.freeze({
     port: int('PORT'),
+    discoveryPort: uint16('DISCOVERY_PORT'),
     host: str('HOST'),
     traceMoeApiKey: String(pick('TRACE_MOE_API_KEY') ?? ''),
     sauceNaoApiKey: String(pick('SAUCENAO_API_KEY') ?? ''),
@@ -82,6 +90,7 @@ export function loadConfig({ argv, env = process.env, bridgeDir = BRIDGE_DIR } =
 export function describeConfig(cfg) {
   return {
     port: cfg.port,
+    discoveryPort: cfg.discoveryPort,
     host: cfg.host,
     keys: { traceMoe: Boolean(cfg.traceMoeApiKey), sauceNao: Boolean(cfg.sauceNaoApiKey) },
     logLevel: cfg.logLevel,

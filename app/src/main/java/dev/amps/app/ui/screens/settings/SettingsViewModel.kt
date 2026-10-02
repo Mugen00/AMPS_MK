@@ -7,6 +7,7 @@ import dev.amps.app.core.SettingsStore
 import dev.amps.app.core.ThemeMode
 import dev.amps.app.data.model.BridgeHealth
 import dev.amps.app.data.remote.BridgeClient
+import dev.amps.app.data.remote.BridgeDiscovery
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +20,9 @@ data class SettingsUiState(
     val themeMode: ThemeMode = ThemeMode.DARK,
     val autoCheckBridge: Boolean = true,
     val keepHistory: Boolean = true,
+    val autoBridge: Boolean = true,
+    val discoveredUrl: String? = null,
+    val discovering: Boolean = false,
     val health: BridgeHealth? = null,
     val checking: Boolean = false,
     val dirty: Boolean = false,
@@ -27,6 +31,7 @@ data class SettingsUiState(
 class SettingsViewModel(
     private val settings: SettingsStore,
     private val bridge: BridgeClient,
+    private val discovery: BridgeDiscovery,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -41,9 +46,25 @@ class SettingsViewModel(
                 themeMode = current.themeMode,
                 autoCheckBridge = current.autoCheckBridge,
                 keepHistory = current.keepSearchHistory,
+                autoBridge = current.autoBridge,
             )
+            if (current.autoBridge) discover()
             if (current.autoCheckBridge) check()
         }
+    }
+
+    /**
+     * 1.0.1: ask the network for a bridge instead of expecting a typed address.
+     * Safe to call repeatedly — the result is cached inside [BridgeDiscovery].
+     */
+    fun discover() = viewModelScope.launch {
+        _state.value = _state.value.copy(discovering = true)
+        val found = runCatching { discovery.discover() }.getOrNull()
+        _state.value = _state.value.copy(
+            discovering = false,
+            discoveredUrl = found?.url ?: BridgeDiscovery.cachedUrl(),
+        )
+        if (_state.value.autoCheckBridge) check()
     }
 
     fun onBridgeUrl(value: String) {
@@ -82,11 +103,19 @@ class SettingsViewModel(
         _state.value = _state.value.copy(keepHistory = value)
     }
 
+    fun setAutoBridge(value: Boolean) = viewModelScope.launch {
+        settings.setAutoBridge(value)
+        _state.value = _state.value.copy(autoBridge = value)
+        if (value) discover() else check()
+    }
+
     class Factory(
         private val settings: SettingsStore,
         private val bridge: BridgeClient,
+        private val discovery: BridgeDiscovery,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T = SettingsViewModel(settings, bridge) as T
+        override fun <T : ViewModel> create(modelClass: Class<T>): T =
+            SettingsViewModel(settings, bridge, discovery) as T
     }
 }

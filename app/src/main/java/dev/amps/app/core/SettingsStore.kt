@@ -16,14 +16,16 @@ data class AppSettings(
     val autoCheckBridge: Boolean = true,
     val keepSearchHistory: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.DARK,
+    /** 1.0.1: find the bridge over UDP instead of expecting a typed address. */
+    val autoBridge: Boolean = true,
 ) {
     val bridgeConfigured: Boolean get() = bridgeUrl.isNotBlank()
 
     companion object {
         /**
-         * Placeholder only: the real address is printed by `node bridge/src/server.mjs`
-         * and has to be pasted in Settings. 10.0.2.2 is the host loopback seen from
-         * the Android emulator, which is handy while developing.
+         * Only used when [autoBridge] is off. 10.0.2.2 is the host loopback as
+         * seen from the Android emulator; on a real phone the bridge is found
+         * by UDP discovery, so nothing has to be typed.
          */
         const val DEFAULT_BRIDGE_URL = "http://10.0.2.2:8787"
     }
@@ -39,6 +41,7 @@ class SettingsStore(private val context: Context) {
         val autoCheckBridge = booleanPreferencesKey("auto_check_bridge")
         val keepHistory = booleanPreferencesKey("keep_history")
         val themeMode = stringPreferencesKey("theme_mode")
+        val autoBridge = booleanPreferencesKey("auto_bridge")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -50,6 +53,7 @@ class SettingsStore(private val context: Context) {
             themeMode = prefs[Keys.themeMode]
                 ?.let { name -> ThemeMode.entries.firstOrNull { it.name == name } }
                 ?: ThemeMode.DARK,
+            autoBridge = prefs[Keys.autoBridge] ?: true,
         )
     }
 
@@ -62,6 +66,8 @@ class SettingsStore(private val context: Context) {
     suspend fun setKeepHistory(value: Boolean) = put(Keys.keepHistory, value)
 
     suspend fun setThemeMode(mode: ThemeMode) = put(Keys.themeMode, mode.name)
+
+    suspend fun setAutoBridge(value: Boolean) = put(Keys.autoBridge, value)
 
     private suspend fun <T> put(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) {
         context.dataStore.edit { it[key] = value }

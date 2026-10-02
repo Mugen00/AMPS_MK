@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 /**
- * Live check of both MCP stdio nodes: initialize handshake + tools/list.
- * Optional tool calls run afterwards; upstream network failures are reported
- * as WARN (the sandbox has no outbound network) and do not fail the run.
+ * Live check of the UDP discovery responder plus both MCP stdio nodes:
+ * initialize handshake + tools/list. Optional tool calls run afterwards;
+ * upstream network failures are reported as WARN (the sandbox has no outbound
+ * network) and do not fail the run.
  */
+import dgram from 'node:dgram';
 import { loadConfig, createLogger } from './src/config.mjs';
 import { McpStdioClient, extractToolPayload } from './src/mcp-client.mjs';
+import { startDiscoveryResponder, DISCOVERY_MAGIC } from './src/discovery.mjs';
+import { VERSION } from './src/routes.mjs';
 
 const config = loadConfig();
 const log = createLogger(config.logLevel === 'silent' ? 'silent' : 'info');
@@ -50,6 +54,61 @@ async function listTools({ name, client }) {
 
 const commandLabel = (name) => (name === 'tracemoe' ? config.tracemoeCmd : config.imgfindCmd);
 
+/** Ask the OS for a free UDP port so a running bridge cannot collide with the check. */
+function freeUdpPort() {
+  return new Promise((resolve, reject) => {
+    const probe = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    probe.once('error', reject);
+    probe.bind({ port: 0, address: '127.0.0.1', exclusive: false }, () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+async function checkDiscovery() {
+  process.stdout.write(`\n=== discovery :: UDP ${DISCOVERY_MAGIC} ===\n`);
+  const port = await freeUdpPort();
+  const responder = await startDiscoveryResponder({
+    port,
+    httpPort: config.port,
+    version: VERSION,
+    keys: { traceMoe: Boolean(config.traceMoeApiKey), sauceNao: Boolean(config.sauceNaoApiKey) },
+    mcp: { tracemoe: true, imgfind: true },
+    log,
+  });
+  const client = dgram.createSocket({ type: 'udp4' });
+  try {
+    check(responder.active, 'discovery: responder bound', `udp 0.0.0.0:${port}`);
+    const reply = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`no reply within 3000ms from 127.0.0.1:${port}`)), 3000);
+      client.once('message', (msg) => {
+        clearTimeout(timer);
+        resolve(msg.toString('utf8'));
+      });
+      client.send(Buffer.from(DISCOVERY_MAGIC, 'utf8'), port, '127.0.0.1', (err) => {
+        if (err) {
+          clearTimeout(timer);
+          reject(err);
+        }
+      });
+    });
+    process.stdout.write(`   reply: ${reply}\n`);
+    const parsed = JSON.parse(reply);
+    check(parsed?.service === 'amps-bridge', 'discovery: reply service', String(parsed?.service));
+    check(parsed?.protocol === 1 && parsed?.port === config.port, 'discovery: reply protocol/port', `protocol=${parsed?.protocol} port=${parsed?.port}`);
+    const url = new URL(String(parsed?.http));
+    const httpPort = Number(url.port || 80);
+    check(url.protocol === 'http:' && httpPort === config.port, 'discovery: reply http url', String(parsed?.http));
+    check(Array.isArray(parsed?.ips) && parsed.ips.includes(url.hostname), 'discovery: advertised host is one of our own ips', `ips=${JSON.stringify(parsed?.ips)}`);
+  } catch (err) {
+    check(false, 'discovery: AMPS_DISCOVER_V1 round trip', err.message);
+  } finally {
+    await responder.close();
+    await new Promise((resolve) => client.close(() => resolve()));
+  }
+}
+
 async function call(client, toolName, args = {}) {
   const result = await client.callTool(toolName, args);
   const { data, raw } = extractToolPayload(result);
@@ -60,6 +119,9 @@ async function main() {
   process.stdout.write(`amps-bridge smoke test (node ${process.version})\n`);
   process.stdout.write(`trace.moe key: ${config.traceMoeApiKey ? 'configured' : 'not configured'}\n`);
   process.stdout.write(`SauceNAO  key: ${config.sauceNaoApiKey ? 'configured' : 'not configured'}\n`);
+  process.stdout.write(`discovery port: ${config.discoveryPort === 0 ? 'disabled' : config.discoveryPort}\n`);
+
+  await checkDiscovery();
 
   const tracemoe = node('tracemoe', config.tracemoeCmd, config.traceMoeApiKey ? { TRACE_MOE_API_KEY: config.traceMoeApiKey } : {});
   const imgfind = node('imgfind', config.imgfindCmd, {
