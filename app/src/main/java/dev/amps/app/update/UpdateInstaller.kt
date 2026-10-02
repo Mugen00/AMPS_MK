@@ -17,6 +17,10 @@ private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
 /** The applicationId every published release carries. */
 private const val RELEASE_PACKAGE = "dev.amps.app"
 
+/** @hide constant; the action string itself is stable since API 26. */
+private const val ACTION_MANAGE_APP_INSTALL_UNKNOWN_SOURCES =
+    "android.settings.MANAGE_APP_INSTALL_UNKNOWN_SOURCES"
+
 /** Sub-folder of `getExternalFilesDir(null)` exposed by @xml/amps_file_paths. */
 private const val PROVIDER_SUBDIR = "updates"
 
@@ -61,18 +65,23 @@ class UpdateInstaller(private val context: Context) {
             context.packageManager.canRequestPackageInstalls()
 
     /**
-     * "Allow this app to install unknown apps", scoped to AMPS itself.
+     * "Allow this app to install unknown apps".
      *
-     * `Settings.ACTION_MANAGE_APP_INSTALL_UNKNOWN_SOURCES` is public since API 26
-     * and its `package:` data URI drops the user straight onto the AMPS toggle,
-     * so nobody has to pick the app out of a list. On API 24/25 this intent is
-     * never sent: those releases have no such screen and install freely.
+     * `Settings.ACTION_MANAGE_APP_INSTALL_UNKNOWN_SOURCES` is marked @hide in the
+     * public SDK — verified by searching `platforms/android-35/android.jar`, where
+     * only `ACTION_MANAGE_UNKNOWN_APP_SOURCES` ships — so the action string is used
+     * directly. It has been part of the platform contract since API 26, and the
+     * `package:` URI lands the user straight on the AMPS toggle. ROMs that do not
+     * have that screen fall back to the public list.
      */
-    fun permissionSettingsIntent(): Intent =
-        Intent(
-            Settings.ACTION_MANAGE_APP_INSTALL_UNKNOWN_SOURCES,
-            Uri.parse("package:${context.packageName}"),
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    fun permissionSettingsIntent(): Intent {
+        val scoped = Intent(ACTION_MANAGE_APP_INSTALL_UNKNOWN_SOURCES)
+            .setData(Uri.parse("package:${context.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (scoped.resolveActivity(context.packageManager) != null) return scoped
+        return Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
 
     /**
      * Verifies the APK and shows the system installer.

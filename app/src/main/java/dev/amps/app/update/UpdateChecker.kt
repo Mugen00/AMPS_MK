@@ -20,7 +20,7 @@ internal const val UPDATE_USER_AGENT = "AMPS/1.0 (android)"
 internal const val GITHUB_JSON_ACCEPT = "application/vnd.github+json"
 
 /** Public repository, so no token is needed. */
-internal const val LATEST_RELEASE_URL = "https://api.github.com/repos/Mugen00/ASMP/releases/latest"
+internal const val LATEST_RELEASE_URL = "https://api.github.com/repos/Mugen00/AMPS_MK/releases/latest"
 
 private const val CONNECT_TIMEOUT_SECONDS = 15L
 private const val READ_TIMEOUT_SECONDS = 20L

@@ -165,8 +165,6 @@ class UpdateDownloader(
             throw IOException("Файл обновления подозрительно большой — ${formatBytes(length)}")
         }
 
-        val bytes = ByteArray(length.toInt())
-        file.inputStream().use { it.readFully(bytes) }
-        return bytes.sha256()
+        return file.readBytes().sha256()
     }
 }
