@@ -3,6 +3,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { extractToolPayload } from './mcp-client.mjs';
+import { loadCatalog, searchCatalog, getByAnilistId, catalogStats } from './catalog.mjs';
+import { rankCandidates } from './ranking.mjs';
+import { resolveWikidata, seriesFacts } from './wikidata.mjs';
+import { resolveFandomSlug, fetchFandomPage, fandomRoster } from './fandom.mjs';
+import { handleIndexRequest } from './frameindex.mjs';
 
 export const VERSION = '1.0.0';
 const TOOLS_TTL_MS = 30000;
@@ -19,6 +24,11 @@ export class HttpError extends Error {
 const badRequest = (message) => new HttpError(400, { error: 'bad_request', message });
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const pick = (o, k) => (isObject(o) && o[k] !== undefined && o[k] !== null ? o[k] : null);
+/** AniList отдаёт id числом, но через прокси он может прийти строкой. */
+const numberOrNull = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
 
 export function normalizeAnilist(a) {
   if (!isObject(a)) return null;
@@ -40,6 +50,75 @@ export function normalizeAnilist(a) {
     popularity: pick(a, 'popularity'),
     synonyms: Array.isArray(a.synonyms) ? a.synonyms : [],
     isAdult: a.isAdult === true,
+  };
+}
+
+/**
+ * Тело приходит сырым Buffer, а не разобранным объектом. `isObject` на Buffer
+ * проходит молча (это объект и не массив), поэтому разбирать JSON нужно явно —
+ * иначе сигналы молча превращаются в null, а ранжирование отвечает «rejected».
+ */
+function jsonBody(ctx) {
+  const raw = ctx.body;
+  if (!raw || raw.length === 0) return {};
+  if (!Buffer.isBuffer(raw)) return isObject(raw) ? raw : {};
+  try {
+    const parsed = JSON.parse(raw.toString('utf8'));
+    return isObject(parsed) ? parsed : {};
+  } catch (err) {
+    throw badRequest('тело запроса не является корректным JSON');
+  }
+}
+
+/**
+ * Wikidata даёт QID и подписи, вики — человеческие имена и ссылки. Склеиваем по
+ * имени, приоритет у вики: там имена именно в той форме, в которой их знает читатель.
+ */
+function mergeRoster(fromWikidata, fromWiki) {
+  const out = [];
+  const seen = new Set();
+  for (const item of fromWiki ?? []) {
+    const key = String(item?.name ?? '').trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name: item.name, url: item.url ?? null, source: 'fandom' });
+  }
+  for (const item of fromWikidata ?? []) {
+    const key = String(item?.name ?? '').trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name: item.name, nameRu: item.nameRu ?? null, qid: item.qid ?? null, url: null, source: 'wikidata' });
+  }
+  return out;
+}
+
+/** Плоская сводка записи каталога для телефона — без внутренних полей обхода. */
+function summarizeCatalogEntry(entry) {
+  const title = isObject(entry?.title) ? entry.title : {};
+  const cover = isObject(entry?.coverImage) ? entry.coverImage : {};
+  return {
+    anilistId: entry?.anilistId ?? null,
+    idMal: entry?.idMal ?? null,
+    title: {
+      romaji: title.romaji ?? null,
+      english: title.english ?? null,
+      native: title.native ?? null,
+    },
+    synonyms: Array.isArray(entry?.synonyms) ? entry.synonyms : [],
+    format: entry?.format ?? null,
+    status: entry?.status ?? null,
+    season: entry?.season ?? null,
+    seasonYear: entry?.seasonYear ?? null,
+    episodes: entry?.episodes ?? null,
+    duration: entry?.duration ?? null,
+    genres: Array.isArray(entry?.genres) ? entry.genres : [],
+    averageScore: entry?.averageScore ?? null,
+    popularity: entry?.popularity ?? null,
+    isAdult: entry?.isAdult === true,
+    cover: cover.large ?? cover.medium ?? cover.extraLarge ?? null,
+    studios: Array.isArray(entry?.studios)
+      ? entry.studios.map((s) => (isObject(s) ? s.name : s)).filter(Boolean)
+      : [],
   };
 }
 
@@ -201,6 +280,10 @@ async function sauceNaoDetail(deps, filePath) {
     return {
       index: Number(header.index_id) || null,
       similarity: Number(header.similarity ?? 0) / 100 || null,
+      // 1.0.2: ранжирование сопоставляет совпадения SauceNAO с trace.moe по
+      // AniList id. Без этого поля пришлось бы сравнивать названия строкой,
+      // и «Ta нет»-подобные совпадения притворялись бы другой серией.
+      anilistId: numberOrNull(data.anilist_id ?? data.anidb_id),
       title: typeof data.title === 'string' ? data.title : null,
       author: data.author_name ?? data.member_name ?? null,
       url: links[0] ?? null,
@@ -300,10 +383,115 @@ export function createRouter(deps) {
         })),
       };
     }],
+
+    // 1.0.2 — одно взвешенное решение по всем сигналам вместо «первого
+    // попавшегося». Чистая функция: никакой сети, никаких часов.
+    ['POST /api/rank', async (ctx) => {
+      const body = jsonBody(ctx);
+      return rankCandidates(
+        { trace: body.trace ?? null, sauce: body.sauce ?? null, index: body.index ?? null, labels: body.labels ?? null },
+        { log },
+      );
+    }],
+
+    // 1.0.2 — собственный каталог аниме. Нужен, чтобы перебирать варианты и
+    // сверяться с вики, а не полагаться на один ответ trace.moe.
+    ['GET /api/catalog/status', async () => {
+      const catalog = await loadCatalog(deps);
+      const stats = catalogStats(catalog);
+      return { ok: true, ...stats, sources: catalog.sources ?? [] };
+    }],
+
+    ['GET /api/catalog/search', async (ctx) => {
+      const query = String(ctx.query.get('q') ?? '').trim();
+      if (!query) throw badRequest('missing query parameter q');
+      const rawLimit = Number(ctx.query.get('limit'));
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.trunc(rawLimit), 50) : 10;
+      const entries = await searchCatalog(query, limit, deps);
+      return { query, results: entries.map((e) => summarizeCatalogEntry(e)) };
+    }],
   ]);
 
+  // Пути с параметром в конце: /api/catalog/anime/138459. Точное совпадение по
+  // ключу сюда не попадает, поэтому они разбираются отдельно.
+  const prefixHandlers = [
+    ['GET /api/catalog/anime/', async (ctx) => {
+      const raw = ctx.pathname.slice('/api/catalog/anime/'.length);
+      const id = Number(raw);
+      if (!Number.isInteger(id) || id <= 0) throw badRequest('bad anilist id');
+      const entry = await getByAnilistId(id, deps);
+      if (!entry) throw new HttpError(404, { error: 'not_found', message: `anime ${id} не найден в каталоге` });
+
+      // Вики и фандомы подтягиваем отдельно от каталога: они отвечают медленно
+      // и могут отсутствовать, а карточку серии это ломать не должно.
+      const wikiDeps = { log, requestTimeoutMs: Math.min(deps.requestTimeoutMs ?? 15000, 15000) };
+      const titles = [entry.title?.romaji, entry.title?.english, entry.title?.native].filter(Boolean);
+      const primaryTitle = titles[0] ?? null;
+
+      let wiki = null;
+      let qid = null;
+      let wd = null;
+      let roster = { characters: [], places: [] };
+      if (primaryTitle) {
+        // resolveWikidata отдаёт объект { qid, labels, ... }, а seriesFacts ждёт
+        // сам QID. Передать объект — значит тихо потерять и персонажей, и места.
+        wd = await resolveWikidata(primaryTitle, wikiDeps).catch(() => null);
+        qid = wd?.qid ?? null;
+        const slug = await resolveFandomSlug(primaryTitle, wd, wikiDeps).catch(() => null);
+        if (slug) {
+          const page = await fetchFandomPage(slug, primaryTitle, wikiDeps).catch(() => null);
+          // Ссылку на вики отдаём даже если статья не открылась: сам домен уже
+          // полезен пользователю, молча терять его нельзя.
+          wiki = {
+            slug,
+            url: page?.url ?? `https://${slug}.fandom.com/wiki/${encodeURIComponent(String(primaryTitle).replace(/ /g, '_'))}`,
+            intro: page?.intro ?? null,
+            images: (page?.images ?? []).slice(0, 24),
+            pageFound: Boolean(page),
+          };
+          // Персонажи и места приходят из категорий вики: это единственное место,
+          // где они названы по-человечески, а не как в Wikidata, где у аниме
+          // утверждения о персонажах просто нет.
+          roster = await fandomRoster(slug, primaryTitle, wikiDeps).catch(() => ({ characters: [], places: [] }));
+        }
+      }
+
+      const facts = qid ? await seriesFacts(qid, wikiDeps).catch(() => null) : null;
+
+      return {
+        anime: summarizeCatalogEntry(entry),
+        wiki,
+        qid,
+        wikidataLabels: wd?.labels ?? null,
+        sitelinks: wd?.sitelinks ?? null,
+        characters: mergeRoster(facts?.characters, roster.characters),
+        places: mergeRoster(facts?.places, roster.places),
+        genres: facts?.genres ?? [],
+        wikiCategories: roster.categories ?? [],
+      };
+    }],
+  ];
+
   return async function dispatch(ctx) {
-    const handler = handlers.get(`${ctx.method} ${ctx.pathname}`);
+    let handler = handlers.get(`${ctx.method} ${ctx.pathname}`);
+    if (!handler) {
+      for (const [route, fn] of prefixHandlers) {
+        const [method, prefix] = route.split(' ');
+        // Не `ctx.method + ' ' + ctx.pathname.startsWith(prefix)`: конкатенация
+        // даёт непустую строку даже при false, и условие всегда истинно — тогда
+        // любой путь без точного ключа уезжает в обработчик каталога.
+        if (ctx.method === method && ctx.pathname.startsWith(prefix)) { handler = fn; break; }
+      }
+    }
+    // Свой индекс кадров: четыре маршрута живут в frameindex.mjs, он сам решает,
+    // что ответить, и сам валидирует хэш.
+    if (!handler && (ctx.method === 'GET' || ctx.method === 'POST') && ctx.pathname.startsWith('/api/frame/index')) {
+      handler = async (c) => {
+        const { status, json } = handleIndexRequest(c.pathname, c.query, jsonBody(c), { log });
+        if (status >= 400) throw new HttpError(status, json);
+        return json;
+      };
+    }
     const startedAt = process.hrtime.bigint();
     let status = 200;
     let json;

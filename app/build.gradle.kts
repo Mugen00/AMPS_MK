@@ -14,8 +14,8 @@ android {
         applicationId = "dev.amps.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
         resourceConfigurations += listOf("ru", "en")
     }
 
@@ -101,4 +101,8 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
+
+    // 1.0.2: object/scene labels for the frame itself, fully on-device.
+    implementation(libs.mlkit.image.labeling)
+    implementation(libs.mlkit.image.labeling.common)
 }

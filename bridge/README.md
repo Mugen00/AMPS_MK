@@ -227,6 +227,106 @@ Without `SAUCENAO_API_KEY` the response is still `200` with
 | 500 | `{"error":"upstream_error","message":"…"}` | MCP server or upstream API failed (never includes a stack trace) |
 | 504 | `{"error":"upstream_timeout"}` | tool call exceeded `REQUEST_TIMEOUT_MS` |
 
+## Frame index (dHash-64)
+
+trace.moe only knows indexed anime, so the bridge keeps its own index of
+**known frames** and recognises a screenshot by how it looks rather than by
+which service has it. A frame is reduced to 64 bits — a **dHash-64** — and
+matched by hamming distance. This is a local, offline index: nothing in this
+section calls out to the internet, and no API key is involved.
+
+### The hash, exactly
+
+The Android client and this bridge must produce the same 64 bits from the same
+picture, so the steps are pinned down rather than left to the library:
+
+1. **Decode to RGB.** PNG (all colour types, bit depths 1–16, interlaced) and
+   baseline JPEG. Alpha is composited over **black**, rounded half up.
+2. **Area-average down to 9 wide x 8 high.** Every output cell is the exact
+   fractional-coverage mean of the source pixels it covers — not nearest
+   neighbour, not a two-pass box blur. The overlaps are scaled to integers
+   (`nx`, `ny` as in `phash.mjs`), so the weighted sum is an exact integer
+   multiple of the true mean and rounds **half up**.
+3. **Greyscale, after the downscale**, with integer luma `R*77 + G*150 + B*29`,
+   divided by 256 and floored to 0..255.
+4. **64 bits, row-major.** For `y` in 0..7, `x` in 0..7: bit `y*8+x` is
+   **1 if `cell(x,y) > cell(x+1,y)`**, else 0. So a picture that gets brighter
+   to the right hashes to `0000…`, and one that gets darker hashes to `ffff…`.
+5. **Output** 16 lowercase hex characters, most significant bit first, as one
+   64-bit integer.
+
+Two frames match when their distance is **≤ 10 of 64 bits**.
+
+### `GET /api/frame/index/match?hash=<16 hex>`
+
+```json
+{"matched":true,"distance":7,
+ "entry":{"hash":"f8dc8cddc1553233","anilistId":127230,"seriesTitle":"Demon Slayer",
+          "episode":3,"timestampSec":842.5,"source":"archive:anime-screenshots",
+          "imageUrl":"…","width":1280,"height":720,"addedAt":"2026-02-01T10:00:00.000Z"}}
+```
+
+No match ⇒ `200` with `{"matched":false,"distance":null}`. A hash that is not
+exactly 16 hex characters ⇒ **400**. The index is kept sorted by hash, so a
+lookup stops scanning as soon as the leading bits can no longer match.
+
+### `GET /api/frame/index/stats`
+
+`{"count":128,"series":12,"episodes":40,"sources":["fandom:cowboybebop"],
+"builtAt":"…","maxDistance":10}`
+
+### `POST /api/frame/index/add`
+
+```json
+{"hash":"f8dc8cddc1553233","anilistId":127230,"seriesTitle":"Demon Slayer",
+ "episode":3,"timestampSec":842.5,"source":"manual","imageUrl":"https://…"}
+```
+
+Validates every field, replaces any entry with the same hash, saves the file
+atomically and answers with the new `{"count":…}`.
+
+### `POST /api/frame/index/rebuild`
+
+Empties the index and answers `{"count":0}`.
+
+### Storage and harvesting
+
+The index lives in `bridge/.cache/frame-index.json` (git-ignored):
+
+```json
+{"version":1,"builtAt":"…","entries":[ … ]}
+```
+
+`entries` is sorted by `hash`; that ordering is what makes `match` cheap.
+
+Frames are harvested by a tool that only takes material whose licence is
+explicitly free (CC0, CC-BY, CC-BY-SA, public domain, US government work) and
+skips anything marked non-commercial, no-derivatives, fair use or unknown:
+
+```
+node tools/build-frame-index.mjs --dry-run    # print the plan, download nothing
+node tools/build-frame-index.mjs --limit 200
+node tools/build-frame-index.mjs --source archive --out .cache/frame-index.json
+```
+
+Two adapters ship: **Fandom** (the MediaWiki `api.php` image list of a few
+well-known anime wikis) and **Internet Archive** (items whose metadata declares
+a free licence). In practice most anime screenshots are fair use and are
+rejected — the tool is honest about that rather than scraping them. Every entry
+records its `source` for provenance.
+
+### Tests
+
+```
+node test/phash.test.mjs
+```
+
+Prints `PASS`/`FAIL` per check and exits non-zero on any failure. It pins the
+hash contract, round-trips a JPEG through an encoder written in the test,
+decodes a **real libjpeg-produced file** (embedded as a fixture, because a
+round-trip cannot catch a bug shared by both sides of the round trip), checks
+the index behaviour and the licence filter.
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -266,4 +366,10 @@ This server has **no authentication** by design (it is meant for a home LAN):
 | `src/routes.mjs` | Routing + response normalization (`trace` / `sauce`) |
 | `src/mcp-client.mjs` | `McpStdioClient`: spawn, handshake, request correlation, restart |
 | `src/config.mjs` | `.env` parser, CLI/env/defaults, JSON-lines logger |
+| `src/phash.mjs` | dHash-64 of a frame: exact area-average to 9x8, luma, 64 comparison bits |
+| `src/png-decode.mjs` | PNG decoder written by hand (all colour types, bit depths 1–16, Adam7) |
+| `src/jpeg-decode.mjs` | Baseline JPEG decoder written by hand (huffman, IDCT, 4:2:0/4:2:2/4:4:4/4:1:1) |
+| `src/frameindex.mjs` | Frame index: storage, hamming lookup, the four `/api/frame/index/*` handlers |
+| `tools/build-frame-index.mjs` | Harvester for known frames (Fandom galleries, Internet Archive) |
+| `test/phash.test.mjs` | Test suite: hash contract, both decoders, index, harvester |
 | `smoke-test.mjs` | UDP round trip + live handshake + `tools/list` check for both nodes |

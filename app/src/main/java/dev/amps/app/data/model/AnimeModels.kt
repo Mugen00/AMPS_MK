@@ -127,9 +127,71 @@ data class AnimeWikiPage(
     val rawEngineText: String? = null,
     val searchedImage: String? = null,
     val searchedImageSha256: String? = null,
+    /** 1.0.2: насколько уверенно назван тайтл и почему. */
+    val verdict: FrameVerdict? = null,
+    /** 1.0.2: что модель увидела на самом кадре — люди, небо, стол, книга. */
+    val content: FrameContent? = null,
+    /** 1.0.2: фандом-вики серии. */
+    val wiki: WikiReference? = null,
+    /** 1.0.2: персонажи и места по вики — именами, а не QID. */
+    val rosterCharacters: List<RosterEntry> = emptyList(),
+    val rosterPlaces: List<RosterEntry> = emptyList(),
+    /** 1.0.2: отпечаток кадра, чтобы можно было отправить его в общий индекс. */
+    val frameHash: String? = null,
 )
 
 data class SourceRef(val label: String, val url: String? = null, val note: String? = null)
+
+/**
+ * Взвешенный вердикт по всем источникам сразу. Раньше приложение показывало
+ * первый попавшийся ответ; теперь оно показывает степень уверенности, объяснение
+ * и — когда источники спорят — альтернативы.
+ */
+data class FrameVerdict(
+    val decision: String = "identified",
+    val confidence: Float = 0f,
+    val reasons: List<String> = emptyList(),
+    val warnings: List<String> = emptyList(),
+    val candidates: List<RankedCandidate> = emptyList(),
+    val agreedSources: List<String> = emptyList(),
+) {
+    val identified: Boolean get() = decision == "identified"
+    val uncertain: Boolean get() = decision == "uncertain"
+    val rejected: Boolean get() = decision == "rejected"
+
+    val confidencePercent: Int get() = (confidence * 100).toInt()
+
+    /** Насколько честно показывать результат: уверенный, спорный или отвергнутый. */
+    val headline: String?
+        get() = when (decision) {
+            "identified" -> "Определено с уверенностью $confidencePercent %"
+            "uncertain" -> "Не уверен: источники расходятся"
+            else -> "Не удалось определить уверенно"
+        }
+}
+
+data class RankedCandidate(
+    val anilistId: Int,
+    val title: String,
+    val score: Float = 0f,
+    val sources: List<String> = emptyList(),
+    val why: List<String> = emptyList(),
+)
+
+/** Вики-страница серии, найденная через фандомы и Wikidata. */
+data class WikiReference(
+    val slug: String? = null,
+    val url: String? = null,
+    val intro: String? = null,
+    val images: List<String> = emptyList(),
+)
+
+data class RosterEntry(
+    val name: String,
+    val url: String? = null,
+    val qid: String? = null,
+    val source: String? = null,
+)
 
 /** A frame that produced nothing usable. */
 data class EmptyResult(

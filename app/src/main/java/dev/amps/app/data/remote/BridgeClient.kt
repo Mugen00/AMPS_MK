@@ -2,11 +2,13 @@ package dev.amps.app.data.remote
 
 import dev.amps.app.core.SettingsStore
 import dev.amps.app.data.model.BridgeHealth
+import dev.amps.app.data.model.CatalogEntry
 import dev.amps.app.data.model.FrameIdentifyResponse
 import dev.amps.app.util.readableMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -98,4 +100,48 @@ class BridgeClient(
         val withScheme = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "http://$raw"
         return withScheme.trimEnd('/')
     }
+
+    /**
+     * 1.0.2: серия из каталога вместе с её вики. Возвращает `null`, а не бросает:
+     * отсутствие фандом-вики у тайтла — обычное дело, а не поломка.
+     */
+    suspend fun catalogAnime(anilistId: Int): CatalogAnimeDetail? {
+        val base = currentBaseUrl() ?: return null
+        return runCatching {
+            val request = Request.Builder().url("$base/api/catalog/anime/$anilistId").get().build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val body = response.body?.string() ?: return@use null
+                json.decodeFromString<CatalogAnimeDetail>(body)
+            }
+        }.getOrNull()
+    }
 }
+
+@Serializable
+data class CatalogWiki(
+    val slug: String? = null,
+    val url: String? = null,
+    val intro: String? = null,
+    val images: List<String> = emptyList(),
+    val pageFound: Boolean = false,
+)
+
+@Serializable
+data class RosterRow(
+    val name: String? = null,
+    val nameRu: String? = null,
+    val qid: String? = null,
+    val url: String? = null,
+    val source: String? = null,
+)
+
+@Serializable
+data class CatalogAnimeDetail(
+    val anime: CatalogEntry? = null,
+    val wiki: CatalogWiki? = null,
+    val qid: String? = null,
+    val characters: List<RosterRow> = emptyList(),
+    val places: List<RosterRow> = emptyList(),
+    val genres: List<RosterRow> = emptyList(),
+)

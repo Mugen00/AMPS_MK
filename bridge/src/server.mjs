@@ -4,6 +4,7 @@ import { loadConfig, createLogger, describeConfig } from './config.mjs';
 import { McpStdioClient } from './mcp-client.mjs';
 import { startDiscoveryResponder, DISCOVERY_MAGIC } from './discovery.mjs';
 import { createRouter, VERSION, lastKnownNodeState } from './routes.mjs';
+import { loadCatalog, catalogStats } from './catalog.mjs';
 
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
 
@@ -189,6 +190,11 @@ server.on('error', (err) => {
 server.listen(config.port, config.host, () => {
   printBanner(`http://${config.host}:${config.port}`, discovery);
   log.info('bridge started', { version: VERSION, port: config.port, host: config.host, ...describeConfig(config) });
+  // Каталог AniList обходится десятки секунд. Греем его сразу после старта,
+  // чтобы первый запрос с телефона не ждал весь обход.
+  void loadCatalog({ log })
+    .then((catalog) => log.info('каталог готов', catalogStats(catalog)))
+    .catch((err) => log.warn('каталог не прогрет', { error: String(err?.message ?? err) }));
 });
 
 let shuttingDown = false;

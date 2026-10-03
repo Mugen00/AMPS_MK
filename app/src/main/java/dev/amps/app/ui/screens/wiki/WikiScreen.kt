@@ -23,17 +23,21 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.FactCheck
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -63,7 +67,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.amps.app.data.model.AnimeCharacter
 import dev.amps.app.data.model.AnimeMedia
 import dev.amps.app.data.model.AnimeWikiPage
+import dev.amps.app.data.model.FrameContent
 import dev.amps.app.data.model.FrameHit
+import dev.amps.app.data.model.FrameVerdict
 import dev.amps.app.ui.components.ConfidenceDial
 import dev.amps.app.ui.components.EmptyState
 import dev.amps.app.ui.components.InfoChip
@@ -123,6 +129,16 @@ fun WikiScreen(
             ) {
                 item { HeroBlock(page) }
 
+                // 1.0.2: вердикт идёт первым после обложки — человек должен
+                // увидеть «я не уверен» раньше, чем название серии, а не после.
+                page.verdict?.let { verdict ->
+                    item { VerdictCard(verdict, onOpen = { openUrl(context, it) }) }
+                }
+
+                page.content?.let { content ->
+                    if (content.analyzed) item { FrameContentCard(content) }
+                }
+
                 page.frame?.let { hit ->
                     item { FrameFoundCard(hit, page.searchedImageSha256) { hit.sceneUrl?.let { openUrl(context, it) } } }
                 }
@@ -146,6 +162,15 @@ fun WikiScreen(
 
                 item { SeriesCard(page.media) }
                 item { FactsCard(page.media) }
+
+                if (page.wiki != null || page.rosterCharacters.isNotEmpty() || page.rosterPlaces.isNotEmpty()) {
+                    item {
+                        FandomCard(
+                            page = page,
+                            onOpen = { openUrl(context, it) },
+                        )
+                    }
+                }
 
                 if (page.media.relations.isNotEmpty()) {
                     item { RelationsCard(page.media, onOpen = { openUrl(context, it) }) }
@@ -177,6 +202,183 @@ fun WikiScreen(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun VerdictCard(verdict: FrameVerdict, onOpen: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val accent = when {
+        verdict.identified -> AmpsColors.cyan
+        verdict.uncertain -> AmpsColors.amber
+        else -> scheme.error
+    }
+    SectionCard(title = "Насколько уверены источники", icon = Icons.AutoMirrored.Filled.FactCheck) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ConfidenceDial(
+                percent = verdict.confidencePercent,
+                label = "уверенность",
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = verdict.headline.orEmpty(),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = accent,
+                )
+                if (verdict.agreedSources.isNotEmpty()) {
+                    Text(
+                        text = "Совпали источники: " + verdict.agreedSources.joinToString(", "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        if (verdict.reasons.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            verdict.reasons.forEach { reason ->
+                Text(
+                    text = "· $reason",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 3.dp),
+                )
+            }
+        }
+
+        if (verdict.warnings.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            verdict.warnings.forEach { warning ->
+                Surface(
+                    color = scheme.errorContainer.copy(alpha = 0.35f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = warning,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onErrorContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    )
+                }
+            }
+        }
+
+        if (verdict.candidates.size > 1) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "Другие варианты",
+                style = MaterialTheme.typography.labelLarge,
+                color = scheme.onSurfaceVariant,
+            )
+            verdict.candidates.drop(1).forEach { candidate ->
+                val url = "https://anilist.co/anime/${candidate.anilistId}"
+                TextButton(onClick = { onOpen(url) }, contentPadding = PaddingValues(0.dp)) {
+                    Text(
+                        text = candidate.title.ifBlank { "AniList #${candidate.anilistId}" } +
+                            candidate.sources.joinToString(prefix = "  ·  "),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FrameContentCard(content: FrameContent) {
+    val scheme = MaterialTheme.colorScheme
+    val buckets = listOf(
+        "Люди" to content.subjects,
+        "Место" to content.placeHints,
+        "Предметы" to content.itemHints,
+    ).filter { it.second.isNotEmpty() }
+    if (buckets.isEmpty() && content.labels.isEmpty()) return
+
+    SectionCard(title = "Что видно на кадре", icon = Icons.Default.Visibility) {
+        Text(
+            text = "Определено на самом телефоне, без интернета и без отправки кадра наружу. " +
+                "Это общие признаки, а не названия — имена персонажей и мест приходят из вики.",
+            style = MaterialTheme.typography.bodySmall,
+            color = scheme.onSurfaceVariant,
+        )
+        buckets.forEach { (title, values) ->
+            if (values.isEmpty()) return@forEach
+            Spacer(Modifier.height(8.dp))
+            Text(title, style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                values.forEach { InfoChip(text = it, color = scheme.primary) }
+            }
+        }
+        if (buckets.isEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                content.labels.take(8).forEach { InfoChip(text = it.label, color = scheme.primary) }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FandomCard(page: AnimeWikiPage, onOpen: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    SectionCard(title = "Фандом-вики", icon = Icons.Default.Language) {
+        val wiki = page.wiki
+        if (wiki == null && page.rosterCharacters.isEmpty() && page.rosterPlaces.isEmpty()) return@SectionCard
+
+        if (wiki?.url != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = wiki.slug ?: "Вики серии",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    if (wiki.intro != null) {
+                        Text(
+                            text = wiki.intro.take(280),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                TextButton(onClick = { onOpen(wiki.url!!) }) { Text("Открыть") }
+            }
+        }
+
+        if (page.rosterPlaces.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text("Места", style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                page.rosterPlaces.forEach { place ->
+                    InfoChip(
+                        text = place.name,
+                        color = scheme.tertiary,
+                        modifier = place.url?.let { Modifier.clickable { onOpen(it) } } ?: Modifier,
+                    )
+                }
+            }
+        }
+
+        if (page.rosterCharacters.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text("Персонажи по вики", style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                page.rosterCharacters.take(24).forEach { entry ->
+                    InfoChip(
+                        text = entry.name,
+                        color = scheme.primary,
+                        modifier = entry.url?.let { Modifier.clickable { onOpen(it) } } ?: Modifier,
+                    )
                 }
             }
         }
@@ -257,7 +459,7 @@ private fun FrameFoundCard(hit: FrameHit, sha256: String?, onOpenScene: () -> Un
         Spacer(Modifier.height(12.dp))
         if (hit.sceneUrl != null) {
             OutlinedButton(onClick = onOpenScene, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Открыть найденную сцену")
             }
@@ -620,7 +822,7 @@ private fun SourcesCard(page: AnimeWikiPage, onOpen: (String) -> Unit) {
                 }
                 if (source.url != null) {
                     Icon(
-                        Icons.Default.OpenInNew,
+                        Icons.AutoMirrored.Filled.OpenInNew,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp),

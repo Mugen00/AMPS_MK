@@ -18,6 +18,7 @@ captures/
 
 # Bridge runtime
 bridge/.env
+bridge/.cache/
 bridge/node_modules/
 node_modules/
 

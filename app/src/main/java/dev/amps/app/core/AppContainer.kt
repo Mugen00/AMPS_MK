@@ -8,11 +8,14 @@ import dev.amps.app.data.remote.BridgeDiscovery
 import dev.amps.app.data.remote.CcMixterClient
 import dev.amps.app.data.remote.CoverArtClient
 import dev.amps.app.data.remote.DirectTraceClient
+import dev.amps.app.data.remote.FrameIndexClient
 import dev.amps.app.data.remote.InternetArchiveClient
 import dev.amps.app.data.remote.ItunesClient
 import dev.amps.app.data.remote.MusicBrainzClient
+import dev.amps.app.data.remote.RankClient
 import dev.amps.app.data.repo.FrameRepository
 import dev.amps.app.data.repo.MusicRepository
+import dev.amps.app.imaging.ContentAnalyzer
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -55,8 +58,22 @@ class AppContainer(private val context: Context) {
 
     val history: HistoryStore by lazy { HistoryStore(context) }
 
+    // 1.0.2: три новых источника сигналов. Каждый из них умеет молча деградировать:
+    // индекс и ранжирование живут на ПК, модель содержимого — на телефоне.
+    val frameIndexClient: FrameIndexClient by lazy { FrameIndexClient(httpClient, bridge) }
+    val rankClient: RankClient by lazy { RankClient(httpClient, bridge) }
+    val contentAnalyzer: ContentAnalyzer by lazy { ContentAnalyzer() }
+
     val frameRepository: FrameRepository by lazy {
-        FrameRepository(bridge, directTrace, aniList, history)
+        FrameRepository(
+            bridge = bridge,
+            direct = directTrace,
+            aniList = aniList,
+            history = history,
+            frameIndex = frameIndexClient,
+            ranker = rankClient,
+            contentAnalyzer = contentAnalyzer,
+        )
     }
     val musicRepository: MusicRepository by lazy {
         MusicRepository(
