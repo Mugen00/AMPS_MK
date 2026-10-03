@@ -22,9 +22,9 @@ data class PreparedImage(
 )
 
 /**
- * Screenshots straight out of a gallery are 4–12 MP; trace.moe resizes to a
- * fixed grid internally, so shipping the original only wastes the user's mobile
- * data. Everything is capped before upload.
+ * Скриншоты прямо из галереи весят 4–12 МП; IQDB всё равно сравнивает картинку
+ * по уменьшенной сетке, поэтому отправка оригинала только тратит мобильный
+ * трафик пользователя. Всё ужимается до отправки.
  */
 object ImageLoader {
 

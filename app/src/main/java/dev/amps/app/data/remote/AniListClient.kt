@@ -12,6 +12,7 @@ import dev.amps.app.data.model.Titles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -26,8 +27,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 /**
  * AniList GraphQL is free, needs no key and is the only source that returns a
  * structured, citable description of a series, its staff-free cast and their
- * artwork, so it does the "wiki" half of the job. The frame itself still comes
- * from trace.moe; this client only enriches what it found.
+ * artwork, so it does the "wiki" half of the job.
+ *
+ * С 1.0.5 клиент отвечает ещё и за нахождение **серии**: обратный поиск IQDB
+ * отдаёт бо́ру-теги (`belgium_(hetalia)`, `hetalia:_axis_powers`), а превратить
+ * их в серию можно только здесь — по персонажу или по названию. Поэтому
+ * появились [searchCharacters] и [searchMedia].
  */
 class AniListClient(private val client: OkHttpClient) {
 
@@ -41,15 +46,53 @@ class AniListClient(private val client: OkHttpClient) {
         media.toAnimeMedia()
     }
 
-    /** Fallback used when SauceNAO is unavailable: find a character by name anywhere on AniList. */
+    /**
+     * Ищет персонажа по имени, полученному из бо́ру-тегов IQDB (`belgium`).
+     *
+     * Запрос отсортирован по `SEARCH_MATCH`, а вложенные `media` — по
+     * `POPULARITY_DESC`, поэтому первый элемент `appearances` — самая
+     * популярная серия, где персонаж появляется. Раньше серию называл
+     * trace.moe по кадру видео; с 1.0.5 этот путь служит запасным.
+     */
     suspend fun searchCharacters(name: String, limit: Int = 8): List<AnimeCharacter> = withContext(Dispatchers.IO) {
         val payload = query(
             CHARACTER_SEARCH_QUERY,
             buildJsonObject { put("q", name); put("perPage", limit) },
         )
-        payload.obj("data", "Page", "characters")?.arr("nodes")?.objects()?.map { it.toCharacter("BACKGROUND") }
-            ?: emptyList()
+        payload.rows("data", "Page", "characters").map { it.toCharacter("BACKGROUND") }
     }
+
+    /**
+     * Ищет серию по названию — второй путь от бо́ру-тега IQDB к произведению.
+     *
+     * Тег серии у IQDB выглядит как `axis powers`, и это название серии,
+     * только без приставы. Точного совпадения AniList не обещает, поэтому
+     * выбирать приходится на стороне вызова — по популярности и избранному.
+     */
+    suspend fun searchMedia(name: String, limit: Int = 6): List<AnimeMedia> = withContext(Dispatchers.IO) {
+        val payload = query(
+            MEDIA_SEARCH_QUERY,
+            buildJsonObject { put("q", name); put("perPage", limit) },
+        )
+        payload.rows("data", "Page", "media").map { it.toAnimeMedia() }
+    }
+
+    /**
+     * Читает список объектов по пути, принимая **оба** вида ответа.
+     *
+     * AniList отдаёт `Page.media` и `Page.characters` готовым массивом, а
+     * вложенные связи (`Media.characters`, `Character.media`) — объектом с
+     * `nodes`. Форма менялся прямо во время работы над 1.0.5: старый разбор
+     * `obj(…)?.arr("nodes")` на новом ответе давал `null`, и метод молча
+     * возвращал пустой список — то есть «персонажа не нашлось» вместо «схема
+     * изменилась». Здесь оба вида принимаются, и лишняя обёртка больше не нужна.
+     */
+    private fun JsonObject.rows(vararg path: String): List<JsonObject> =
+        when (val element = at(*path)) {
+            is JsonArray -> element.objects()
+            is JsonObject -> element.arr("nodes").objects()
+            else -> emptyList()
+        }
 
     private fun query(document: String, variables: JsonObject): JsonObject {
         val body = buildJsonObject {
@@ -249,20 +292,70 @@ class AniListClient(private val client: OkHttpClient) {
             }
         """
 
+        /**
+         * 1.0.5: поиск персонажа по бо́ру-тегу IQDB.
+         *
+         * Списки `Page.characters` и `Page.media` AniList отдаёт **простым
+         * массивом** без обёртки `nodes` — проверено живым запросом к
+         * `graphql.anilist.co`. Связь с `nodes` на верхнем уровне страницы
+         * больше не существует: такой запрос отвечает ошибкой
+         * `Cannot query field "nodes" on type "Character"`. Вложенные связи
+         * (`Media.characters`, `Character.media`) остались как были.
+         */
         const val CHARACTER_SEARCH_QUERY = """
             query (${'$'}q: String, ${'$'}perPage: Int) {
               Page(page: 1, perPage: ${'$'}perPage) {
                 characters(search: ${'$'}q, sort: [SEARCH_MATCH]) {
-                  nodes {
-                    id
-                    name { full native }
-                    image { large medium }
-                    description(asHtml: false)
-                    favourites
-                    media(perPage: 10, type: ANIME, sort: [POPULARITY_DESC]) {
-                      nodes { id idMal format episodes title { romaji english } coverImage { medium } startDate { year } }
-                    }
+                  id
+                  name { full native }
+                  image { large medium }
+                  description(asHtml: false)
+                  age
+                  gender
+                  bloodType
+                  favourites
+                  media(perPage: 10, type: ANIME, sort: [POPULARITY_DESC]) {
+                    nodes { id idMal format episodes title { romaji english } coverImage { medium } startDate { year } }
                   }
+                }
+              }
+            }
+        """
+
+        /**
+         * 1.0.5: поиск самой серии по бо́ру-тегу IQDB. Запрашивается ровно то же,
+         * что и в [MEDIA_QUERY], кроме связей и рекомендаций: по названию они
+         * всё равно ставят в лишний заголовок, а страница успевает показать
+         * обложку раньше, чем они докачаются.
+         */
+        const val MEDIA_SEARCH_QUERY = """
+            query (${'$'}q: String, ${'$'}perPage: Int) {
+              Page(page: 1, perPage: ${'$'}perPage) {
+                media(search: ${'$'}q, type: ANIME, sort: [SEARCH_MATCH]) {
+                  id
+                  idMal
+                  title { romaji english native }
+                  description(asHtml: false)
+                  synonyms
+                  format
+                  status
+                  episodes
+                  duration
+                  season
+                  seasonYear
+                  startDate { year month day }
+                  averageScore
+                  popularity
+                  favourites
+                  trending
+                  isAdult
+                  genres
+                  tags { id name rank }
+                  coverImage { extraLarge large color }
+                  bannerImage
+                  studios { edges { isMain node { name } } }
+                  externalLinks { site url type }
+                  trailer { thumbnail }
                 }
               }
             }

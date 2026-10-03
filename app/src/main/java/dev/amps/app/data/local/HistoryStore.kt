@@ -12,20 +12,24 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 
+/**
+ * Запись истории поиска по картинке.
+ *
+ * **1.0.5:** эпизод, таймкод и номер кадра ушли вместе с trace.moe — у IQDB
+ * их нет, а выдумывать нечего. Остались id серии, сходство и имя персонажа.
+ * Старые записи в файле эти поля ещё содержат: `Json { ignoreUnknownKeys }`
+ * их пропустит, поэтому миграция не нужна и данные не теряются.
+ */
 @Serializable
 data class StoredFrame(
     val anilistId: Int,
-    val episode: Int? = null,
-    val timestamp: Double? = null,
     val similarity: Double? = null,
     val characterName: String? = null,
-    val engine: String = "trace.moe",
+    val engine: String = "IQDB",
 ) {
     fun toFrameHit() = FrameHit(
-        engine = engine,
-        episode = episode,
-        timestamp = timestamp,
-        similarity = similarity,
+        source = engine,
+        similarityPercent = similarity?.let { (it * 100).toInt() },
     )
 }
 
@@ -56,8 +60,8 @@ data class StoredTrack(
 
 /**
  * Search history as a plain JSON file: a handful of entries does not justify a
- * database, and keeping it on disk means the wiki can be reopened later even
- * when the bridge is not running.
+ * database, and keeping it on disk means the wiki can be reopened later — по
+ * сохранённому id серия дочитывается из AniList даже без сети.
  */
 class HistoryStore(private val context: Context) {
 

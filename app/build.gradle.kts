@@ -14,9 +14,19 @@ android {
         applicationId = "dev.amps.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.0.4"
+        versionCode = 7
+        versionName = "1.0.5"
         resourceConfigurations += listOf("ru", "en")
+
+        ndk {
+            // Только настоящие телефоны. ML Kit тянет за собой
+            // `libmlkitcommonpipeline.so` весом около 12 МБ на каждую
+            // архитектуру, и без фильтра в APK попадают ещё и x86 с x86_64 —
+            // а это примерно 24 МБ, нужные исключительно эмуляторам. Приложение
+            // на эмуляторе не запускают, а APK раздаётся напрямую одним файлом,
+            // поэтому эти две лишние архитектуры — чистый вес.
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     signingConfigs {

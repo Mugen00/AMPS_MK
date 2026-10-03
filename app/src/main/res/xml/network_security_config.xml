@@ -6,7 +6,7 @@
   reason was the local bridge on http://192.168.x.x:8787. Android matches
   hosts by name and has no way to say "HTTP only for one address", so a single
   development convenience became a blanket downgrade for every real request the
-  app makes — trace.moe, AniList, SauceNAO, Wikidata, fandom, MusicBrainz and
+  app makes — IQDB, AniList, Wikidata, fandom, MusicBrainz and
   every music source.
 
   With the bridge gone there is nothing left that needs HTTP, so the app now

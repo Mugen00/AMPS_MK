@@ -22,15 +22,16 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 
 /**
- * 1.0.2: says what is *in* a frame, for the case where trace.moe matched nothing.
+ * Говорит, что **есть** на картинке, для случая, когда обратный поиск ничего
+ * не нашёл.
  *
  * ML Kit's bundled image labeler answers with generic English categories —
  * "person", "sky", "building", "food". That is the whole point and the whole
  * limit of this class: it produces the raw generic signal, which is enough for
  * a later stage to reject a wrong guess and enough for the user to see
- * something useful on a frame trace.moe did not recognise. It does **not** know
+ * something useful on a picture IQDB did not recognise. It does **not** know
  * anime character names, anime titles, or specific fictional places, and nothing
- * below pretends otherwise — those come from a wiki lookup on the bridge.
+ * below pretends otherwise — those come from the booru tags and the wiki.
  *
  * Everything here is best-effort and total:
  *  - [analyze] never throws into the caller, not even after [close];

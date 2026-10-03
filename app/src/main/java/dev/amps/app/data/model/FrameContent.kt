@@ -16,7 +16,8 @@ import kotlinx.serialization.Serializable
 data class ContentLabel(val label: String, val confidence: Float)
 
 /**
- * 1.0.2: what is actually in a frame, for the case where trace.moe found nothing.
+ * 1.0.2: что на самом деле есть на картинке — на случай, когда обратный поиск
+ * ничего не нашёл.
  *
  * Before 1.0.2 a frame either matched or it did not, and a miss meant the app
  * knew nothing at all. This is the honest answer to "what is in this picture":

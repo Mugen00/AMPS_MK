@@ -513,6 +513,36 @@ class MusicRepository(
             !(this[2] == 0xFF.toByte() && this[3] == 0xD9.toByte())
 
     /**
+     * Похоже ли начало файла на аудио.
+     *
+     * Нужно, чтобы отсечь HTML-страницу «Ошибка 403» или пустой ответ CDN,
+     * которые сервер отдаёт с кодом 200 и которые иначе становятся «треком».
+     * Проверяем ID3, MPEG-фрейм и RIFF/WAVE — три формы, в которых приходят
+     * mp3 с этих площадок.
+     */
+    private fun ByteArray.looksLikeAudio(): Boolean {
+        if (size < 4) return false
+        // «ID3» — тег ID3v2 в начале файла.
+        if (this[0] == 'I'.code.toByte() && this[1] == 'D'.code.toByte() &&
+            this[2] == '3'.code.toByte()
+        ) {
+            return true
+        }
+        // «RIFF» + «WAVE» — контейнер WAV.
+        if (this[0] == 'R'.code.toByte() && this[1] == 'I'.code.toByte() &&
+            this[2] == 'F'.code.toByte() && this[3] == 'F'.code.toByte()
+        ) {
+            return true
+        }
+        // MPEG-аудио начинается с 11-битного синхрословада: 0xFF, затем биты
+        // слота 11, то есть маска 0xE0.
+        if (this[0] == 0xFF.toByte()) {
+            return (this[1].toInt() and 0xE0) == 0xE0
+        }
+        return false
+    }
+
+    /**
      * Storage Access Framework import. The file is copied into `filesDir/audio/`
      * with a sha256 taken while it streams, and the tags come from
      * `MediaMetadataRetriever`. The licence stays empty on purpose: an imported
@@ -648,6 +678,43 @@ class MusicRepository(
                     if (!expected.equals(sha1.digest().hex(), ignoreCase = true)) {
                         throw IOException("Контрольная сумма SHA-1 не совпала — файл удалён")
                     }
+                }
+
+                // Jamendo (и другие CDN) периодически отвечают `200 OK` с пустым телом.
+// Для OkHttp такой ответ успешен, поэтому раньше он проходил как скачанный
+// файл: на диск ложился ноль байт, запись попадала в библиотеку с sha256
+// пустого файла, а пользователю показывалось «Файл сохранён». Теперь пустой
+// и непохожий на аудио ответ отбраковывается до попадания в библиотеку.
+                if (read <= 0L) {
+                    partialFile.delete()
+                    throw IOException("Сервер отдал пустой файл (0 байт) — попробуйте ещё раз")
+                }
+                val head = ByteArray(minOf(read, 16).toInt())
+                partialFile.inputStream().use { stream ->
+                    // Фиксированный префикс читаем обычным циклом: у `readFully`
+                    // из stdlib нужен либо API 33, либо десахаризация, а она в
+                    // проекте выключена, и сборка падала бы на unresolved reference.
+                    var filled = 0
+                    while (filled < head.size) {
+                        val got = stream.read(head, filled, head.size - filled)
+                        if (got <= 0) break
+                        filled += got
+                    }
+                }
+                if (!head.looksLikeAudio()) {
+                    partialFile.delete()
+                    throw IOException(
+                        "Сервер отдал не аудио, а страницу с ошибкой — попробуйте ещё раз",
+                    )
+                }
+                // Расхождение с ожидаемым размером — тоже признак оборванной
+                // выдачи: файл вроде бы есть, но это половина трека.
+                val expectedBytes = track.format.fileBytes ?: 0L
+                if (expectedBytes > 0 && read < expectedBytes / 2) {
+                    partialFile.delete()
+                    throw IOException(
+                        "Скачалось $read байт вместо $expectedBytes — файл оборван, попробуйте ещё раз",
+                    )
                 }
 
                 if (finalFile.exists()) finalFile.delete()

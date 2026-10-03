@@ -14,23 +14,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.VpnKey
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -42,14 +35,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.amps.app.core.ThemeMode
-import dev.amps.app.data.model.BridgeHealth
-import dev.amps.app.ui.components.InfoChip
 import dev.amps.app.ui.components.SectionCard
 import dev.amps.app.ui.components.StatRow
 import dev.amps.app.ui.theme.AmpsColors
@@ -86,33 +74,29 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenUpdates: () -> Unit = {})
 
             SectionCard(title = "Ключи API", icon = Icons.Default.VpnKey) {
                 Text(
-                    "Приложение больше не ходит на ваш компьютер — все источники вызываются напрямую с телефона. Ключи хранятся только на устройстве и не отправляются никуда, кроме самих сервисов.",
+                    "Ключей в приложении больше нет. Поиск по картинке идёт через IQDB — он работает без ключа " +
+                        "и без регистрации, поэтому вводить нечего. Jamendo тоже подключён сразу.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = state.sauceNaoApiKey,
-                    onValueChange = viewModel::onSauceNaoKey,
-                    label = { Text("SauceNAO API-ключ") },
-                    placeholder = { Text("не задан") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Next,
-                    ),
-                    supportingText = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = AmpsColors.cyan,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text("IQDB подключён", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            if (state.sauceNaoApiKey.isBlank()) {
-                                "Без ключа поиск кадра работает по одному источнику и отвечает неуверенно"
-                            } else {
-                                "Второй источник подключён — вердикт будет подтверждён"
-                            }
+                            "Обратный поиск по картинке: спрашивает сразу Danbooru, Konachan, Gelbooru, Sankaku и другие базы",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    }
+                }
                 Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -130,10 +114,6 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenUpdates: () -> Unit = {})
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                }
-                Spacer(Modifier.height(14.dp))
-                Button(onClick = viewModel::save) {
-                    Text(if (state.dirty) "Сохранить" else "Сохранено")
                 }
             }
 
@@ -182,17 +162,17 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenUpdates: () -> Unit = {})
             }
 
             SectionCard(title = "О приложении", icon = Icons.Default.Info) {
-                StatRow("Название", "AMPS · поиск кадра и музыки")
+                StatRow("Название", "AMPS · поиск по картинке и музыке")
                 // Read from the package so it can never go stale next to the build.
                 StatRow("Версия", installedVersion)
-                StatRow("Поиск кадра", "trace.moe + SauceNAO через локальный мост")
+                StatRow("Поиск по картинке", "IQDB · без ключа и регистрации")
                 StatRow("Данные о серии", "AniList GraphQL")
                 StatRow("Музыка", "iTunes · MusicBrainz · Internet Archive · ccMixter")
                 Spacer(Modifier.height(10.dp))
                 Button(onClick = onOpenUpdates) { Text("Проверить обновления") }
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "Лицензии: trace.moe и AniList дают только метаданные. Аудио берётся лишь из источников со свободной лицензией или из файла, который вы импортировали сами.",
+                    "Лицензии: IQDB и AniList дают только метаданные. Аудио берётся лишь из источников со свободной лицензией или из файла, который вы импортировали сами.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

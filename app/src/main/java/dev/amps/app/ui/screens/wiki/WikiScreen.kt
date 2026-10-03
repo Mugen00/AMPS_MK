@@ -33,9 +33,9 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.ImageSearch
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
@@ -67,6 +67,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.amps.app.data.model.AnimeCharacter
 import dev.amps.app.data.model.AnimeMedia
 import dev.amps.app.data.model.AnimeWikiPage
+import dev.amps.app.data.model.CharacterGuess
 import dev.amps.app.data.model.FrameContent
 import dev.amps.app.data.model.FrameHit
 import dev.amps.app.data.model.FrameVerdict
@@ -140,10 +141,10 @@ fun WikiScreen(
                 }
 
                 page.frame?.let { hit ->
-                    item { FrameFoundCard(hit, page.searchedImageSha256) { hit.sceneUrl?.let { openUrl(context, it) } } }
+                    item { FrameFoundCard(hit, page.searchedImageSha256) { hit.url?.let { openUrl(context, it) } } }
                 }
 
-                if (page.candidates.isNotEmpty()) {
+                if (page.guess != null || page.candidates.isNotEmpty()) {
                     item {
                         CharacterCard(
                             guess = page.guess,
@@ -185,7 +186,7 @@ fun WikiScreen(
                 page.rawEngineText?.let { raw ->
                     item {
                         SectionCard(
-                            title = "Ответ движка",
+                            title = "Ответ IQDB",
                             icon = Icons.Default.AutoAwesome,
                         ) {
                             Text(
@@ -278,13 +279,27 @@ private fun VerdictCard(verdict: FrameVerdict, onOpen: (String) -> Unit) {
                 color = scheme.onSurfaceVariant,
             )
             verdict.candidates.drop(1).forEach { candidate ->
-                val url = "https://anilist.co/anime/${candidate.anilistId}"
-                TextButton(onClick = { onOpen(url) }, contentPadding = PaddingValues(0.dp)) {
+                // Ссылка на AniList есть только у варианта, который удалось
+                // подтвердить; у остальных известен лишь бо́ру-тег, и ссылку
+                // туда выдумывать нельзя.
+                val url = candidate.anilistId.takeIf { it > 0 }
+                    ?.let { "https://anilist.co/anime/$it" }
+                if (url == null) {
                     Text(
-                        text = candidate.title.ifBlank { "AniList #${candidate.anilistId}" } +
+                        text = candidate.title.ifBlank { "тег серии" } +
                             candidate.sources.joinToString(prefix = "  ·  "),
                         style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 2.dp),
                     )
+                } else {
+                    TextButton(onClick = { onOpen(url) }, contentPadding = PaddingValues(0.dp)) {
+                        Text(
+                            text = candidate.title.ifBlank { "AniList #${candidate.anilistId}" } +
+                                candidate.sources.joinToString(prefix = "  ·  "),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
             }
         }
@@ -302,10 +317,10 @@ private fun FrameContentCard(content: FrameContent) {
     ).filter { it.second.isNotEmpty() }
     if (buckets.isEmpty() && content.labels.isEmpty()) return
 
-    SectionCard(title = "Что видно на кадре", icon = Icons.Default.Visibility) {
+    SectionCard(title = "Что видно на картинке", icon = Icons.Default.Visibility) {
         Text(
-            text = "Определено на самом телефоне, без интернета и без отправки кадра наружу. " +
-                "Это общие признаки, а не названия — имена персонажей и мест приходят из вики.",
+            text = "Определено на самом телефоне, без интернета и без отправки картинки наружу. " +
+                "Это общие признаки, а не названия — имена персонажей и мест приходят из бо́ру-тегов и вики.",
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurfaceVariant,
         )
@@ -445,29 +460,38 @@ private fun HeroBlock(page: AnimeWikiPage) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FrameFoundCard(hit: FrameHit, sha256: String?, onOpenScene: () -> Unit) {
+private fun FrameFoundCard(hit: FrameHit, sha256: String?, onOpenSource: () -> Unit) {
     SectionCard(
-        title = "Кадр найден",
-        icon = Icons.Default.PlayCircle,
-        trailing = { InfoChip(hit.engine, color = AmpsColors.cyan) },
+        title = "Где нашлось совпадение",
+        icon = Icons.Default.ImageSearch,
+        trailing = { InfoChip(hit.source, color = AmpsColors.cyan) },
     ) {
+        Text(
+            "IQDB ищет по иллюстрациям, скриншотам и фото в бо́ру-базах, а не по кадрам видеозаписей. " +
+                "Поэтому у находки нет ни номера эпизода, ни таймкода: сервис их не сообщает, а выдумывать их нельзя.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(10.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            hit.episode?.let { InfoChip("Серия $it", color = AmpsColors.amber) }
-            hit.timestampLabel?.let { InfoChip("Таймкод $it", color = AmpsColors.amber) }
-            hit.similarityPercent?.let { InfoChip("Сходство $it%", color = AmpsColors.cyan) }
+            hit.similarityLabel?.let { InfoChip("Сходство $it", color = AmpsColors.cyan) }
+            InfoChip(
+                if (hit.exactMatch) "точное совпадение" else "похожее совпадение",
+                color = if (hit.exactMatch) AmpsColors.cyan else AmpsColors.amber,
+            )
         }
         Spacer(Modifier.height(12.dp))
-        if (hit.sceneUrl != null) {
-            OutlinedButton(onClick = onOpenScene, modifier = Modifier.fillMaxWidth()) {
+        if (hit.url != null) {
+            OutlinedButton(onClick = onOpenSource, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Открыть найденную сцену")
+                Text("Открыть найденную картинку")
             }
         }
         sha256?.let {
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "SHA-256 кадра: ${it.take(24)}…",
+                text = "SHA-256 изображения: ${it.take(24)}…",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontFamily = FontFamily.Monospace,
@@ -476,116 +500,149 @@ private fun FrameFoundCard(hit: FrameHit, sha256: String?, onOpenScene: () -> Un
     }
 }
 
+/**
+ * **1.0.5: здесь разведены две разные вещи, которые раньше были одной.**
+ *
+ * Прежде карточка называлась «Персонаж в кадре», а сверху показывала первого
+ * кандидата из AniList, даже если совпадение по тегам не нашлось вовсе. Это
+ * прямой обман: список персонажей серии ничего не говорит о том, кто изображён
+ * на картинке.
+ *
+ * Теперь:
+ * - сверху — только тот, кого IQDB назвал по бо́ру-тегу и кого AniList
+ *   подтвердил; подпись прямо говорит, что это «по тегам источника»;
+ * - ниже — весь состав серии с честной оговоркой, что это перечень серии, а не
+ *   догадка о том, кто на картинке.
+ *
+ * Если тегов не было вовсе, не выдумывается ничего: так и написано, что
+ * определить нечем и почему.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CharacterCard(
-    guess: dev.amps.app.data.model.CharacterGuess?,
+    guess: CharacterGuess?,
     candidates: List<AnimeCharacter>,
     onSelect: (AnimeCharacter) -> Unit,
 ) {
-    val character = guess?.character ?: candidates.firstOrNull()
+    val found = guess?.character
     SectionCard(
-        title = "Персонаж в кадре",
+        title = "Персонаж",
         icon = Icons.Default.Face,
         trailing = {
-            guess?.let { InfoChip("${(it.score * 100).toInt()}%", color = AmpsColors.cyan) }
+            found?.let { InfoChip("по тегам источника", color = AmpsColors.cyan) }
         },
     ) {
-        if (character == null) {
+        if (found == null) {
             Text(
-                "Персонажи не определены.",
+                "Совпадений не найдено. IQDB ищет по иллюстрациям и скриншотам, которые уже есть в бо́ру-базах; " +
+                    "обычное фото или скриншот из видеоигры там не лежат — и назвать по ним персонажа нечем.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            return@SectionCard
-        }
-
-        Row(Modifier.fillMaxWidth()) {
-            NetworkImage(
-                url = character.image,
-                contentDescription = character.displayName,
-                modifier = Modifier
-                    .size(width = 108.dp, height = 150.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = character.displayName.orEmpty(),
-                    style = MaterialTheme.typography.titleMedium,
+        } else {
+            Row(Modifier.fillMaxWidth()) {
+                NetworkImage(
+                    url = found.image,
+                    contentDescription = found.displayName,
+                    modifier = Modifier
+                        .size(width = 108.dp, height = 150.dp)
+                        .clip(RoundedCornerShape(16.dp)),
                 )
-                character.name.native?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
                     Text(
-                        text = it,
+                        text = found.displayName.orEmpty(),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = "найден по тегам источника, а не распознан на картинке",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-                Spacer(Modifier.height(8.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    InfoChip(if (character.role == "MAIN") "Главный" else "Второстепенный", color = AmpsColors.violet)
-                    character.age?.let { InfoChip(it, color = AmpsColors.amber) }
-                    character.gender?.let { InfoChip(it.lowercase().replaceFirstChar(Char::uppercase), color = AmpsColors.amber) }
-                    character.bloodType?.let { InfoChip("Группа $it", color = AmpsColors.rose) }
+                    found.name.native?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        InfoChip(if (found.role == "MAIN") "Главный" else "Второстепенный", color = AmpsColors.violet)
+                        found.age?.let { InfoChip(it, color = AmpsColors.amber) }
+                        found.gender?.let { InfoChip(it.lowercase().replaceFirstChar(Char::uppercase), color = AmpsColors.amber) }
+                        found.bloodType?.let { InfoChip("Группа $it", color = AmpsColors.rose) }
+                    }
                 }
             }
-        }
 
-        if (guess != null && guess.reason.isNotBlank()) {
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = "Почему: ${guess.reason}",
-                style = MaterialTheme.typography.bodySmall,
-                color = AmpsColors.cyan,
-            )
-        }
+            if (guess.reason.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "Почему: ${guess.reason}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AmpsColors.cyan,
+                )
+            }
 
-        character.description?.let { description ->
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = htmlToAnnotatedString(description)?.text.orEmpty(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 8,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+            found.description?.let { description ->
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = htmlToAnnotatedString(description)?.text.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 8,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
 
-        if (character.appearances.isNotEmpty()) {
-            Spacer(Modifier.height(14.dp))
-            Text("Появления", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(character.appearances.filter { it.cover != null }) { media ->
-                    Column(Modifier.width(86.dp)) {
-                        NetworkImage(
-                            url = media.cover,
-                            contentDescription = media.title.best,
-                            modifier = Modifier
-                                .size(86.dp)
-                                .clip(RoundedCornerShape(12.dp)),
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = media.title.best.orEmpty(),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+            if (found.appearances.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Text("Появления", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(found.appearances.filter { it.cover != null }) { media ->
+                        Column(Modifier.width(86.dp)) {
+                            NetworkImage(
+                                url = media.cover,
+                                contentDescription = media.title.best,
+                                modifier = Modifier
+                                    .size(86.dp)
+                                    .clip(RoundedCornerShape(12.dp)),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = media.title.best.orEmpty(),
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
             }
         }
 
-        if (candidates.size > 1) {
-            Spacer(Modifier.height(14.dp))
-            Text("Другие персонажи серии", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
+        // Состав серии — это отдельный факт, и подписывать его надо отдельно:
+        // перечисление персонажей не равно утверждению «вот этот изображён».
+        if (candidates.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = if (found != null) "Персонажи этой серии" else "Персонажи серии",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "Кто именно в кадре, определяет только совпадение по тегам — этот список к картинке отношения не имеет.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(candidates.filter { it.id != character.id }) { candidate ->
+                items(candidates.filter { found == null || it.id != found.id }) { candidate ->
                     Column(
                         modifier = Modifier
                             .width(74.dp)
@@ -617,9 +674,8 @@ private fun CharacterCard(
 @Composable
 private fun SimilarImagesBlock(page: AnimeWikiPage, onOpen: (String) -> Unit) {
     val items = buildList {
-        page.frame?.previewImageUrl?.let { add(Triple(it, "Найденный кадр", "trace.moe")) }
         page.similarArt.forEach { art ->
-            art.url?.let { add(Triple(it, art.source, "SauceNAO · ${art.similarity ?: 0}%")) }
+            art.url?.let { add(Triple(it, art.title ?: art.source, "${art.source} · ${art.similarity ?: 0}%")) }
         }
         page.guess?.character?.let { character ->
             character.image?.let { add(Triple(it, "Портрет персонажа", "AniList")) }
@@ -801,7 +857,7 @@ private fun SourcesCard(page: AnimeWikiPage, onOpen: (String) -> Unit) {
             ) {
                 Icon(
                     imageVector = when {
-                        source.label.contains("trace") -> Icons.Default.AutoAwesome
+                        source.label.contains("IQDB") -> Icons.Default.ImageSearch
                         source.label.contains("AniList") -> Icons.Default.Book
                         else -> Icons.Default.Link
                     },

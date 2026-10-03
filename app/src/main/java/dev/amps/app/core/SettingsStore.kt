@@ -18,23 +18,11 @@ data class AppSettings(
      * поэтому поле оставлено лишь для того, чтобы можно было подставить свой.
      */
     val jamendoClientId: String = JamendoClient.DEFAULT_CLIENT_ID,
-    /**
-     * 1.0.3: ключ SauceNAO спрашивает пользователя.
-     *
-     * Раньше он лежал в `.env` на компьютере и в APK не попадал. Вшить его в
-     * приложение — значит отдать его тому, кто распакует APK, а под ним
-     * квота, за которую отвечает владелец. Поэтому пустой ключ здесь означает
-     * «второго источника нет», и это честно показывается в вердикте.
-     */
-    val sauceNaoApiKey: String = "",
     /** 1.0.3: импортировать скачанный трек в музыкальную библиотеку телефона. */
     val importToMediaStore: Boolean = true,
     val keepSearchHistory: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.DARK,
 ) {
-    /** Подтверждён ли хоть один независимый источник помимо trace.moe. */
-    val hasSecondSource: Boolean get() = sauceNaoApiKey.isNotBlank()
-
     companion object {
         /**
          * Настройки моста (`bridge_url`, `auto_bridge`, `auto_check_bridge`)
@@ -46,6 +34,15 @@ data class AppSettings(
          */
         @Suppress("unused")
         const val LEGACY_BRIDGE_KEYS = "bridge_url, auto_bridge, auto_check_bridge"
+
+        /**
+         * 1.0.5: `sauce_nao_api_key` удалён из настроек вместе с самим
+         * SauceNAO. Значение остаётся в файле как мёртвая запись — читать его
+         * больше нечем, а удаление при обновлении рискует потерять данные
+         * сильнее, чем просто оставить лишний байт в JSON.
+         */
+        @Suppress("unused")
+        const val LEGACY_SAUCE_KEYS = "sauce_nao_api_key"
     }
 }
 
@@ -55,7 +52,6 @@ class SettingsStore(private val context: Context) {
 
     private object Keys {
         val jamendoClientId = stringPreferencesKey("jamendo_client_id")
-        val sauceNaoApiKey = stringPreferencesKey("sauce_nao_api_key")
         val importToMediaStore = booleanPreferencesKey("import_to_media_store")
         val keepHistory = booleanPreferencesKey("keep_history")
         val themeMode = stringPreferencesKey("theme_mode")
@@ -65,7 +61,6 @@ class SettingsStore(private val context: Context) {
         AppSettings(
             jamendoClientId = prefs[Keys.jamendoClientId]?.takeIf { it.isNotBlank() }
                 ?: JamendoClient.DEFAULT_CLIENT_ID,
-            sauceNaoApiKey = prefs[Keys.sauceNaoApiKey].orEmpty(),
             importToMediaStore = prefs[Keys.importToMediaStore] ?: true,
             keepSearchHistory = prefs[Keys.keepHistory] ?: true,
             themeMode = prefs[Keys.themeMode]
@@ -75,8 +70,6 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun setJamendoClientId(id: String) = put(Keys.jamendoClientId, id.trim())
-
-    suspend fun setSauceNaoApiKey(key: String) = put(Keys.sauceNaoApiKey, key.trim())
 
     suspend fun setImportToMediaStore(value: Boolean) = put(Keys.importToMediaStore, value)
 

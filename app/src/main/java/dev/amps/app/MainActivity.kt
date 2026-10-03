@@ -119,7 +119,6 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
     val frameViewModel: FrameSearchViewModel = viewModel(
         factory = FrameSearchViewModel.Factory(
             repository = container.frameRepository,
-            settings = container.settings,
             appContext = context.applicationContext,
         )
     )
@@ -152,7 +151,7 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
     }
 
     val tabs = listOf(
-        TabItem(Routes.FRAME, "Кадр", Icons.Default.ImageSearch),
+        TabItem(Routes.FRAME, "Картинка", Icons.Default.ImageSearch),
         TabItem(Routes.MUSIC, "Музыка", Icons.Default.MusicNote),
         TabItem(Routes.SETTINGS, "Настройки", Icons.Default.Settings),
     )
@@ -183,7 +182,6 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                 FrameSearchScreen(
                     viewModel = frameViewModel,
                     onOpenWiki = { navController.navigate(Routes.WIKI) },
-                    onOpenSettings = { navController.navigateToTab(Routes.SETTINGS) },
                     onOpenHistory = { navController.navigate(Routes.HISTORY) },
                 )
             }

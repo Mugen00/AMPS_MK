@@ -2,6 +2,24 @@ package dev.amps.app.data.model
 
 /** Domain models for the anime wiki page. */
 
+/**
+ * Названия произведения во всех видах, в которых их знают разные базы.
+ *
+ * С 1.0.5 эта модель переехала сюда из `BridgeModels.kt`: остальной файл был
+ * DTO-моделями локального моста, которых с 1.0.3 нет, а после удаления
+ * trace.moe и SauceNAO не осталось и их. Держать отдельный файл ради одной
+ * структуры — значит врать структурой проекта.
+ */
+@kotlinx.serialization.Serializable
+data class Titles(
+    val romaji: String? = null,
+    val english: String? = null,
+    val native: String? = null,
+) {
+    /** Best available display title: English, then romaji, then native. */
+    val best: String? get() = english ?: romaji ?: native
+}
+
 data class AnimeMedia(
     val id: Int,
     val idMal: Int? = null,
@@ -75,30 +93,28 @@ data class AnimeCharacter(
 
 data class CharacterName(val full: String? = null, val native: String? = null)
 
-/** Where the frame was found. */
+/**
+ * Где именно картинка нашлась.
+ *
+ * **1.0.5: отсюда ушли серия, эпизод, таймкод и ссылка на сцену.** Так выглядела
+ * находка trace.moe — кадр из видеозаписи, поэтому у него был номер секунды.
+ * IQDB ищет по иллюстрациям, скриншотам и фотографиям, а не по кадрам
+ * записей, поэтому ни эпизода, ни секунды у него нет и **выдумывать их нельзя**:
+ * правдивая пустая строка лучше красивого несуществующего таймкода.
+ *
+ * Осталось ровно то, что сервис сказал: какая база ответила, с каким сходством
+ * и была ли находка точной.
+ */
 data class FrameHit(
-    val engine: String = "trace.moe",
-    val episode: Int? = null,
-    val frame: Int? = null,
-    val timestamp: Double? = null,
-    val similarity: Double? = null,
-    val sceneUrl: String? = null,
+    val source: String = "IQDB",
+    /** Сходство целым процентом, как его отдаёт IQDB: 60..100. */
+    val similarityPercent: Int? = null,
+    /** Страница найденной картинки в бо́ру-базе. */
+    val url: String? = null,
+    /** IQDB пометил находку как «Best match», а не как дополнительную. */
+    val exactMatch: Boolean = false,
 ) {
-    val timestampLabel: String?
-        get() = timestamp?.let {
-            val total = it.toLong()
-            val minutes = total / 60
-            val seconds = total % 60
-            "%d:%02d".format(minutes, seconds)
-        }
-
-    val similarityPercent: Int? get() = similarity?.let { (it * 100).toInt() }
-
-    /** trace.moe publishes a still for every match; same id, different path. */
-    val previewImageUrl: String?
-        get() = sceneUrl
-            ?.replace("/video/", "/image/")
-            ?.let { if (it.contains('?')) it else "$it?size=l" }
+    val similarityLabel: String? get() = similarityPercent?.let { "$it %" }
 }
 
 /** A character that was picked out of the frame, with the reason it won. */
@@ -199,5 +215,4 @@ data class EmptyResult(
     val raw: String?,
     val searchedImage: String? = null,
     val searchedImageSha256: String? = null,
-    val bridgeError: String? = null,
 )

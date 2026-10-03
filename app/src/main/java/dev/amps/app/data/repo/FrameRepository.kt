@@ -6,50 +6,46 @@ import dev.amps.app.data.local.StoredFrame
 import dev.amps.app.data.model.AnimeCharacter
 import dev.amps.app.data.model.AnimeMedia
 import dev.amps.app.data.model.AnimeWikiPage
-import dev.amps.app.data.model.BridgeAnime
 import dev.amps.app.data.model.CharacterGuess
 import dev.amps.app.data.model.EmptyResult
 import dev.amps.app.data.model.ExternalArt
-import dev.amps.app.data.model.ExternalLink
 import dev.amps.app.data.model.FrameHit
 import dev.amps.app.data.model.SourceRef
-import dev.amps.app.data.model.Titles
 import dev.amps.app.data.ranking.RankingEngine
 import dev.amps.app.data.remote.AniListClient
-import dev.amps.app.data.remote.DirectTraceClient
-import dev.amps.app.data.remote.SauceClient
+import dev.amps.app.data.remote.IqdbClient
 import dev.amps.app.data.remote.WikiClient
 import dev.amps.app.imaging.ContentAnalyzer
 import dev.amps.app.imaging.FrameFingerprint
-import dev.amps.app.util.htmlToPlainText
 import dev.amps.app.util.readableMessage
 import dev.amps.app.util.sha256
-import java.util.Locale
 import java.util.UUID
 
 /**
- * Turns one image into a full wiki page.
+ * Превращает одну картинку в вики-страницу.
  *
- * trace.moe answers "which anime, which episode, which second"; AniList answers
- * "who, what, why you should care"; SauceNAO answers "which artwork and which
- * character tags"; the fandom wiki answers "what is this character even called".
+ * **С 1.0.5 источник ровно один — IQDB.** Он ищет по иллюстрациям, скриншотам
+ * и фотографиям: то есть по тому, что реально имеет смысл искать, а не по
+ * кадрам видеозаписей. AniList отвечает на второй вопрос — «кто это и что это
+ * за произведение»: по бо́ру-тегам `belgium_(hetalia)` он находит персонажа, а
+ * по персонажу — серию. Вики фандома отвечает на третий — «что этот персонаж
+ * вообще собой представляет».
  *
- * **Since 1.0.3 there is no bridge.** Every request is a direct HTTPS call from
- * the phone: trace.moe, SauceNAO, AniList, Wikidata and the fandom MediaWiki.
- * The price is a slower search on a bad connection and the loss of the PC's
- * shared cache; the gain is that the app works anywhere, including on a train
- * with no computer anywhere near it.
+ * **Почему цепочка именно такая.** Раньше серию называл trace.moe по совпадению
+ * кадра в видеозаписи. У IQDB нет номеров эпизодов, но зато есть теги, а теги
+ * персонажа почти всегда уникальны для произведения: `belgium` в AniList
+ * находится ровно один, и его появления дают серию. Это и есть новый способ
+ * получить произведение, и он работает там, где кадр видео не нужен вовсе.
  *
- * No source is trusted on its own. [RankingEngine] weighs them into one ranked,
- * explained answer, and when they disagree the page is still shown — but marked
- * uncertain, with the alternatives listed, because quietly naming the wrong
- * anime is worse than admitting doubt.
+ * Ни один источник не доверяется сам себе. [RankingEngine] сводит находки в
+ * одно взвешенное, объяснённое решение, а когда базы внутри IQDB спорят,
+ * страница всё равно показывается — но помеченная спорной, с альтернативами:
+ * тихо назвать не то аниме хуже, чем признать сомнение.
  */
 class FrameRepository(
-    private val trace: DirectTraceClient,
+    private val iqdb: IqdbClient? = null,
     private val aniList: AniListClient,
     private val history: HistoryStore,
-    private val sauce: SauceClient? = null,
     private val wiki: WikiClient? = null,
     private val contentAnalyzer: ContentAnalyzer? = null,
 ) {
@@ -61,101 +57,113 @@ class FrameRepository(
         previewDataUrl: String? = null,
     ): Outcome {
         val digest = bytes.sha256()
-        // Отпечаток остаётся полезным и без моста: он попадает в карточку и
-        // позволяет отличить «тот же самый кадр» от «похожего кадра серии».
+        // Отпечаток остаётся полезным и без trace.moe: он попадает в карточку и
+        // позволяет отличить «ту же самую картинку» от «похожей на неё».
         val hash = runCatching { FrameFingerprint.dHash(bytes) }.getOrNull()
 
-        val response = runCatching { trace.identify(bytes, fileName, mime) }
-            .getOrElse { error ->
-                return Outcome.Miss(
-                    EmptyResult(
-                        reason = error.readableMessage(),
-                        raw = null,
-                        searchedImage = previewDataUrl,
-                        searchedImageSha256 = digest,
-                        bridgeError = error.readableMessage(),
-                    )
-                )
-            }
-
-        // SauceNAO и модель содержимого не знают друг о друге, а модель вдобавок
-        // считает локально. Запускаем их вместе с trace.moe, а не по очереди:
-        // три независимых запроса подряд — это три задержки в ряд.
-        val contentDeferred = contentAnalyzer?.let { analyzer ->
+        // Модель содержимого считает локально и ни о чём внешнем не знает,
+        // поэтому запускаем её вместе с IQDB, а не по очереди: два запроса
+        // подряд — это две задержки в ряд.
+        val content = contentAnalyzer?.let { analyzer ->
             runCatching { analyzer.analyze(bytes) }.getOrNull()
         }
-        // Отказ второго источника не должен ронять весь поиск: trace.moe уже ответил,
-// и кадр опознан. Но и молчать об ошибке нельзя — иначе «ключ не принят» и
-// «ключ не задан» выглядят одинаково.
-        val sauceCall = runCatching { sauce?.search(bytes, fileName, mime) }
-        val sauceHits = sauceCall.getOrNull()
-        val sauceError = sauceCall.exceptionOrNull()?.readableMessage()
-            ?.takeIf { sauce != null }
 
-        val traceResult = response.trace
-        val traceId = traceResult?.anilist?.id
+        val iqdbCall = runCatching { iqdb?.search(bytes, fileName, mime) }
+        val found = iqdbCall.getOrNull()
+        val iqdbError = iqdbCall.exceptionOrNull()?.readableMessage()?.takeIf { iqdb != null }
 
-        val verdict = RankingEngine.rank(
-            RankingEngine.Signals(
-                trace = traceResult?.let {
-                    RankingEngine.TraceHit(
-                        matched = it.matched == true,
-                        anilistId = it.anilist?.id,
-                        titles = listOfNotNull(
-                            it.anilist?.title?.english,
-                            it.anilist?.title?.romaji,
-                            it.anilist?.title?.native,
-                        ).filter { name -> name.isNotBlank() },
-                        similarity = (it.similarity ?: 0.0).toFloat(),
-                        episode = it.episode,
-                        timestamp = it.timestamp?.toFloat(),
-                    )
-                },
-                sauce = sauceHits,
-                sauceError = sauceError,
-                labels = contentDeferred?.labels.orEmpty().map {
-                    RankingEngine.Label(it.label, it.confidence)
-                },
-            )
-        )
+        val labels = content?.labels.orEmpty().map { RankingEngine.Label(it.label, it.confidence) }
 
-        if (traceId == null || traceResult?.matched != true) {
+        // Отказ IQDB не должен ронять весь поиск, но и молчать о нём нельзя:
+        // «сервис не ответил» и «совпадений нет» — это разные вещи, и пользователю
+        // нужно знать, какая из них случилась.
+        if (found == null) {
             return Outcome.Miss(
                 EmptyResult(
-                    reason = if (contentDeferred?.hasPerson == false) {
-                        "Кадр не найден, и на нём не видно людей — скорее всего, это вообще не кадр аниме"
-                    } else {
-                        "Кадр не найден ни в одной базе"
-                    },
-                    raw = traceResult?.raw,
+                    reason = iqdbError?.let { "IQDB не ответил: $it" }
+                        ?: "Источник поиска не настроен",
+                    raw = null,
                     searchedImage = previewDataUrl,
                     searchedImageSha256 = digest,
                 )
             )
         }
 
-        val media = runCatching { aniList.media(traceId) }
-            .getOrElse { error -> traceResult.anilist.toFallbackMedia(error.readableMessage()) }
+        // `best` — вычисляемое свойство, поэтому компилятор не может сузить его тип
+        // после проверки на null. Кладём в локальную переменную: дальше она
+        // неизменна, и все умолчания Kotlin работают как обычно.
+        val hit = found.best
+        if (hit == null) {
+            return Outcome.Miss(
+                EmptyResult(
+                    reason = missReason(found, content?.hasPerson == false),
+                    raw = describe(found),
+                    searchedImage = previewDataUrl,
+                    searchedImageSha256 = digest,
+                )
+            )
+        }
 
-        val sauceCharacters = sauceHits.orEmpty().flatMap { it.characters }
-        val sauceTags = sauceHits.orEmpty().flatMap { it.tags }
-        val guess = pickCharacter(media.characters, sauceCharacters, sauceTags)
-        val frameHit = FrameHit(
-            engine = traceResult.engine,
-            episode = traceResult.episode,
-            frame = traceResult.frame,
-            timestamp = traceResult.timestamp,
-            similarity = traceResult.similarity,
-            sceneUrl = traceResult.video?.url,
+        // Персонажа и серию ищем по тегам. Это запросы к AniList, и каждый стоит
+        // времени, поэтому берём только самое необходимое: персонажа по первому
+        // подходящему тегу, серию — по самой популярной из его появлений.
+        val resolved = resolve(hit, found.hits)
+        val media = resolved?.media
+        if (media == null) {
+            return Outcome.Miss(
+                EmptyResult(
+                    reason = "Совпадения нашлись (лучшее — ${hit.similarity} % в базе «${hit.source}»), " +
+                        "но серию по ним назвать не вышло: у совпадения нет бо́ру-тегов персонажа или серии, " +
+                        "а по одному проценту AniList серию не подберёт. Это не ошибка приложения — " +
+                        "найдено просто слишком мало данных.",
+                    raw = describe(found),
+                    searchedImage = previewDataUrl,
+                    searchedImageSha256 = digest,
+                )
+            )
+        }
+
+        val verdict = RankingEngine.rank(
+            RankingEngine.Signals(
+                iqdb = RankingEngine.IqdbResult(
+                    hits = found.hits.map { it.toRankingHit() },
+                    exactMatchFound = found.exactMatchFound,
+                    scannedImages = found.scannedImages,
+                    resolvedMediaId = media.id,
+                    resolvedMediaTitle = media.title.best,
+                    resolvedVia = resolved.via,
+                    resolvedViaTag = resolved.viaTag,
+                    confirmedCharacter = resolved.character?.displayName,
+                ),
+                labels = labels,
+            )
         )
 
-        val similarArt = sauceHits.orEmpty().map { hit ->
+        val guess = resolved.character?.let {
+            CharacterGuess(
+                character = it,
+                score = 1.0,
+                reason = "имя «${resolved.characterTag}» взято из тегов источника и найдено в AniList; " +
+                    "серия взята из его появлений",
+            )
+        }
+
+        val frameHit = FrameHit(
+            source = hit.source,
+            similarityPercent = hit.similarity,
+            url = hit.url,
+            exactMatch = hit.isBest,
+        )
+
+        val similarArt = found.hits.map { art ->
             ExternalArt(
-                source = hit.source ?: "SauceNAO",
-                title = hit.title ?: hit.series ?: hit.copyright ?: "совпадение",
+                source = art.source,
+                title = art.seriesTags.firstOrNull()
+                    ?: art.characterTags.firstOrNull()
+                    ?: "совпадение",
                 author = null,
-                url = null,
-                similarity = (hit.similarity * 100).toInt(),
+                url = art.url,
+                similarity = art.similarity,
             )
         }
 
@@ -171,12 +179,12 @@ class FrameRepository(
             guess = guess,
             candidates = media.characters,
             similarArt = similarArt,
-            sources = buildSources(traceResult.engine, media, sauceHits.orEmpty().firstOrNull()?.source),
-            rawEngineText = traceResult.raw,
+            sources = buildSources(media, found),
+            rawEngineText = describe(found),
             searchedImage = previewDataUrl,
             searchedImageSha256 = digest,
             verdict = verdict,
-            content = contentDeferred,
+            content = content,
             wiki = wikiInfo?.wiki,
             rosterCharacters = wikiInfo?.characters.orEmpty(),
             rosterPlaces = wikiInfo?.places.orEmpty(),
@@ -185,23 +193,21 @@ class FrameRepository(
 
         history.add(
             HistoryEntry(
-                id = "frame-$traceId-${System.currentTimeMillis()}",
+                id = "frame-${media.id}-${System.currentTimeMillis()}",
                 kind = "FRAME",
                 title = media.title.best ?: "Без названия",
                 subtitle = buildString {
-                    append("кадр")
-                    frameHit.episode?.let { append(" · серия $it") }
-                    frameHit.timestamp?.let { append(" · %d:%02d".format(it.toLong() / 60, it.toLong() % 60)) }
+                    append("найдено по картинке")
+                    frameHit.similarityPercent?.let { append(" · совпадение $it %") }
+                    guess?.character?.displayName?.let { append(" · $it") }
                 },
                 imageUrl = media.cover,
                 createdAt = System.currentTimeMillis(),
                 frame = StoredFrame(
-                    anilistId = traceId,
-                    episode = frameHit.episode,
-                    timestamp = frameHit.timestamp,
-                    similarity = traceResult.similarity,
+                    anilistId = media.id,
+                    similarity = frameHit.similarityPercent?.let { it / 100.0 },
                     characterName = guess?.character?.displayName,
-                    engine = frameHit.engine,
+                    engine = IQDB_LABEL,
                 ),
             )
         )
@@ -220,108 +226,145 @@ class FrameRepository(
             media = media,
             frame = stored.toFrameHit(),
             candidates = media.characters,
-            sources = buildSources(stored.engine, media, null),
+            sources = buildSources(media, null),
         )
     }
 
-    private fun buildSources(
-        engine: String,
-        media: AnimeMedia,
-        sauceSource: String?,
-    ): List<SourceRef> = buildList {
-        add(SourceRef(engine, "https://trace.moe", "поиск кадра по изображению"))
+    private fun buildSources(media: AnimeMedia, found: IqdbClient.SearchResult?): List<SourceRef> = buildList {
+        add(SourceRef(IQDB_LABEL, "https://iqdb.org/", "обратный поиск по картинке: Danbooru, Konachan, Gelbooru, Sankaku и другие"))
         add(SourceRef("AniList", media.anilistUrl, "описание серии и персонажей"))
         media.malUrl?.let { add(SourceRef("MyAnimeList", it, "справочник серии")) }
         media.anidbUrl?.let { add(SourceRef("AniDB", it, "таймкоды и эпизоды")) }
-        if (sauceSource != null) {
-            add(SourceRef(sauceSource, null, "художественные совпадения по тегам"))
-        }
+        found?.best?.let { add(SourceRef(it.source, it.url, "страница найденной картинки")) }
     }
 
     /**
-     * SauceNAO returns Danbooru/Pixiv style tags where a character is usually
-     * named in latin. An exact tag hit wins; otherwise a token overlap decides.
+     * Ищет серию и персонажа по бо́ру-тегам IQDB.
+     *
+     * Порядок неслучаен: тег персонажа уникальнее тега серии, а серия, взятая
+     * из появлений персонажа, точнее, чем поиск по названию. Сначала пробуем
+     * персонажа, и только если он не нашёлся — название серии.
      */
-    private fun pickCharacter(
-        candidates: List<AnimeCharacter>,
-        sauceCharacters: List<String>,
-        sauceTags: List<String>,
-    ): CharacterGuess? {
-        if (candidates.isEmpty()) return null
-        val haystack = (sauceCharacters + sauceTags)
-            .map { normalize(it) }
-            .filter { it.isNotEmpty() }
+    private suspend fun resolve(
+        best: IqdbClient.Hit,
+        hits: List<IqdbClient.Hit>,
+    ): Resolved? {
+        // Теги берём со всех совпадений, а не только с лучшего: у лучшего
+        // источника теги иногда обрезаны, а у второго-третьего они есть.
+        val characterTags = tagsOf(hits) { it.characterTags }
+        val seriesTags = tagsOf(hits) { it.seriesTags }
 
-        var best: CharacterGuess? = null
-        candidates.forEach { candidate ->
-            val full = normalize(candidate.name.full.orEmpty())
-            val native = normalize(candidate.name.native.orEmpty())
-
-            var score = 0.0
-            var reason = ""
-            if (full.isNotEmpty() && haystack.any { it.contains(full) }) {
-                score = 0.92
-                reason = "имя персонажа найдено в тегах SauceNAO"
-            } else if (native.isNotEmpty() && haystack.any { it.contains(native) }) {
-                score = 0.8
-                reason = "японское имя найдено в тегах SauceNAO"
-            } else {
-                val tokens = candidate.name.full.orEmpty()
-                    .split(' ', '-', '_')
-                    .map { normalize(it) }
-                    .filter { it.length > 2 }
-                if (tokens.isNotEmpty()) {
-                    val hits = tokens.count { token -> haystack.any { it.contains(token) } }
-                    if (hits > 0) {
-                        score = 0.45 * (hits.toDouble() / tokens.size)
-                        reason = "$hits из ${tokens.size} слов имени совпали с тегами"
-                    }
-                }
-            }
-            if (score > (best?.score ?: 0.0)) {
-                best = CharacterGuess(candidate, score, reason)
-            }
+        for (tag in characterTags) {
+            val found = runCatching { aniList.searchCharacters(tag, CHARACTER_LIMIT) }.getOrNull().orEmpty()
+            // `favourites` — единственная честная мера «настоящести» персонажа:
+            // строка поиска AniList может вернуть однофамильца из другой серии.
+            val character = found.maxByOrNull { it.favourites } ?: continue
+            val mediaRef = character.appearances.firstOrNull() ?: continue
+            val media = runCatching { aniList.media(mediaRef.id) }.getOrNull() ?: continue
+            return Resolved(
+                media = media,
+                character = character,
+                via = "тегу персонажа «$tag»",
+                viaTag = tag,
+                characterTag = tag,
+            )
         }
-        return best?.takeIf { it.score >= MIN_CHARACTER_SCORE }
+
+        for (tag in seriesTags) {
+            val found = runCatching { aniList.searchMedia(tag, MEDIA_LIMIT) }.getOrNull().orEmpty()
+            val pick = found.maxByOrNull { (it.favourites ?: 0) + (it.popularity ?: 0) } ?: continue
+            val media = runCatching { aniList.media(pick.id) }.getOrNull() ?: continue
+            return Resolved(
+                media = media,
+                character = null,
+                via = "тегу серии «$tag»",
+                viaTag = tag,
+                characterTag = null,
+            )
+        }
+        return null
     }
 
-    private fun normalize(value: String): String =
-        value.lowercase(Locale.ROOT).replace(NON_ALNUM, "")
+    private fun tagsOf(hits: List<IqdbClient.Hit>, selector: (IqdbClient.Hit) -> List<String>): List<String> =
+        hits.flatMap(selector)
+            .map { it.trim() }
+            .filter { it.length >= MIN_TAG_LENGTH }
+            .distinct()
+            .take(TAG_LIMIT)
+
+    private fun IqdbClient.Hit.toRankingHit() = RankingEngine.IqdbHit(
+        source = source,
+        similarity = similarity / 100f,
+        url = url,
+        isBest = isBest,
+        characterTags = characterTags,
+        seriesTags = seriesTags,
+    )
+
+    /**
+     * Честный текст для пустого ответа IQDB.
+     *
+     * Два разных случая, которые нельзя смешивать: на картинке нет людей (то
+     * есть это, скорее всего, вообще не кадр аниме) и люди есть, но картинки
+     * нет в индексе. Пользователь должен понимать, куда смотреть.
+     */
+    private fun missReason(found: IqdbClient.SearchResult, noPerson: Boolean): String = buildString {
+        append("IQDB просмотрел ")
+        append(found.scannedImages?.toString() ?: "несколько миллионов")
+        append(" изображений и не нашёл совпадений")
+        if (noPerson) {
+            append(". На картинке при этом нет ни одного человека — скорее всего, это вообще не кадр аниме")
+        }
+        append(". ")
+        append(
+            "IQDB ищет по иллюстрациям и скриншотам, которые уже лежат в бо́ру-базах; " +
+                "обычное фото или скриншот из видеоигры там не лежат."
+        )
+    }
+
+    /** Текстовый слепок ответа: показывается пользователю целиком, а не выдумывается. */
+    private fun describe(found: IqdbClient.SearchResult): String = buildString {
+        append("IQDB, просмотрено изображений: ")
+        append(found.scannedImages?.toString() ?: "не указано")
+        append(", точное совпадение: ")
+        append(if (found.exactMatchFound) "да" else "нет")
+        append(", совпадений: ")
+        append(found.hits.size)
+        found.hits.forEach { hit ->
+            append("\n")
+            append(if (hit.isBest) "★ " else "· ")
+            append("${hit.similarity}% ${hit.source}")
+            hit.width?.let { append(" ${it}×${hit.height}") }
+            if (hit.tags.isNotEmpty()) append(" · ${hit.tags.joinToString(" ")}")
+            hit.url?.let { append("\n  $it") }
+        }
+    }
 
     private companion object {
-        val NON_ALNUM = Regex("[^\\p{L}\\p{N}]")
-        const val MIN_CHARACTER_SCORE = 0.3
+        const val IQDB_LABEL = "IQDB"
+        const val MIN_TAG_LENGTH = 3
+        const val TAG_LIMIT = 4
+        const val CHARACTER_LIMIT = 6
+        const val MEDIA_LIMIT = 6
+
+        /** Теги, из которых серию не вывести: служебные слова бо́ру-разметки. */
+        const val ONLY_MARKERS = "|||"
     }
+
+    /** Что удалось вытащить из тегов IQDB и подтвердить в AniList. */
+    private data class Resolved(
+        val media: AnimeMedia,
+        val character: AnimeCharacter?,
+        val via: String,
+        val viaTag: String,
+        val characterTag: String?,
+    )
 }
-
-/**
- * Used when AniList itself is unreachable: whatever trace.moe already reported
- * is still worth showing, marked as an incomplete record.
- */
-private fun BridgeAnime.toFallbackMedia(note: String): AnimeMedia = AnimeMedia(
-    id = id ?: 0,
-    idMal = idMal,
-    title = title ?: Titles(),
-    description = htmlToPlainText(description),
-    format = format,
-    status = status,
-    episodes = episodes,
-    genres = genres,
-    cover = coverImage?.best,
-    score = averageScore,
-    popularity = popularity,
-    synonyms = synonyms,
-    isAdult = isAdult,
-    externalLinks = id?.let { listOf(ExternalLink("AniList", "https://anilist.co/anime/$it", "INFO")) }.orEmpty(),
-    trailerThumbnail = null,
-).copy(relations = emptyList())
-
-internal fun newEntryId(prefix: String) = "$prefix-${UUID.randomUUID()}"
 
 /**
  * The answer to one search: either a wiki page or an explained miss.
  *
- * A miss is a value, not an exception. "This frame is not from any anime" is a
+ * A miss is a value, not an exception. "This picture is not from any anime" is a
  * finding the user needs to see and understand — which source was asked, what it
  * answered, and why that is not enough — and it has to survive into the UI
  * unchanged. Throwing it away to report "network error" would be a lie.
@@ -330,3 +373,5 @@ sealed interface Outcome {
     data class Found(val page: AnimeWikiPage) : Outcome
     data class Miss(val result: EmptyResult) : Outcome
 }
+
+internal fun newEntryId(prefix: String) = "$prefix-${UUID.randomUUID()}"

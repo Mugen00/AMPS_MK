@@ -13,7 +13,6 @@ import kotlinx.coroutines.launch
 
 data class SettingsUiState(
     val jamendoClientId: String = "",
-    val sauceNaoApiKey: String = "",
     val themeMode: ThemeMode = ThemeMode.DARK,
     val importToMediaStore: Boolean = true,
     val keepHistory: Boolean = true,
@@ -21,14 +20,11 @@ data class SettingsUiState(
 )
 
 /**
- * 1.0.3: настройки моста исчезли, вместо них — ключи, которые вводит сам
- * пользователь.
+ * 1.0.5: ключа SauceNAO в настройках больше нет.
  *
- * Ключ SauceNAO не вшивается в приложение намеренно: он лежит в `.env` на
- * компьютере разработчика, а APK его не содержит. Так квота остаётся того,
- * кому ключ выдан, и приложение, скачанное кем угодно, не тратит её вместо
- * него. Обратная сторона — из коробки поиск кадров опирается на один источник,
- * и приложение говорит об этом прямо.
+ * Раньше он спрашивался сознательно: вшить его в APK — значит отдать кому-то
+ * чужую квоту. Теперь вопрос снят целиком — поиском по картинке занимается
+ * IQDB, ключ ему не нужен, и вводить пользователю нечего.
  */
 class SettingsViewModel(
     private val settings: SettingsStore,
@@ -42,7 +38,6 @@ class SettingsViewModel(
             val current = settings.settings.first()
             _state.value = _state.value.copy(
                 jamendoClientId = current.jamendoClientId,
-                sauceNaoApiKey = current.sauceNaoApiKey,
                 themeMode = current.themeMode,
                 importToMediaStore = current.importToMediaStore,
                 keepHistory = current.keepSearchHistory,
@@ -54,13 +49,8 @@ class SettingsViewModel(
         _state.value = _state.value.copy(jamendoClientId = value, dirty = true)
     }
 
-    fun onSauceNaoKey(value: String) {
-        _state.value = _state.value.copy(sauceNaoApiKey = value, dirty = true)
-    }
-
     fun save() = viewModelScope.launch {
         settings.setJamendoClientId(_state.value.jamendoClientId)
-        settings.setSauceNaoApiKey(_state.value.sauceNaoApiKey)
         _state.value = _state.value.copy(dirty = false)
     }
 

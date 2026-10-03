@@ -19,10 +19,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.ImageSearch
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.PhotoLibrary
@@ -50,7 +50,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -64,12 +63,10 @@ import dev.amps.app.ui.theme.AmpsColors
 fun FrameSearchScreen(
     viewModel: FrameSearchViewModel,
     onOpenWiki: () -> Unit,
-    onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val navigation by viewModel.navigation.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
 
     val picker = rememberLauncherForActivityResult(
@@ -89,7 +86,7 @@ fun FrameSearchScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Поиск по кадру") },
+                title = { Text("Поиск по картинке") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                 ),
@@ -118,9 +115,9 @@ fun FrameSearchScreen(
                     title = state.page?.media?.title?.best.orEmpty(),
                     subtitle = state.page?.frame?.let { hit ->
                         buildString {
-                            hit.episode?.let { append("серия $it · ") }
-                            hit.timestampLabel?.let { append("$it · ") }
-                            append("${hit.similarityPercent ?: 0}% совпадения")
+                            hit.similarityLabel?.let { append("совпадение $it · ") }
+                            append(hit.source)
+                            if (!hit.exactMatch) append(" · не точное")
                         }
                     }.orEmpty(),
                     onOpen = onOpenWiki,
@@ -165,26 +162,20 @@ fun FrameSearchScreen(
                 ) {
                     Icon(Icons.Default.Search, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Найти источник кадра", style = MaterialTheme.typography.titleMedium)
+                    Text("Найти по картинке", style = MaterialTheme.typography.titleMedium)
                 }
             }
 
             state.miss?.let { miss ->
                 EmptyState(
                     icon = Icons.Default.ImageSearch,
-                    title = "Кадр не найден",
-                    message = buildString {
-                        append(miss.reason)
-                        miss.bridgeError?.let { append("\n\nМост: $it") }
-                    },
+                    title = "Совпадений не найдено",
+                    message = miss.reason,
                     modifier = Modifier.fillMaxWidth(),
-                    action = {
-                        OutlinedButton(onClick = onOpenSettings) { Text("Проверить мост") }
-                    },
                 )
             }
 
-            PipelineCard(secondSourceReady = state.secondSourceReady, onOpenSettings = onOpenSettings)
+            PipelineCard()
 
             Spacer(Modifier.height(20.dp))
         }
@@ -226,9 +217,10 @@ private fun DropZone(onPick: () -> Unit) {
                     modifier = Modifier.size(38.dp),
                 )
             }
-            Text("Выберите кадр из аниме", style = MaterialTheme.typography.titleMedium)
+            Text("Выберите картинку", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Скриншот, фото экрана или обрезанный фрагмент серии. Кадр никуда не сохраняется: он уходит только на ваш компьютер через локальный мост.",
+                "Иллюстрация, скриншот из аниме или фото персонажа с рисунка. Изображение уходит только на iqdb.org " +
+                    "для поиска и нигде не сохраняется.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -264,7 +256,7 @@ private fun FramePreviewCard(
             ) {
                 AsyncImage(
                     model = previewDataUrl,
-                    contentDescription = "Выбранный кадр",
+                    contentDescription = "Выбранное изображение",
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -318,13 +310,15 @@ private fun FoundBanner(title: String, subtitle: String, onOpen: () -> Unit) {
 }
 
 /**
- * 1.0.3: вместо адреса моста — честный статус второго источника.
+ * 1.0.5: источник один и он бесплатный — карточка говорит об этом прямо.
  *
- * Пользователь должен видеть, на чём построен вердикт, **до** поиска, а не
- * удивляться потом, почему ответ такой осторожный.
+ * Прежде здесь стоял статус «второй источник подключён / добавьте ключ
+ * SauceNAO». Ключа больше нет, и обе половины этой фразы стали неправдой.
+ * Теперь честное содержание: кто ищет, чего стоит ждать и чего поиск **не**
+ * умеет — а именно этого не хватало больше всего.
  */
 @Composable
-private fun PipelineCard(secondSourceReady: Boolean, onOpenSettings: () -> Unit) {
+private fun PipelineCard() {
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -333,31 +327,25 @@ private fun PipelineCard(secondSourceReady: Boolean, onOpenSettings: () -> Unit)
         Column(Modifier.padding(18.dp)) {
             Text("Как это работает", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(10.dp))
-            PipelineStep("1", "trace.moe", "находит серию, эпизод и секунду в кадре")
-            PipelineStep("2", "SauceNAO", "ищет персонажа по тегам и исходную картинку")
-            PipelineStep("3", "AniList", "собирает описание, жанры и галерею персонажа")
+            PipelineStep("1", "IQDB", "ищет по иллюстрациям, скриншотам и фото в бо́ру-базах")
+            PipelineStep("2", "AniList", "по тегам находит персонажа, а по нему — серию")
+            PipelineStep("3", "Вики фандома", "дописывает, кто этот персонаж и где он появляется")
             Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.Top) {
                 Icon(
-                    if (secondSourceReady) Icons.Default.Search else Icons.Default.BugReport,
+                    Icons.Default.Info,
                     contentDescription = null,
-                    tint = if (secondSourceReady) AmpsColors.cyan else AmpsColors.amber,
+                    tint = AmpsColors.amber,
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    if (secondSourceReady) {
-                        "Второй источник подключён — вердикт будет подтверждён"
-                    } else {
-                        "Работает один источник. Добавьте ключ SauceNAO — и ответ станет надёжнее"
-                    },
+                    "Ключей и регистрации не нужно. Но IQDB ищет только по тому, что уже лежит в его базах: " +
+                        "обычное фото или скриншот из видеоигры он не найдёт — и скажет об этом, а не промолчит.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
-                if (!secondSourceReady) {
-                    OutlinedButton(onClick = onOpenSettings) { Text("Настроить") }
-                }
             }
         }
     }

@@ -5,12 +5,11 @@ import dev.amps.app.data.local.HistoryStore
 import dev.amps.app.data.remote.AniListClient
 import dev.amps.app.data.remote.CcMixterClient
 import dev.amps.app.data.remote.CoverArtClient
-import dev.amps.app.data.remote.DirectTraceClient
 import dev.amps.app.data.remote.InternetArchiveClient
+import dev.amps.app.data.remote.IqdbClient
 import dev.amps.app.data.remote.ItunesClient
 import dev.amps.app.data.remote.JamendoClient
 import dev.amps.app.data.remote.MusicBrainzClient
-import dev.amps.app.data.remote.SauceClient
 import dev.amps.app.data.remote.WikiClient
 import dev.amps.app.data.repo.FrameRepository
 import dev.amps.app.data.repo.MusicRepository
@@ -23,6 +22,10 @@ import java.util.concurrent.TimeUnit
 /**
  * Manual dependency container. The app is small enough that a DI framework would
  * only add build weight; everything is created lazily and lives for the process.
+ *
+ * 1.0.5: ключей у поиска по картинке больше нет вообще. IQDB работает без
+ * регистрации и без ключа, поэтому пользователю нечего вводить, а приложению
+ * нечего хранить.
  */
 class AppContainer(private val context: Context) {
 
@@ -44,13 +47,9 @@ class AppContainer(private val context: Context) {
             .build()
     }
 
-    val directTrace: DirectTraceClient by lazy { DirectTraceClient(httpClient) }
+    val iqdb: IqdbClient by lazy { IqdbClient(httpClient) }
     val aniList: AniListClient by lazy { AniListClient(httpClient) }
 
-    // 1.0.3: моста нет, каждый источник — прямой HTTPS-запрос с телефона.
-    val sauce: SauceClient by lazy {
-        SauceClient(httpClient) { settings.settings.first().sauceNaoApiKey }
-    }
     val wiki: WikiClient by lazy { WikiClient(plainHttpClient) }
 
     val itunes: ItunesClient by lazy { ItunesClient(plainHttpClient) }
@@ -69,10 +68,9 @@ class AppContainer(private val context: Context) {
 
     val frameRepository: FrameRepository by lazy {
         FrameRepository(
-            trace = directTrace,
+            iqdb = iqdb,
             aniList = aniList,
             history = history,
-            sauce = sauce,
             wiki = wiki,
             contentAnalyzer = contentAnalyzer,
         )
