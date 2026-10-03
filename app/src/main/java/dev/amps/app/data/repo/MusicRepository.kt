@@ -30,7 +30,10 @@ import dev.amps.app.data.remote.CcMixterClient
 import dev.amps.app.data.remote.CoverArtClient
 import dev.amps.app.data.remote.InternetArchiveClient
 import dev.amps.app.data.remote.ItunesClient
+import dev.amps.app.data.remote.JamendoClient
 import dev.amps.app.data.remote.MusicBrainzClient
+import dev.amps.app.media.Id3Writer
+import dev.amps.app.media.MediaStoreImporter
 import dev.amps.app.util.audioFileName
 import dev.amps.app.util.guessExtension
 import dev.amps.app.util.guessMimeType
@@ -81,8 +84,10 @@ class MusicRepository(
     private val coverArt: CoverArtClient,
     private val ccMixter: CcMixterClient,
     private val internetArchive: InternetArchiveClient,
+    private val jamendo: JamendoClient? = null,
     context: Context,
     private val history: HistoryStore,
+    private val importer: MediaStoreImporter? = null,
 ) {
 
     private val appContext: Context = context.applicationContext
@@ -213,23 +218,29 @@ class MusicRepository(
     // --- B. свободные треки ------------------------------------------------
 
     /**
-     * ccMixter and the Internet Archive in parallel. Rows are never invented:
-     * both clients only return what the source published, and a row whose
-     * licence is unreadable survives the call with [FreeTrack.licenceNote] set so
-     * the list can grey it out instead of hiding the fact that it exists.
+     * 1.0.3: Jamendo добавляется третьим источником.
+     *
+     * ccMixter и Internet Archive остаются, хотя ccMixter уже не отвечает — его
+     * ошибка показывается пользователю честно, а не прячется. Jamendo встаёт
+     * вперёд, потому что это единственный из живых источников, который отдаёт
+     * полный трек: у остальных в поле аудио либо ничего, либо 30 секунд.
      */
     suspend fun freeTracks(
         query: String,
         filter: FreeTrackFilter,
         limit: Int = 20,
     ): FreeTrackResults = withContext(Dispatchers.IO) {
-        val perSource = (limit + 1) / 2
+        val perSource = (limit + 2) / 3
+        val jamendoCall = async { runCatching { jamendo?.search(query, perSource) } }
         val ccCall = async { runCatching { ccMixter.search(query, filter, perSource) } }
         val archiveCall = async { runCatching { internetArchive.search(query, filter, perSource) } }
+        val fromJamendo = jamendoCall.await()
         val fromCc = ccCall.await()
         val fromArchive = archiveCall.await()
 
         val errors = buildList {
+            fromJamendo.getOrNull()?.note?.let { add(MusicSourceError(MusicSource.JAMENDO, "Jamendo: $it")) }
+            fromJamendo.exceptionOrNull()?.let { add(MusicSourceError(MusicSource.JAMENDO, "Jamendo: ${it.readableMessage()}")) }
             fromCc.exceptionOrNull()?.let { add(MusicSourceError(MusicSource.CCMIXTER, "ccMixter: ${it.readableMessage()}")) }
             fromArchive.exceptionOrNull()?.let {
                 add(MusicSourceError(MusicSource.INTERNET_ARCHIVE, "Internet Archive: ${it.readableMessage()}"))
@@ -237,7 +248,13 @@ class MusicRepository(
         }
 
         val merged = LinkedHashMap<String, FreeTrack>()
-        (fromArchive.getOrDefault(emptyList()) + fromCc.getOrDefault(emptyList())).forEach { row ->
+        // Jamendo умеет фильтровать по лицензии только на своей стороне, поэтому
+        // вторая проверка — наша: `accepts` отсекает NC-записи, если пользователь
+        // выбрал «свободные».
+        val jamendoRows = fromJamendo.getOrNull()?.tracks.orEmpty().filter { track ->
+            filter.accepts(track.license)
+        }
+        (jamendoRows + fromArchive.getOrDefault(emptyList()) + fromCc.getOrDefault(emptyList())).forEach { row ->
             val key = "${row.source.name}:${row.sourceId}"
             if (merged[key] == null) merged[key] = row
         }
@@ -430,6 +447,70 @@ class MusicRepository(
     }
 
     // --- C. импорт своего файла --------------------------------------------
+
+    /**
+     * 1.0.3: кладёт скачанный трек в музыкальную библиотеку телефона.
+     *
+     * До этого файл оставался в приватной папке приложения, и в обычном
+     * плеере его не было видно: пользователь получал «скачанный трек», который
+     * нельзя было открыть ни одним системным приложением. Теперь трек лежит в
+     * `Music/AMPS` с прошитыми тегами и обложкой.
+     *
+     * Теги вписываются **в байты файла**, а не в MediaStore: публичного API
+     * для записи тегов в Android нет, а `ContentResolver.update()` по тегам
+     * MediaProvider затирает при каждом сканировании.
+     */
+    suspend fun importToLibrary(
+        track: FreeTrack,
+        onProgress: (DownloadProgress) -> Unit = {},
+    ): MediaStoreImporter.Imported {
+        val service = importer ?: throw IOException("Импорт в музыкальную библиотеку недоступен")
+        val entry = download(track, onProgress)
+        val file = File(audioDir, entry.fileName)
+        if (!file.exists()) throw IOException("Файл не найден после скачивания")
+
+        val cover = entry.coverFile
+            ?.let { File(audioDir, it) }
+            ?.takeIf { it.exists() }
+            ?.readBytes()
+            ?.takeIf { it.size <= MAX_COVER_BYTES && it.isJpeg() }
+
+        val displayName = audioFileName(track.artistName, track.title, "mp3")
+        val imported = service.importMp3(
+            source = file,
+            displayName = displayName,
+            tags = Id3Writer.Tags(
+                title = track.title,
+                artist = track.artistName,
+                album = track.album,
+                albumArtist = track.artistName,
+                year = track.year?.toString(),
+                // Атрибуция обязательна для CC-BY и CC-BY-SA: без неё в файле
+                // нет упоминания автора, и это уже нарушение условий лицензии,
+                // даже если файл лежит только на устройстве пользователя.
+                comment = listOfNotNull(track.license.name, track.license.url)
+                    .joinToString(" — ")
+                    .takeIf { it.isNotBlank() },
+                coverJpeg = cover,
+            ),
+        )
+        history.add(
+            HistoryEntry(
+                id = "import-${track.sourceId}-${System.currentTimeMillis()}",
+                kind = "TRACK",
+                title = track.title,
+                subtitle = "импорт в Music/AMPS",
+                imageUrl = track.coverUrl,
+                createdAt = System.currentTimeMillis(),
+            )
+        )
+        return imported
+    }
+
+    /** Обложку вшиваем только если это настоящий JPEG и не гигантский файл. */
+    private fun ByteArray.isJpeg(): Boolean =
+        size > 3 && this[0] == 0xFF.toByte() && this[1] == 0xD8.toByte() &&
+            !(this[2] == 0xFF.toByte() && this[3] == 0xD9.toByte())
 
     /**
      * Storage Access Framework import. The file is copied into `filesDir/audio/`
@@ -851,6 +932,13 @@ class MusicRepository(
     private companion object {
         const val MAX_TARGETS = 80
         const val PROGRESS_INTERVAL_MS = 120L
+
+        /**
+         * Обложка вшивается в теги файла, а не показывается отдельно, поэтому
+         * она должна быть достаточно маленькой, чтобы файл оставался
+         * разумного размера. Больше 2 МБ — это уже не обложка, а фотография.
+         */
+        const val MAX_COVER_BYTES = 2 * 1024 * 1024
 
         /**
          * Only sent to the file endpoints of the CC sources. A stock OkHttp UA

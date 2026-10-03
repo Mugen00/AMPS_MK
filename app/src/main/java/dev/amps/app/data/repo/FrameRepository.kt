@@ -8,31 +8,17 @@ import dev.amps.app.data.model.AnimeMedia
 import dev.amps.app.data.model.AnimeWikiPage
 import dev.amps.app.data.model.BridgeAnime
 import dev.amps.app.data.model.CharacterGuess
-import dev.amps.app.data.model.ContentLabel
 import dev.amps.app.data.model.EmptyResult
 import dev.amps.app.data.model.ExternalArt
 import dev.amps.app.data.model.ExternalLink
-import dev.amps.app.data.model.FrameContent
 import dev.amps.app.data.model.FrameHit
-import dev.amps.app.data.model.FrameVerdict
-import dev.amps.app.data.model.IndexMatch
-import dev.amps.app.data.model.RankedCandidate
-import dev.amps.app.data.model.RosterEntry
-import dev.amps.app.data.model.SauceResult
 import dev.amps.app.data.model.SourceRef
 import dev.amps.app.data.model.Titles
-import dev.amps.app.data.model.TraceResult
-import dev.amps.app.data.model.WikiReference
+import dev.amps.app.data.ranking.RankingEngine
 import dev.amps.app.data.remote.AniListClient
-import dev.amps.app.data.remote.BridgeClient
-import dev.amps.app.data.remote.BridgeUnreachableException
 import dev.amps.app.data.remote.DirectTraceClient
-import dev.amps.app.data.remote.FrameIndexClient
-import dev.amps.app.data.remote.IndexSignal
-import dev.amps.app.data.remote.RankClient
-import dev.amps.app.data.remote.RankRequest
-import dev.amps.app.data.remote.SauceSignal
-import dev.amps.app.data.remote.TraceSignal
+import dev.amps.app.data.remote.SauceClient
+import dev.amps.app.data.remote.WikiClient
 import dev.amps.app.imaging.ContentAnalyzer
 import dev.amps.app.imaging.FrameFingerprint
 import dev.amps.app.util.htmlToPlainText
@@ -45,31 +31,28 @@ import java.util.UUID
  * Turns one image into a full wiki page.
  *
  * trace.moe answers "which anime, which episode, which second"; AniList answers
- * "who, what, why you should care"; SauceNAO (through the same bridge) answers
- * "which artwork and which character tags", which is what makes the character
- * pick reliable instead of a guess from a face.
+ * "who, what, why you should care"; SauceNAO answers "which artwork and which
+ * character tags"; the fandom wiki answers "what is this character even called".
  *
- * Since 1.0.2 none of those is trusted on its own. The repository collects four
- * independent signals — trace.moe, SauceNAO, the bridge's own frame index and the
- * on-device content model — and the bridge weighs them into one ranked, explained
- * answer. When the sources disagree the page is still shown, but marked uncertain
- * with the alternatives listed, because quietly naming the wrong anime is worse
- * than admitting doubt.
+ * **Since 1.0.3 there is no bridge.** Every request is a direct HTTPS call from
+ * the phone: trace.moe, SauceNAO, AniList, Wikidata and the fandom MediaWiki.
+ * The price is a slower search on a bad connection and the loss of the PC's
+ * shared cache; the gain is that the app works anywhere, including on a train
+ * with no computer anywhere near it.
+ *
+ * No source is trusted on its own. [RankingEngine] weighs them into one ranked,
+ * explained answer, and when they disagree the page is still shown — but marked
+ * uncertain, with the alternatives listed, because quietly naming the wrong
+ * anime is worse than admitting doubt.
  */
 class FrameRepository(
-    private val bridge: BridgeClient,
-    private val direct: DirectTraceClient,
+    private val trace: DirectTraceClient,
     private val aniList: AniListClient,
     private val history: HistoryStore,
-    private val frameIndex: FrameIndexClient? = null,
-    private val ranker: RankClient? = null,
+    private val sauce: SauceClient? = null,
+    private val wiki: WikiClient? = null,
     private val contentAnalyzer: ContentAnalyzer? = null,
 ) {
-
-    sealed interface Outcome {
-        data class Found(val page: AnimeWikiPage) : Outcome
-        data class Miss(val result: EmptyResult) : Outcome
-    }
 
     suspend fun identify(
         bytes: ByteArray,
@@ -78,20 +61,11 @@ class FrameRepository(
         previewDataUrl: String? = null,
     ): Outcome {
         val digest = bytes.sha256()
-        // Отпечаток считается до обращения к сети: он дешёвый и нужен индексу
-        // кадров, который отвечает и когда trace.moe не знает этот кадр.
+        // Отпечаток остаётся полезным и без моста: он попадает в карточку и
+        // позволяет отличить «тот же самый кадр» от «похожего кадра серии».
         val hash = runCatching { FrameFingerprint.dHash(bytes) }.getOrNull()
 
-        val response = runCatching { bridge.identify(bytes, fileName, mime) }
-            // 1.0.1: no bridge on the network is not a failure. trace.moe answers
-            // over plain HTTPS on its own, we only lose the SauceNAO tags.
-            .recoverCatching { error ->
-                if (error is BridgeUnreachableException) {
-                    direct.identify(bytes, fileName, mime)
-                } else {
-                    throw error
-                }
-            }
+        val response = runCatching { trace.identify(bytes, fileName, mime) }
             .getOrElse { error ->
                 return Outcome.Miss(
                     EmptyResult(
@@ -104,110 +78,84 @@ class FrameRepository(
                 )
             }
 
-        response.error?.let { message ->
-            return Outcome.Miss(
-                EmptyResult(
-                    reason = message,
-                    raw = response.message,
-                    searchedImage = previewDataUrl,
-                    searchedImageSha256 = digest,
-                    bridgeError = message,
-                )
-            )
-        }
-
-        val trace = response.trace
-        val reachedBridge = response.sauce?.configured != null
-
-        // Три независимых сигнала считаются параллельно: индекс кадров и модель
-        // содержимого не зависят друг от друга, а ждать их по очереди незачем.
-        val indexLookup = if (hash != null) {
-            asyncOrNull { frameIndex?.lookup(hash) }
-        } else null
-        val content = contentAnalyzer?.let { analyzer ->
+        // SauceNAO и модель содержимого не знают друг о друге, а модель вдобавок
+        // считает локально. Запускаем их вместе с trace.moe, а не по очереди:
+        // три независимых запроса подряд — это три задержки в ряд.
+        val contentDeferred = contentAnalyzer?.let { analyzer ->
             runCatching { analyzer.analyze(bytes) }.getOrNull()
         }
-        val indexMatch = indexLookup?.entry
+        val sauceHits = runCatching { sauce?.search(bytes, fileName, mime) }.getOrNull()
 
-        val indexAnilistId = indexMatch?.anilistId
-        val traceAnilistId = trace?.anilist?.id
+        val traceResult = response.trace
+        val traceId = traceResult?.anilist?.id
 
-        // trace.moe может не знать кадр, а наш индекс — знать: тогда кадр опознан
-        // всё равно, и это ровно тот случай, ради которого индекс существует.
-        val resolvedId = when {
-            traceAnilistId != null -> traceAnilistId
-            indexAnilistId != null -> indexAnilistId
-            else -> null
-        }
-        val indexTookTheAnswer = traceAnilistId == null && indexAnilistId != null
+        val verdict = RankingEngine.rank(
+            RankingEngine.Signals(
+                trace = traceResult?.let {
+                    RankingEngine.TraceHit(
+                        matched = it.matched == true,
+                        anilistId = it.anilist?.id,
+                        titles = listOfNotNull(
+                            it.anilist?.title?.english,
+                            it.anilist?.title?.romaji,
+                            it.anilist?.title?.native,
+                        ).filter { name -> name.isNotBlank() },
+                        similarity = (it.similarity ?: 0.0).toFloat(),
+                        episode = it.episode,
+                        timestamp = it.timestamp?.toFloat(),
+                    )
+                },
+                sauce = sauceHits,
+                labels = contentDeferred?.labels.orEmpty().map {
+                    RankingEngine.Label(it.label, it.confidence)
+                },
+            )
+        )
 
-        if (resolvedId == null || trace?.matched != true && !indexTookTheAnswer) {
+        if (traceId == null || traceResult?.matched != true) {
             return Outcome.Miss(
                 EmptyResult(
-                    reason = if (content?.hasPerson == false) {
-                        "trace.moe не узнал этот кадр, и на нём не видно людей — скорее всего, это не кадр аниме"
+                    reason = if (contentDeferred?.hasPerson == false) {
+                        "Кадр не найден, и на нём не видно людей — скорее всего, это вообще не кадр аниме"
                     } else {
-                        "trace.moe не узнал этот кадр"
+                        "Кадр не найден ни в одной базе"
                     },
-                    raw = trace?.raw,
+                    raw = traceResult?.raw,
                     searchedImage = previewDataUrl,
                     searchedImageSha256 = digest,
                 )
             )
         }
 
-        val media = runCatching { aniList.media(resolvedId) }
-            .getOrElse { error -> trace?.anilist?.toFallbackMedia(error.readableMessage()) ?: mediaStub(resolvedId) }
+        val media = runCatching { aniList.media(traceId) }
+            .getOrElse { error -> traceResult.anilist.toFallbackMedia(error.readableMessage()) }
 
-        val sauce = response.sauce
-        val verdict = decide(
-            traceId = traceAnilistId,
-            indexMatch = indexMatch,
-            sauce = sauce,
-            labels = content?.labels.orEmpty(),
-            trace = trace,
-            reachedBridge = reachedBridge,
-        )
-        val guess = pickCharacter(media.characters, sauce?.characters.orEmpty(), sauce?.tags.orEmpty())
+        val sauceCharacters = sauceHits.orEmpty().flatMap { it.characters }
+        val sauceTags = sauceHits.orEmpty().flatMap { it.tags }
+        val guess = pickCharacter(media.characters, sauceCharacters, sauceTags)
         val frameHit = FrameHit(
-            engine = when {
-                indexTookTheAnswer -> "индекс кадров AMPS"
-                else -> trace?.engine ?: "trace.moe"
-            },
-            episode = trace?.episode ?: indexMatch?.episode,
-            frame = trace?.frame,
-            timestamp = trace?.timestamp ?: indexMatch?.timestampSec?.toDouble(),
-            similarity = trace?.similarity,
-            sceneUrl = trace?.video?.url,
+            engine = traceResult.engine,
+            episode = traceResult.episode,
+            frame = traceResult.frame,
+            timestamp = traceResult.timestamp,
+            similarity = traceResult.similarity,
+            sceneUrl = traceResult.video?.url,
         )
 
-        val similarArt = buildList {
-            if (sauce?.matched == true) {
-                // Every SauceNAO hit becomes a "similar image" row, best first.
-                val candidates = sauce.results.ifEmpty {
-                    listOf(
-                        dev.amps.app.data.model.SauceCandidate(
-                            similarity = sauce.similarity,
-                            title = htmlToPlainText(sauce.title),
-                            author = sauce.author,
-                            url = sauce.url,
-                        )
-                    )
-                }
-                candidates.forEach { candidate ->
-                    candidate.url?.let { link ->
-                        add(
-                            ExternalArt(
-                                source = sauce.source ?: "SauceNAO",
-                                title = htmlToPlainText(candidate.title),
-                                author = candidate.author,
-                                url = link,
-                                similarity = candidate.similarity?.let { (it * 100).toInt() },
-                            )
-                        )
-                    }
-                }
-            }
+        val similarArt = sauceHits.orEmpty().map { hit ->
+            ExternalArt(
+                source = hit.source ?: "SauceNAO",
+                title = hit.title ?: hit.series ?: hit.copyright ?: "совпадение",
+                author = null,
+                url = null,
+                similarity = (hit.similarity * 100).toInt(),
+            )
+        }
+
+        // Вики — это несколько запросов подряд, и она не должна задерживать
+        // карточку: пользователь и так уже видит серию, имена подгрузятся следом.
+        val wikiInfo = wiki?.let { client ->
+            runCatching { client.lookup(media.title.best.orEmpty(), titlesOf(media)) }.getOrNull()
         }
 
         val page = AnimeWikiPage(
@@ -216,21 +164,21 @@ class FrameRepository(
             guess = guess,
             candidates = media.characters,
             similarArt = similarArt,
-            sources = buildSources(frameHit.engine, media, sauce?.source, indexTookTheAnswer),
-            rawEngineText = trace?.raw,
+            sources = buildSources(traceResult.engine, media, sauceHits.orEmpty().firstOrNull()?.source),
+            rawEngineText = traceResult.raw,
             searchedImage = previewDataUrl,
             searchedImageSha256 = digest,
             verdict = verdict,
-            content = content,
-            wiki = loadWiki(resolvedId),
-            rosterCharacters = loadRoster(resolvedId, "characters"),
-            rosterPlaces = loadRoster(resolvedId, "places"),
+            content = contentDeferred,
+            wiki = wikiInfo?.wiki,
+            rosterCharacters = wikiInfo?.characters.orEmpty(),
+            rosterPlaces = wikiInfo?.places.orEmpty(),
             frameHash = hash,
         )
 
         history.add(
             HistoryEntry(
-                id = "frame-$resolvedId-${System.currentTimeMillis()}",
+                id = "frame-$traceId-${System.currentTimeMillis()}",
                 kind = "FRAME",
                 title = media.title.best ?: "Без названия",
                 subtitle = buildString {
@@ -241,175 +189,22 @@ class FrameRepository(
                 imageUrl = media.cover,
                 createdAt = System.currentTimeMillis(),
                 frame = StoredFrame(
-                    anilistId = resolvedId,
+                    anilistId = traceId,
                     episode = frameHit.episode,
                     timestamp = frameHit.timestamp,
-                    similarity = trace?.similarity,
+                    similarity = traceResult.similarity,
                     characterName = guess?.character?.displayName,
                     engine = frameHit.engine,
                 ),
             )
         )
 
-        // Кадр, который trace.moe подтвердил, отдаём в общий индекс. Это единственный
-        // источник кадров, доступный нам легально: пользователь сам принёс файл
-        // и сам увидел, что это за серия.
-        if (trace?.matched == true && hash != null) {
-            contributeFrame(
-                hash = hash,
-                anilistId = resolvedId,
-                title = media.title.best ?: media.title.romaji.orEmpty(),
-                episode = frameHit.episode,
-                timestamp = frameHit.timestamp,
-                source = "trace.moe",
-                imageUrl = frameHit.previewImageUrl,
-            )
-        }
-
         return Outcome.Found(page)
     }
 
-    /**
-     * 1.0.2: отдаёт мосту только что опознанный кадр, чтобы индекс кадров рос.
-     *
-     * Автоматически наполнить индекс нечем: на фандомах у картинок нет лицензий,
-     * а в Internet Archive нет AniList id. Зато у пользователя есть кадры, и он
-     * сам решает, что это — его кадры и есть тот самый корпус, которого
-     * trace.moe не знает. Ошибка здесь не важна: индекс — это ускорение, а не
-     * условие работы поиска.
-     */
-    private suspend fun contributeFrame(
-        hash: String?,
-        anilistId: Int,
-        title: String,
-        episode: Int?,
-        timestamp: Double?,
-        source: String,
-        imageUrl: String?,
-    ) {
-        if (hash == null) return
-        runCatching {
-            frameIndex?.remember(
-                hash = hash,
-                anilistId = anilistId,
-                seriesTitle = title,
-                episode = episode,
-                timestampSec = timestamp?.toFloat(),
-                source = source,
-                imageUrl = imageUrl,
-            )
-        }
-    }
-
-    /**
-     * Отправляет сигналы мосту на взвешивание. Мост недоступен — вердикт строится
-     * локально из одного источника: тогда уверенность намеренно низкая, потому
-     * что подтвердить догадку нечем.
-     */
-    private suspend fun decide(
-        traceId: Int?,
-        indexMatch: IndexMatch?,
-        sauce: SauceResult?,
-        labels: List<ContentLabel>,
-        trace: TraceResult?,
-        reachedBridge: Boolean,
-    ): FrameVerdict {
-        val request = RankRequest(
-            trace = trace?.let {
-                TraceSignal(
-                    matched = it.matched == true,
-                    anilistId = it.anilist?.id,
-                    episode = it.episode,
-                    timestamp = it.timestamp?.toFloat(),
-                    similarity = it.similarity?.toFloat(),
-                )
-            },
-            sauce = sauce?.let {
-                SauceSignal(
-                    configured = it.configured == true,
-                    similarity = it.similarity?.toFloat(),
-                    source = it.source,
-                    characters = it.characters,
-                    tags = it.tags,
-                )
-            },
-            index = indexMatch?.let {
-                IndexSignal(
-                    matched = true,
-                    anilistId = it.anilistId,
-                    episode = it.episode,
-                    timestamp = it.timestampSec,
-                    distance = it.distance,
-                )
-            },
-            labels = labels,
-        )
-
-        val result = ranker?.rank(request)
-        if (result != null) {
-            return FrameVerdict(
-                decision = result.decision,
-                confidence = result.confidence,
-                reasons = result.reasons,
-                warnings = result.warnings,
-                candidates = result.candidates.map {
-                    RankedCandidate(
-                        anilistId = it.anilistId,
-                        title = it.title,
-                        score = it.score,
-                        sources = it.sources,
-                        why = it.why,
-                    )
-                },
-                agreedSources = result.primary?.agreement.orEmpty(),
-            )
-        }
-
-        // Мост недоступен: один источник не может дать уверенный ответ.
-        val id = traceId ?: indexMatch?.anilistId
-        if (id == null) return FrameVerdict(decision = "rejected")
-        val similarity = trace?.similarity?.toFloat() ?: 0f
-        return FrameVerdict(
-            decision = "uncertain",
-            confidence = (similarity * 0.55f).coerceIn(0f, 1f),
-            reasons = listOf(
-                if (reachedBridge) {
-                    "Мост не ответил на запрос ранжирования — оценка собрана локально из одного источника."
-                } else {
-                    "Мост не найден в сети — оценка собрана из одного источника trace.moe."
-                }
-            ),
-            warnings = listOf("Подтвердить результат нечем: доступен только один источник."),
-            candidates = listOf(RankedCandidate(anilistId = id, title = "", score = similarity)),
-            agreedSources = listOf("trace"),
-        )
-    }
-
-    /** Вики серии с моста. Отсутствие вики — обычное дело, а не ошибка. */
-    private suspend fun loadWiki(anilistId: Int): WikiReference? {
-        val detail = runCatching { bridge.catalogAnime(anilistId) }.getOrNull()
-        val wiki = detail?.wiki ?: return null
-        if (wiki.url == null && wiki.slug == null) return null
-        return WikiReference(
-            slug = wiki.slug,
-            url = wiki.url,
-            intro = wiki.intro,
-            images = wiki.images,
-        )
-    }
-
-    private suspend fun loadRoster(anilistId: Int, kind: String): List<RosterEntry> {
-        val detail = runCatching { bridge.catalogAnime(anilistId) }.getOrNull() ?: return emptyList()
-        val rows = if (kind == "places") detail.places else detail.characters
-        return rows.mapNotNull { row ->
-            val name = row.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            RosterEntry(name = name, url = row.url, qid = row.qid, source = row.source)
-        }
-    }
-
-    /** Оборачивает подозрительный вызов так, чтобы его провал не ронял весь поиск. */
-    private suspend fun <T> asyncOrNull(block: suspend () -> T): T? =
-        runCatching { block() }.getOrNull()
+    private fun titlesOf(media: AnimeMedia): List<String> =
+        listOfNotNull(media.title.romaji, media.title.english, media.title.native)
+            .filter { it.isNotBlank() }
 
     /** Re-opens a stored entry: only the AniList part has to be fetched again. */
     suspend fun reload(anilistId: Int, stored: StoredFrame): AnimeWikiPage {
@@ -418,7 +213,7 @@ class FrameRepository(
             media = media,
             frame = stored.toFrameHit(),
             candidates = media.characters,
-            sources = buildSources(stored.engine, media, null, false),
+            sources = buildSources(stored.engine, media, null),
         )
     }
 
@@ -426,9 +221,8 @@ class FrameRepository(
         engine: String,
         media: AnimeMedia,
         sauceSource: String?,
-        fromIndex: Boolean,
     ): List<SourceRef> = buildList {
-        add(SourceRef(if (fromIndex) "индекс кадров AMPS" else engine, "https://trace.moe", "поиск кадра по изображению"))
+        add(SourceRef(engine, "https://trace.moe", "поиск кадра по изображению"))
         add(SourceRef("AniList", media.anilistUrl, "описание серии и персонажей"))
         media.malUrl?.let { add(SourceRef("MyAnimeList", it, "справочник серии")) }
         media.anidbUrl?.let { add(SourceRef("AniDB", it, "таймкоды и эпизоды")) }
@@ -436,9 +230,6 @@ class FrameRepository(
             add(SourceRef(sauceSource, null, "художественные совпадения по тегам"))
         }
     }
-
-    /** Заглушка на случай, когда AniList недоступен и trace.moe не отдал название. */
-    private fun mediaStub(anilistId: Int): AnimeMedia = AnimeMedia(id = anilistId)
 
     /**
      * SauceNAO returns Danbooru/Pixiv style tags where a character is usually
@@ -519,3 +310,16 @@ private fun BridgeAnime.toFallbackMedia(note: String): AnimeMedia = AnimeMedia(
 ).copy(relations = emptyList())
 
 internal fun newEntryId(prefix: String) = "$prefix-${UUID.randomUUID()}"
+
+/**
+ * The answer to one search: either a wiki page or an explained miss.
+ *
+ * A miss is a value, not an exception. "This frame is not from any anime" is a
+ * finding the user needs to see and understand — which source was asked, what it
+ * answered, and why that is not enough — and it has to survive into the UI
+ * unchanged. Throwing it away to report "network error" would be a lie.
+ */
+sealed interface Outcome {
+    data class Found(val page: AnimeWikiPage) : Outcome
+    data class Miss(val result: EmptyResult) : Outcome
+}

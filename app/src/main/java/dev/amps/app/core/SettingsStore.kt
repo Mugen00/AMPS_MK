@@ -11,23 +11,35 @@ import kotlinx.coroutines.flow.map
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 data class AppSettings(
-    val bridgeUrl: String = DEFAULT_BRIDGE_URL,
     val jamendoClientId: String = "",
-    val autoCheckBridge: Boolean = true,
+    /**
+     * 1.0.3: ключ SauceNAO спрашивает пользователя.
+     *
+     * Раньше он лежал в `.env` на компьютере и в APK не попадал. Вшить его в
+     * приложение — значит отдать его тому, кто распакует APK, а под ним
+     * квота, за которую отвечает владелец. Поэтому пустой ключ здесь означает
+     * «второго источника нет», и это честно показывается в вердикте.
+     */
+    val sauceNaoApiKey: String = "",
+    /** 1.0.3: импортировать скачанный трек в музыкальную библиотеку телефона. */
+    val importToMediaStore: Boolean = true,
     val keepSearchHistory: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.DARK,
-    /** 1.0.1: find the bridge over UDP instead of expecting a typed address. */
-    val autoBridge: Boolean = true,
 ) {
-    val bridgeConfigured: Boolean get() = bridgeUrl.isNotBlank()
+    /** Подтверждён ли хоть один независимый источник помимо trace.moe. */
+    val hasSecondSource: Boolean get() = sauceNaoApiKey.isNotBlank()
 
     companion object {
         /**
-         * Only used when [autoBridge] is off. 10.0.2.2 is the host loopback as
-         * seen from the Android emulator; on a real phone the bridge is found
-         * by UDP discovery, so nothing has to be typed.
+         * Настройки моста (`bridge_url`, `auto_bridge`, `auto_check_bridge`)
+         * намеренно удалены, а не просто переименованы: моста с 1.0.3 нет.
+         * Старые значения остаются в DataStore как мёртвые записи — их можно
+         * удалить вручную, но чистить автоматически при обновлении не нужно,
+         * потому что лишний ключ в настройках ничего не ломает, а миграция
+         * с риском потерять данные хуже пустого места в файле.
          */
-        const val DEFAULT_BRIDGE_URL = "http://10.0.2.2:8787"
+        @Suppress("unused")
+        const val LEGACY_BRIDGE_KEYS = "bridge_url, auto_bridge, auto_check_bridge"
     }
 }
 
@@ -36,38 +48,34 @@ private val Context.dataStore by preferencesDataStore(name = "amps_settings")
 class SettingsStore(private val context: Context) {
 
     private object Keys {
-        val bridgeUrl = stringPreferencesKey("bridge_url")
         val jamendoClientId = stringPreferencesKey("jamendo_client_id")
-        val autoCheckBridge = booleanPreferencesKey("auto_check_bridge")
+        val sauceNaoApiKey = stringPreferencesKey("sauce_nao_api_key")
+        val importToMediaStore = booleanPreferencesKey("import_to_media_store")
         val keepHistory = booleanPreferencesKey("keep_history")
         val themeMode = stringPreferencesKey("theme_mode")
-        val autoBridge = booleanPreferencesKey("auto_bridge")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
         AppSettings(
-            bridgeUrl = prefs[Keys.bridgeUrl] ?: AppSettings.DEFAULT_BRIDGE_URL,
             jamendoClientId = prefs[Keys.jamendoClientId].orEmpty(),
-            autoCheckBridge = prefs[Keys.autoCheckBridge] ?: true,
+            sauceNaoApiKey = prefs[Keys.sauceNaoApiKey].orEmpty(),
+            importToMediaStore = prefs[Keys.importToMediaStore] ?: true,
             keepSearchHistory = prefs[Keys.keepHistory] ?: true,
             themeMode = prefs[Keys.themeMode]
                 ?.let { name -> ThemeMode.entries.firstOrNull { it.name == name } }
                 ?: ThemeMode.DARK,
-            autoBridge = prefs[Keys.autoBridge] ?: true,
         )
     }
 
-    suspend fun setBridgeUrl(url: String) = put(Keys.bridgeUrl, url.trim())
-
     suspend fun setJamendoClientId(id: String) = put(Keys.jamendoClientId, id.trim())
 
-    suspend fun setAutoCheckBridge(value: Boolean) = put(Keys.autoCheckBridge, value)
+    suspend fun setSauceNaoApiKey(key: String) = put(Keys.sauceNaoApiKey, key.trim())
+
+    suspend fun setImportToMediaStore(value: Boolean) = put(Keys.importToMediaStore, value)
 
     suspend fun setKeepHistory(value: Boolean) = put(Keys.keepHistory, value)
 
     suspend fun setThemeMode(mode: ThemeMode) = put(Keys.themeMode, mode.name)
-
-    suspend fun setAutoBridge(value: Boolean) = put(Keys.autoBridge, value)
 
     private suspend fun <T> put(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) {
         context.dataStore.edit { it[key] = value }

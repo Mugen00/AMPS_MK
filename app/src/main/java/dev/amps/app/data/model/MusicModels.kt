@@ -11,8 +11,19 @@ import java.util.Locale
 enum class MusicSource(val label: String, val offersFile: Boolean) {
     ITUNES("iTunes", false),
     MUSICBRAINZ("MusicBrainz", false),
+    /**
+     * 1.0.3: площадка закрылась окончательно, API не отвечает. Значение
+     * остаётся в enum, потому что в истории и в уже скачанных файлах записано
+     * именно это имя — переименовывать его значило бы ломать старые записи.
+     */
+    @Deprecated("Площадка закрыта")
     CCMIXTER("ccMixter", true),
     INTERNET_ARCHIVE("Internet Archive", true),
+    /** Единственный источник полных треков с открытой лицензией. */
+    JAMENDO("Jamendo", true),
+    /** Агрегатор: сам файл лежит у источника, лицензия и авторство приходят отсюда. */
+    OPENVERSE("Openverse", true),
+    DEEZER("Deezer", false),
     LOCAL("Свой файл", true),
 
     /** Not a source: the bucket for a failure raised by the app itself. */

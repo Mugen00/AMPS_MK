@@ -184,7 +184,7 @@ fun FrameSearchScreen(
                 )
             }
 
-            PipelineCard(bridgeUrl = state.bridgeUrl, onOpenSettings = onOpenSettings)
+            PipelineCard(secondSourceReady = state.secondSourceReady, onOpenSettings = onOpenSettings)
 
             Spacer(Modifier.height(20.dp))
         }
@@ -317,8 +317,14 @@ private fun FoundBanner(title: String, subtitle: String, onOpen: () -> Unit) {
     }
 }
 
+/**
+ * 1.0.3: вместо адреса моста — честный статус второго источника.
+ *
+ * Пользователь должен видеть, на чём построен вердикт, **до** поиска, а не
+ * удивляться потом, почему ответ такой осторожный.
+ */
 @Composable
-private fun PipelineCard(bridgeUrl: String, onOpenSettings: () -> Unit) {
+private fun PipelineCard(secondSourceReady: Boolean, onOpenSettings: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -333,19 +339,25 @@ private fun PipelineCard(bridgeUrl: String, onOpenSettings: () -> Unit) {
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    Icons.Default.BugReport,
+                    if (secondSourceReady) Icons.Default.Search else Icons.Default.BugReport,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (secondSourceReady) AmpsColors.cyan else AmpsColors.amber,
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Мост: ${bridgeUrl.ifBlank { "не задан" }}",
+                    if (secondSourceReady) {
+                        "Второй источник подключён — вердикт будет подтверждён"
+                    } else {
+                        "Работает один источник. Добавьте ключ SauceNAO — и ответ станет надёжнее"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
-                OutlinedButton(onClick = onOpenSettings) { Text("Настроить") }
+                if (!secondSourceReady) {
+                    OutlinedButton(onClick = onOpenSettings) { Text("Настроить") }
+                }
             }
         }
     }

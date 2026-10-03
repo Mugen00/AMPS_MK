@@ -7,6 +7,28 @@
     <!-- Over-the-air updates: install a release APK through the system installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!--
+        1.0.3, импорт музыки в библиотеку телефона.
+
+        На Android 10+ запись своей музыки в общую папку Music через MediaStore
+        разрешений не требует вообще — scoped storage разрешает это приложению
+        напрямую. Поэтому WRITE_EXTERNAL_STORAGE ограничен maxSdkVersion=28:
+        начиная с 29 permission там просто игнорируется, а объявлять его
+        без ограничения — значит объяснять пользователю право, которого нет.
+
+        READ_EXTERNAL_STORAGE (до 32) и READ_MEDIA_AUDIO (33+) нужны только для
+        ЧТЕНИЯ уже существующей музыки устройства, чтобы искать по ней.
+        MANAGE_EXTERNAL_STORAGE намеренно не запрашивается: это право уровня
+        «видеть всё», а музыкальному приложению оно не нужно.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
     <application
         android:name=".AmpsApp"
         android:allowBackup="true"

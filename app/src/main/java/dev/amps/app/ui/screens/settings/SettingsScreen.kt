@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lan
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -42,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.amps.app.core.ThemeMode
@@ -81,75 +83,55 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenUpdates: () -> Unit = {})
         ) {
             Spacer(Modifier.height(4.dp))
 
-            SectionCard(title = "Локальный мост", icon = Icons.Default.Lan) {
+            SectionCard(title = "Ключи API", icon = Icons.Default.VpnKey) {
                 Text(
-                    "Приложение не ходит в интернет за кадрами напрямую: телефон отправляет снимок на ваш компьютер, а тот вызывает локальные MCP-серверы trace.moe и SauceNAO. Компьютер и телефон должны быть в одной Wi-Fi сети.",
+                    "Приложение больше не ходит на ваш компьютер — все источники вызываются напрямую с телефона. Ключи хранятся только на устройстве и не отправляются никуда, кроме самих сервисов.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
-                SwitchRow(
-                    title = "Искать мост автоматически",
-                    checked = state.autoBridge,
-                    onChange = viewModel::setAutoBridge,
+                OutlinedTextField(
+                    value = state.sauceNaoApiKey,
+                    onValueChange = viewModel::onSauceNaoKey,
+                    label = { Text("SauceNAO API-ключ") },
+                    placeholder = { Text("не задан") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Next,
+                    ),
+                    supportingText = {
+                        Text(
+                            if (state.sauceNaoApiKey.isBlank()) {
+                                "Без ключа поиск кадра работает по одному источнику и отвечает неуверенно"
+                            } else {
+                                "Второй источник подключён — вердикт будет подтверждён"
+                            }
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(12.dp))
-                if (state.autoBridge) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (state.discovering) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text(
-                            text = state.discoveredUrl?.let { "Мост найден: $it" }
-                                ?: "Мост не найден — поиск продолжится в интернете, без тегов персонажа",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (state.discoveredUrl != null) AmpsColors.cyan
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    androidx.compose.material3.OutlinedButton(
-                        onClick = viewModel::discover,
-                        enabled = !state.discovering,
-                    ) {
-                        Text("Искать заново")
-                    }
-                    Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = state.jamendoClientId,
+                    onValueChange = viewModel::onJamendoId,
+                    label = { Text("Jamendo client_id") },
+                    placeholder = { Text("не задан") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Ascii,
+                        imeAction = ImeAction.Done,
+                    ),
+                    supportingText = {
+                        Text("Нужен только для поиска. Файлы Jamendo отдаёт и без него — по уже найденной ссылке")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(14.dp))
+                Button(onClick = viewModel::save) {
+                    Text(if (state.dirty) "Сохранить" else "Сохранено")
                 }
-                if (!state.autoBridge) {
-                    OutlinedTextField(
-                        value = state.bridgeUrl,
-                        onValueChange = viewModel::onBridgeUrl,
-                        label = { Text("Адрес моста вручную") },
-                        placeholder = { Text("http://192.168.1.10:8787") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Uri,
-                            imeAction = ImeAction.Done,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = viewModel::save) { Text(if (state.dirty) "Сохранить и проверить" else "Проверить") }
-                    Spacer(Modifier.width(10.dp))
-                    androidx.compose.material3.OutlinedButton(
-                        onClick = viewModel::check,
-                        enabled = !state.checking,
-                    ) {
-                        if (state.checking) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Обновить")
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                BridgeHealthCard(state.health)
             }
 
             SectionCard(title = "Оформление", icon = Icons.Default.Info) {
@@ -172,9 +154,10 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenUpdates: () -> Unit = {})
                 }
                 Spacer(Modifier.height(12.dp))
                 SwitchRow(
-                    title = "Проверять мост при запуске",
-                    checked = state.autoCheckBridge,
-                    onChange = viewModel::setAutoCheck,
+                    title = "Класть скачанное в музыку телефона",
+                    subtitle = "Файл появится в «Музыка/AMPS» и откроется любым плеером",
+                    checked = state.importToMediaStore,
+                    onChange = viewModel::setImportToMediaStore,
                 )
                 SwitchRow(
                     title = "Хранить историю поиска",
@@ -218,84 +201,29 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenUpdates: () -> Unit = {})
 }
 
 @Composable
-private fun BridgeHealthCard(health: BridgeHealth?) {
-    if (health == null) {
-        Text(
-            "Мост ещё не проверялся.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        return
-    }
-    if (health.error != null) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Warning, contentDescription = null, tint = AmpsColors.rose, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(health.error, style = MaterialTheme.typography.bodySmall, color = AmpsColors.rose)
-        }
-        return
-    }
-
-    val ready = health.nodes.values.count { it.ready }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-            if (ready > 0) Icons.Default.CheckCircle else Icons.Default.Warning,
-            contentDescription = null,
-            tint = if (ready > 0) AmpsColors.cyan else AmpsColors.amber,
-            modifier = Modifier.size(18.dp),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            "Мост отвечает · версия ${health.version ?: "—"}",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-    }
-    Spacer(Modifier.height(8.dp))
-    StatRow("Активных узлов", "$ready из ${health.nodes.size}")
-    StatRow(
-        "Ключ trace.moe",
-        if (health.keys.traceMoe) "задан" else "не нужен (квота по IP)",
-        valueColor = if (health.keys.traceMoe) AmpsColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    StatRow(
-        "Ключ SauceNAO",
-        if (health.keys.sauceNao) "задан" else "нет — персонаж определяется слабее",
-        valueColor = if (health.keys.sauceNao) AmpsColors.cyan else AmpsColors.amber,
-    )
-    health.uptimeSec?.let { StatRow("Время работы", "${it / 60} мин ${it % 60} с") }
-
-    health.nodes.forEach { (name, node) ->
-        Spacer(Modifier.height(8.dp))
-        InfoChip(
-            text = "$name: ${if (node.ready) "готов" else "не отвечает"}",
-            color = if (node.ready) AmpsColors.cyan else AmpsColors.rose,
-        )
-        node.error?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (node.tools.isNotEmpty()) {
-            Text(
-                text = node.tools.joinToString(", "),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SwitchRow(
+    title: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+    subtitle: String? = null,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }

@@ -5,9 +5,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.amps.app.core.SettingsStore
 import dev.amps.app.core.ThemeMode
-import dev.amps.app.data.model.BridgeHealth
-import dev.amps.app.data.remote.BridgeClient
-import dev.amps.app.data.remote.BridgeDiscovery
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,23 +12,26 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class SettingsUiState(
-    val bridgeUrl: String = "",
     val jamendoClientId: String = "",
+    val sauceNaoApiKey: String = "",
     val themeMode: ThemeMode = ThemeMode.DARK,
-    val autoCheckBridge: Boolean = true,
+    val importToMediaStore: Boolean = true,
     val keepHistory: Boolean = true,
-    val autoBridge: Boolean = true,
-    val discoveredUrl: String? = null,
-    val discovering: Boolean = false,
-    val health: BridgeHealth? = null,
-    val checking: Boolean = false,
     val dirty: Boolean = false,
 )
 
+/**
+ * 1.0.3: настройки моста исчезли, вместо них — ключи, которые вводит сам
+ * пользователь.
+ *
+ * Ключ SauceNAO не вшивается в приложение намеренно: он лежит в `.env` на
+ * компьютере разработчика, а APK его не содержит. Так квота остаётся того,
+ * кому ключ выдан, и приложение, скачанное кем угодно, не тратит её вместо
+ * него. Обратная сторона — из коробки поиск кадров опирается на один источник,
+ * и приложение говорит об этом прямо.
+ */
 class SettingsViewModel(
     private val settings: SettingsStore,
-    private val bridge: BridgeClient,
-    private val discovery: BridgeDiscovery,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState())
@@ -41,51 +41,27 @@ class SettingsViewModel(
         viewModelScope.launch {
             val current = settings.settings.first()
             _state.value = _state.value.copy(
-                bridgeUrl = current.bridgeUrl,
                 jamendoClientId = current.jamendoClientId,
+                sauceNaoApiKey = current.sauceNaoApiKey,
                 themeMode = current.themeMode,
-                autoCheckBridge = current.autoCheckBridge,
+                importToMediaStore = current.importToMediaStore,
                 keepHistory = current.keepSearchHistory,
-                autoBridge = current.autoBridge,
             )
-            if (current.autoBridge) discover()
-            if (current.autoCheckBridge) check()
         }
-    }
-
-    /**
-     * 1.0.1: ask the network for a bridge instead of expecting a typed address.
-     * Safe to call repeatedly — the result is cached inside [BridgeDiscovery].
-     */
-    fun discover() = viewModelScope.launch {
-        _state.value = _state.value.copy(discovering = true)
-        val found = runCatching { discovery.discover() }.getOrNull()
-        _state.value = _state.value.copy(
-            discovering = false,
-            discoveredUrl = found?.url ?: BridgeDiscovery.cachedUrl(),
-        )
-        if (_state.value.autoCheckBridge) check()
-    }
-
-    fun onBridgeUrl(value: String) {
-        _state.value = _state.value.copy(bridgeUrl = value, dirty = true)
     }
 
     fun onJamendoId(value: String) {
         _state.value = _state.value.copy(jamendoClientId = value, dirty = true)
     }
 
-    fun save() = viewModelScope.launch {
-        settings.setBridgeUrl(_state.value.bridgeUrl)
-        settings.setJamendoClientId(_state.value.jamendoClientId)
-        _state.value = _state.value.copy(dirty = false)
-        check()
+    fun onSauceNaoKey(value: String) {
+        _state.value = _state.value.copy(sauceNaoApiKey = value, dirty = true)
     }
 
-    fun check() = viewModelScope.launch {
-        _state.value = _state.value.copy(checking = true)
-        val health = bridge.health()
-        _state.value = _state.value.copy(checking = false, health = health)
+    fun save() = viewModelScope.launch {
+        settings.setJamendoClientId(_state.value.jamendoClientId)
+        settings.setSauceNaoApiKey(_state.value.sauceNaoApiKey)
+        _state.value = _state.value.copy(dirty = false)
     }
 
     fun setTheme(mode: ThemeMode) = viewModelScope.launch {
@@ -93,9 +69,9 @@ class SettingsViewModel(
         _state.value = _state.value.copy(themeMode = mode)
     }
 
-    fun setAutoCheck(value: Boolean) = viewModelScope.launch {
-        settings.setAutoCheckBridge(value)
-        _state.value = _state.value.copy(autoCheckBridge = value)
+    fun setImportToMediaStore(value: Boolean) = viewModelScope.launch {
+        settings.setImportToMediaStore(value)
+        _state.value = _state.value.copy(importToMediaStore = value)
     }
 
     fun setKeepHistory(value: Boolean) = viewModelScope.launch {
@@ -103,19 +79,11 @@ class SettingsViewModel(
         _state.value = _state.value.copy(keepHistory = value)
     }
 
-    fun setAutoBridge(value: Boolean) = viewModelScope.launch {
-        settings.setAutoBridge(value)
-        _state.value = _state.value.copy(autoBridge = value)
-        if (value) discover() else check()
-    }
-
     class Factory(
         private val settings: SettingsStore,
-        private val bridge: BridgeClient,
-        private val discovery: BridgeDiscovery,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            SettingsViewModel(settings, bridge, discovery) as T
+            SettingsViewModel(settings) as T
     }
 }

@@ -39,7 +39,6 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import dev.amps.app.core.AppContainer
 import dev.amps.app.core.AppSettings
-import dev.amps.app.data.remote.BridgeDiscovery
 import dev.amps.app.ui.screens.framesearch.FrameSearchScreen
 import dev.amps.app.ui.screens.framesearch.FrameSearchViewModel
 import dev.amps.app.ui.screens.history.HistoryScreen
@@ -132,17 +131,10 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
         factory = TrackWikiViewModelFactory(container.musicRepository)
     )
     val settingsViewModel: SettingsViewModel = viewModel(
-        factory = SettingsViewModel.Factory(container.settings, container.bridge, container.bridgeDiscovery)
+        factory = SettingsViewModel.Factory(container.settings)
     )
 
     val frameState by frameViewModel.state.collectAsStateWithLifecycle()
-
-    // 1.0.1: find the bridge before the first lookup so the frame search goes
-    // through the MCP servers instead of falling back to plain internet.
-    LaunchedEffect(Unit) {
-        val current = container.settings.settings.first()
-        if (current.autoBridge) runCatching { container.bridgeDiscovery.discover() }
-    }
 
     // Keep the wiki screen pointed at the most recent successful lookup.
     LaunchedEffect(frameState.page) {

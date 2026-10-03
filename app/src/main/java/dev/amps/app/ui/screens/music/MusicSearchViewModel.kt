@@ -161,6 +161,28 @@ class MusicSearchViewModel(
         }
     }
 
+    /**
+ * 1.0.3: скачать **и положить в музыку телефона** одним действием.
+ *
+ * Раньше файл оставался внутри приложения, и обычный плеер его не видел.
+ * Теперь после скачивания он кладётся в `Музыка/AMPS` с тегами и обложкой —
+ * то есть в список, который пользователь уже слушает.
+ */
+fun downloadAndImport(track: FreeTrack) {
+        viewModelScope.launch {
+            runCatching { repository.importToLibrary(track) }
+                .onSuccess { imported ->
+                    refreshLibrary()
+                    _state.update {
+                        it.copy(message = "В «Музыка/AMPS»: ${imported.displayPath.substringAfterLast('/')}")
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { it.copy(message = "Не удалось сохранить: ${error.readableMessage()}") }
+                }
+        }
+    }
+
     fun importAudio(uri: Uri) {
         viewModelScope.launch {
             _state.update { it.copy(importsInProgress = true) }

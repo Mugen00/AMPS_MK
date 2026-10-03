@@ -9,6 +9,7 @@ import dev.amps.app.core.SettingsStore
 import dev.amps.app.data.model.AnimeWikiPage
 import dev.amps.app.data.model.EmptyResult
 import dev.amps.app.data.repo.FrameRepository
+import dev.amps.app.data.repo.Outcome
 import dev.amps.app.util.ImageLoader
 import dev.amps.app.util.PreparedImage
 import dev.amps.app.util.readableMessage
@@ -24,7 +25,12 @@ data class FrameSearchState(
     val page: AnimeWikiPage? = null,
     val miss: EmptyResult? = null,
     val error: String? = null,
-    val bridgeUrl: String = "",
+    /**
+     * 1.0.3: вместо адреса моста — «есть ли второй источник». Без ключа
+     * SauceNAO вердикт опирается только на trace.moe, и это честно показывается
+     * до поиска, а не всплывает потом как «почему так неуверенно».
+     */
+    val secondSourceReady: Boolean = false,
 ) {
     val busy: Boolean get() = stage != null
     val hasImage: Boolean get() = image != null
@@ -44,7 +50,8 @@ class FrameSearchViewModel(
 
     init {
         viewModelScope.launch {
-            _state.value = _state.value.copy(bridgeUrl = settings.settings.first().bridgeUrl)
+            val current = settings.settings.first()
+            _state.value = _state.value.copy(secondSourceReady = current.hasSecondSource)
         }
     }
 
@@ -70,11 +77,11 @@ class FrameSearchViewModel(
         }
             .onSuccess { result ->
                 when (result) {
-                    is FrameRepository.Outcome.Found -> {
+                    is Outcome.Found -> {
                         _state.value = _state.value.copy(stage = null, page = result.page)
                         _navigation.value = true
                     }
-                    is FrameRepository.Outcome.Miss ->
+                    is Outcome.Miss ->
                         _state.value = _state.value.copy(stage = null, miss = result.result)
                 }
             }
@@ -88,7 +95,7 @@ class FrameSearchViewModel(
     }
 
     fun clear() {
-        _state.value = FrameSearchState(bridgeUrl = _state.value.bridgeUrl)
+        _state.value = FrameSearchState(secondSourceReady = _state.value.secondSourceReady)
     }
 
     class Factory(

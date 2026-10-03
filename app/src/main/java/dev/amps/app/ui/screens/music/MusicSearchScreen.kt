@@ -322,7 +322,7 @@ private fun FreeTracksTab(
                         viewModel.openFreeTrack(track)
                         onOpenTrack()
                     },
-                    onDownload = { viewModel.download(track) },
+                    onDownload = { viewModel.downloadAndImport(track) },
                 )
             }
         }
@@ -378,7 +378,7 @@ private fun FreeTrackRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.Download,
-                    contentDescription = "Скачать",
+                    contentDescription = "Скачать в музыку телефона",
                     tint = if (track.downloadable) AmpsColors.violet else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

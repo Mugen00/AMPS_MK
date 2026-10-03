@@ -1,13 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The bridge that proxies to the local MCP servers is reached over plain HTTP
-  on the home LAN (http://192.168.x.x:8787), so cleartext has to be allowed
-  for the bridge. Android matches hosts by name, not by CIDR range, so the
-  whole app opts in and every third-party call it makes (AniList, MusicBrainz,
-  iTunes, free music sources) is still pinned to HTTPS by those endpoints.
+  1.0.3: cleartext is refused outright.
+
+  Until 1.0.2 this file allowed plain HTTP for the whole app, and the only
+  reason was the local bridge on http://192.168.x.x:8787. Android matches
+  hosts by name and has no way to say "HTTP only for one address", so a single
+  development convenience became a blanket downgrade for every real request the
+  app makes — trace.moe, AniList, SauceNAO, Wikidata, fandom, MusicBrainz and
+  every music source.
+
+  With the bridge gone there is nothing left that needs HTTP, so the app now
+  refuses cleartext entirely. A MITM on the home network can no longer read or
+  rewrite a search, and it cannot silently downgrade an image upload either.
 -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

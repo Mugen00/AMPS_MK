@@ -3,19 +3,20 @@ package dev.amps.app.core
 import android.content.Context
 import dev.amps.app.data.local.HistoryStore
 import dev.amps.app.data.remote.AniListClient
-import dev.amps.app.data.remote.BridgeClient
-import dev.amps.app.data.remote.BridgeDiscovery
 import dev.amps.app.data.remote.CcMixterClient
 import dev.amps.app.data.remote.CoverArtClient
 import dev.amps.app.data.remote.DirectTraceClient
-import dev.amps.app.data.remote.FrameIndexClient
 import dev.amps.app.data.remote.InternetArchiveClient
 import dev.amps.app.data.remote.ItunesClient
+import dev.amps.app.data.remote.JamendoClient
 import dev.amps.app.data.remote.MusicBrainzClient
-import dev.amps.app.data.remote.RankClient
+import dev.amps.app.data.remote.SauceClient
+import dev.amps.app.data.remote.WikiClient
 import dev.amps.app.data.repo.FrameRepository
 import dev.amps.app.data.repo.MusicRepository
 import dev.amps.app.imaging.ContentAnalyzer
+import dev.amps.app.media.MediaStoreImporter
+import kotlinx.coroutines.flow.first
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -43,35 +44,36 @@ class AppContainer(private val context: Context) {
             .build()
     }
 
-    val bridge: BridgeClient by lazy { BridgeClient(httpClient, settings) }
-    val bridgeDiscovery: BridgeDiscovery by lazy {
-        BridgeDiscovery(httpClient, context.applicationContext)
-    }
     val directTrace: DirectTraceClient by lazy { DirectTraceClient(httpClient) }
     val aniList: AniListClient by lazy { AniListClient(httpClient) }
+
+    // 1.0.3: моста нет, каждый источник — прямой HTTPS-запрос с телефона.
+    val sauce: SauceClient by lazy {
+        SauceClient(httpClient) { settings.settings.first().sauceNaoApiKey }
+    }
+    val wiki: WikiClient by lazy { WikiClient(plainHttpClient) }
 
     val itunes: ItunesClient by lazy { ItunesClient(plainHttpClient) }
     val musicBrainz: MusicBrainzClient by lazy { MusicBrainzClient(plainHttpClient) }
     val coverArt: CoverArtClient by lazy { CoverArtClient(plainHttpClient) }
     val ccMixter: CcMixterClient by lazy { CcMixterClient(plainHttpClient) }
     val internetArchive: InternetArchiveClient by lazy { InternetArchiveClient(plainHttpClient) }
+    val jamendo: JamendoClient by lazy {
+        JamendoClient(httpClient) { settings.settings.first().jamendoClientId }
+    }
 
     val history: HistoryStore by lazy { HistoryStore(context) }
 
-    // 1.0.2: три новых источника сигналов. Каждый из них умеет молча деградировать:
-    // индекс и ранжирование живут на ПК, модель содержимого — на телефоне.
-    val frameIndexClient: FrameIndexClient by lazy { FrameIndexClient(httpClient, bridge) }
-    val rankClient: RankClient by lazy { RankClient(httpClient, bridge) }
+    val mediaStoreImporter: MediaStoreImporter by lazy { MediaStoreImporter(context) }
     val contentAnalyzer: ContentAnalyzer by lazy { ContentAnalyzer() }
 
     val frameRepository: FrameRepository by lazy {
         FrameRepository(
-            bridge = bridge,
-            direct = directTrace,
+            trace = directTrace,
             aniList = aniList,
             history = history,
-            frameIndex = frameIndexClient,
-            ranker = rankClient,
+            sauce = sauce,
+            wiki = wiki,
             contentAnalyzer = contentAnalyzer,
         )
     }
@@ -82,8 +84,10 @@ class AppContainer(private val context: Context) {
             coverArt = coverArt,
             ccMixter = ccMixter,
             internetArchive = internetArchive,
+            jamendo = jamendo,
             context = context,
             history = history,
+            importer = mediaStoreImporter,
         )
     }
 }
