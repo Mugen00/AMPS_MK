@@ -5,13 +5,19 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import dev.amps.app.data.remote.JamendoClient
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 data class AppSettings(
-    val jamendoClientId: String = "",
+    /**
+     * 1.0.3: Jamendo работает сразу, без ввода. [JamendoClient.DEFAULT_CLIENT_ID]
+     * — открытый идентификатор клиентского приложения, а не ключ аккаунта,
+     * поэтому поле оставлено лишь для того, чтобы можно было подставить свой.
+     */
+    val jamendoClientId: String = JamendoClient.DEFAULT_CLIENT_ID,
     /**
      * 1.0.3: ключ SauceNAO спрашивает пользователя.
      *
@@ -57,7 +63,8 @@ class SettingsStore(private val context: Context) {
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
         AppSettings(
-            jamendoClientId = prefs[Keys.jamendoClientId].orEmpty(),
+            jamendoClientId = prefs[Keys.jamendoClientId]?.takeIf { it.isNotBlank() }
+                ?: JamendoClient.DEFAULT_CLIENT_ID,
             sauceNaoApiKey = prefs[Keys.sauceNaoApiKey].orEmpty(),
             importToMediaStore = prefs[Keys.importToMediaStore] ?: true,
             keepSearchHistory = prefs[Keys.keepHistory] ?: true,

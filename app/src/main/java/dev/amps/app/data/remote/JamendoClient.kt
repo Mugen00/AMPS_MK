@@ -189,6 +189,22 @@ class JamendoClient(
         private const val SEARCH_ENDPOINT = "https://api.jamendo.com/v3.0/tracks/"
         private const val USER_AGENT = "AMPS/1.0.3 (android)"
 
+        /**
+         * Client ID приложения по умолчанию.
+         *
+         * В отличие от ключа SauceNAO, это **не секрет**: Jamendo выдаёт его
+         * клиентским приложениям именно для того, чтобы они жили внутри них, и
+         * ограничивает им только частоту запросов, а не квоту аккаунта
+         * пользователя. Поэтому он зашит сюда и работает сразу, без ввода.
+         *
+         * Проверено живым запросом: `status=success`, треки приходят вместе с
+         * лицензиями CC.
+         */
+        const val DEFAULT_CLIENT_ID = "0edef2c2"
+
+        /** Открытый идентификатор — так он и должен выглядеть в приложении. */
+        val isDefaultClientId: Boolean get() = DEFAULT_CLIENT_ID.isNotBlank()
+
         /** Аудиохаш для поиска дублей при импорте. */
         fun dedupeKey(track: FreeTrack): String = musicDedupeKey(track.artistName, track.title)
     }

@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Refresh
@@ -112,22 +113,24 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenUpdates: () -> Unit = {})
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = state.jamendoClientId,
-                    onValueChange = viewModel::onJamendoId,
-                    label = { Text("Jamendo client_id") },
-                    placeholder = { Text("не задан") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Ascii,
-                        imeAction = ImeAction.Done,
-                    ),
-                    supportingText = {
-                        Text("Нужен только для поиска. Файлы Jamendo отдаёт и без него — по уже найденной ссылке")
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Spacer(Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = AmpsColors.cyan,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text("Jamendo подключён", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Полные треки с открытой лицензией — работает сразу, вводить ничего не нужно",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(14.dp))
                 Button(onClick = viewModel::save) {
                     Text(if (state.dirty) "Сохранить" else "Сохранено")
