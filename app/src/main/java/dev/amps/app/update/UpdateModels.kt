@@ -55,9 +55,30 @@ data class AppVersion(
     val major: Int,
     val minor: Int,
     val patch: Int,
+    /**
+     * Буквенный суффикс патча: `1.0.3a` — это `1.0.3` плюс `a`.
+     *
+     * Собственные версии Android такие (`versionName` = `1.0.3a`) допускает, и
+     * это естественный способ пометить патч к конкретной версии. Но молча
+     * отбрасывать букву нельзя: `1.0.3a` превратился бы в `1.0.0`, и обновление
+     * до него никогда не дошло бы — приложение решило бы, что у пользователя
+     * уже новее. Такое молчаливое искажение хуже явной ошибки.
+     */
+    val suffix: String = "",
 ) : Comparable<AppVersion> {
 
-    val label: String get() = "$major.$minor.$patch"
+    /** Порядок суффикса: `a` = 1, `b` = 2 … Для сравнения версий. */
+    val suffixRank: Int
+        get() = if (suffix.isEmpty()) {
+            0
+        } else if (suffix.length == 1) {
+            (suffix[0].lowercaseChar() - 'a' + 1).coerceAtLeast(0)
+        } else {
+            26 + suffix.lowercase().sumOf { it - 'a' + 1 }
+        }
+
+    val label: String
+        get() = "$major.$minor.$patch" + suffix
 
     /** True only when this version is strictly greater than [other]. */
     fun isNewerThan(other: AppVersion): Boolean = this > other
@@ -65,19 +86,26 @@ data class AppVersion(
     override fun compareTo(other: AppVersion): Int = when {
         major != other.major -> major.compareTo(other.major)
         minor != other.minor -> minor.compareTo(other.minor)
-        else -> patch.compareTo(other.patch)
+        patch != other.patch -> patch.compareTo(other.patch)
+        else -> suffixRank.compareTo(other.suffixRank)
     }
 
     override fun toString(): String = label
 }
 
+/** `v1.0.1`, `1.0.1`, `1.0.1-debug`, `1.2`, `1.0.3a` → [AppVersion]. */
+private val VERSION_PATTERN = Regex("""^(\d+)(?:\.(\d+))?(?:\.(\d+))?([a-z]{1,2})?$""", RegexOption.IGNORE_CASE)
+
 /**
- * Parses `"v1.0.1"`, `"1.0.1"`, `"1.0.1-debug"`, `"1.2"` into an [AppVersion].
+ * Разбирает номер версии в [AppVersion], либо возвращает `null`, если номер
+ * не распознан.
  *
- * A leading `v` (either case) is dropped, as is a `-suffix` / `+suffix` build
- * qualifier, and missing components default to zero. Returns null when the
- * major component is missing or not a number, so callers can tell a broken tag
- * from a valid one.
+ * `null` — это важный результат: он означает «я не понял, что здесь написано»,
+ * и позволяет показать пользователю честную ошибку. Превращать непонятное в
+ * `0.0.0` нельзя — так ломается всё сравнение версий.
+ *
+ * Поддерживаются: ведущий `v`, буквенный суффикс патча (`1.0.3a`) и
+ * `-debug`-хвост у debug-сборки, который отбрасывается.
  */
 fun parseVersion(raw: String?): AppVersion? {
     val cleaned = raw?.trim().orEmpty()
@@ -89,11 +117,15 @@ fun parseVersion(raw: String?): AppVersion? {
         .trim()
     if (cleaned.isEmpty()) return null
 
-    val parts = cleaned.split('.')
-    val major = parts.getOrNull(0)?.toIntOrNull() ?: return null
-    val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
-    val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
-    return AppVersion(major, minor, patch)
+    val match = VERSION_PATTERN.matchEntire(cleaned) ?: return null
+    val (majorRaw, minorRaw, patchRaw, suffix) = match.destructured
+    val major = majorRaw.toIntOrNull() ?: return null
+    // Ранний возврат для «1» и «1.0»: у них суффикса быть не может.
+    if (minorRaw.isEmpty()) return AppVersion(major, 0, 0)
+    val minor = minorRaw.toIntOrNull() ?: return null
+    if (patchRaw.isEmpty()) return AppVersion(major, minor, 0)
+    val patch = patchRaw.toIntOrNull() ?: return null
+    return AppVersion(major, minor, patch, suffix.lowercase())
 }
 
 /** A published release that carries an installable APK. */
