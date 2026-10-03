@@ -81,15 +81,28 @@ class SauceClient(
                 // Различать пользователю полезно, поэтому текст ошибки возвращаем.
                 throw IOException("SauceNAO ответил ${response.code}: ${text.take(180)}")
             }
-            parse(text)
+            // SauceNAO отдаёт ошибку **внутри JSON с кодом 200**: код в поле
+            // `header.status`, а пояснение — в `header.message`. Например
+            // `{"header":{"status":-1,"message":"The anonymous account type
+            // does not permit API usage."}}` приходит ровно так же, как и
+            // успешный ответ с пустым списком. Если это не разобрать, плохой
+            // ключ выглядит как «совпадений не нашлось» и молча портит вердикт.
+            val root = json.parseToJsonElement(text) as? JsonObject
+                ?: throw IOException("SauceNAO вернул нечитаемый ответ")
+            val header = root["header"] as? JsonObject
+            val status = header?.rawInt("status") ?: 0
+            if (status != 0) {
+                val reason = header?.string("message").orEmpty().ifBlank {
+                    "запрос отклонён (status $status)"
+                }
+                throw IOException("SauceNAO: $reason")
+            }
+            parse(root)
         }
     }
 
-    internal fun parse(text: String): List<RankingEngine.SauceHit> {
-        val root = json.parseToJsonElement(text) as? JsonObject ?: return emptyList()
-        // status > 0 означает «поиск не выполнен» (лимит, неизвестный хеш, битый файл)
-        val status = root["status"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
-        if (status > 0) return emptyList()
+    /** Разбирает уже проверенный ответ: [status == 0] означает поиск выполнен. */
+    internal fun parse(root: JsonObject): List<RankingEngine.SauceHit> {
         val results = root["results"] as? JsonArray ?: return emptyList()
 
         return results.mapNotNull { element ->
@@ -116,8 +129,17 @@ class SauceClient(
         }
     }
 
+    /** Идентификатор: у Jellyfin, AniList и прочих он всегда положительный. */
     private fun JsonObject.int(key: String): Int? =
         this[key]?.let { (it as? JsonPrimitive)?.doubleOrNull }?.toInt()?.takeIf { it > 0 }
+
+    /**
+     * Код ответа без фильтра. Здесь нужны и `0` (поиск выполнен), и `-1`
+     * (ключ не принят), и положительные (лимит исчерпан), поэтому правило
+     * «оставь только положительные» из [int] здесь неприменимо.
+     */
+    private fun JsonObject.rawInt(key: String): Int? =
+        this[key]?.let { (it as? JsonPrimitive)?.doubleOrNull }?.toInt()
 
     private fun JsonObject.string(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull()?.trim()?.takeIf { it.isNotEmpty() }

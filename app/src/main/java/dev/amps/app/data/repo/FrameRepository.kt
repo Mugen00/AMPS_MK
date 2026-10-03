@@ -84,7 +84,13 @@ class FrameRepository(
         val contentDeferred = contentAnalyzer?.let { analyzer ->
             runCatching { analyzer.analyze(bytes) }.getOrNull()
         }
-        val sauceHits = runCatching { sauce?.search(bytes, fileName, mime) }.getOrNull()
+        // Отказ второго источника не должен ронять весь поиск: trace.moe уже ответил,
+// и кадр опознан. Но и молчать об ошибке нельзя — иначе «ключ не принят» и
+// «ключ не задан» выглядят одинаково.
+        val sauceCall = runCatching { sauce?.search(bytes, fileName, mime) }
+        val sauceHits = sauceCall.getOrNull()
+        val sauceError = sauceCall.exceptionOrNull()?.readableMessage()
+            ?.takeIf { sauce != null }
 
         val traceResult = response.trace
         val traceId = traceResult?.anilist?.id
@@ -106,6 +112,7 @@ class FrameRepository(
                     )
                 },
                 sauce = sauceHits,
+                sauceError = sauceError,
                 labels = contentDeferred?.labels.orEmpty().map {
                     RankingEngine.Label(it.label, it.confidence)
                 },

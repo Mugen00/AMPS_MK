@@ -109,6 +109,13 @@ object RankingEngine {
         val trace: TraceHit? = null,
         /** null — SauceNAO вообще не настроен; иначе список его совпадений. */
         val sauce: List<SauceHit>? = null,
+        /**
+         * Что SauceNAO ответил вместо результата: неверный ключ, исчерпанная
+         * квота, недоступность. Без этого поля отказ второго источника
+         * выглядит так же, как его отсутствие, и пользователь не понимает,
+         * что чинить.
+         */
+        val sauceError: String? = null,
         val index: IndexHit? = null,
         val labels: List<Label> = emptyList(),
     )
@@ -140,7 +147,9 @@ object RankingEngine {
         }
 
         if (signals.sauce == null) {
-            warnings += "SauceNAO не настроен: второго источника нет, подтвердить совпадение нечем."
+            warnings += signals.sauceError
+                ?.let { "SauceNAO не ответил: $it" }
+                ?: "SauceNAO не настроен: второго источника нет, подтвердить совпадение нечем."
         }
 
         val pool = linkedMapOf<String, Slot>()
