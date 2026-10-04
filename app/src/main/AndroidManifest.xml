@@ -29,11 +29,29 @@
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
+    <!--
+        1.0.6: поднять лимит кучи.
+
+        Аниме-тегер держит в памяти 167 МБ весов плюс рабочие буферы, и на
+        телефоне с 2 ГБ ОЗУ стандартного лимита не хватало: приложение падало
+        через несколько секунд после разбора кадра, без сообщения. largeHeap
+        поднимает потолок примерно вдвое.
+
+        Это разрешение не создаёт память — её просто становится больше. Если
+        её всё равно не хватает, AnimeTagger проверяет свободную память ДО
+        загрузки модели и отказывается молча, отдавая «распознавание
+        недоступно», вместо того чтобы ронять приложение.
+
+        Комментарий стоит перед тегом, а не внутри: в XML нельзя поставить
+        комментарий между атрибутами открывающего тега — файл просто не
+        разбирается.
+    -->
     <application
         android:name=".AmpsApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:largeHeap="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"

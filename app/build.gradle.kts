@@ -73,8 +73,11 @@ android {
         applicationId = "dev.amps.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.0.6"
+        // 1.0.6a: нехватка памяти на телефоне роняла процесс через несколько
+        // секунд после разбора кадра. Исправление — largeHeap, проверка
+        // свободной памяти до загрузки модели и Throwable вместо Exception.
+        versionCode = 9
+        versionName = "1.0.6a"
         resourceConfigurations += listOf("ru", "en")
 
         ndk {

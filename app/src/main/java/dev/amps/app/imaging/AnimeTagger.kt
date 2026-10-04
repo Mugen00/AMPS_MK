@@ -1,9 +1,11 @@
 package dev.amps.app.imaging
 
+import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -70,10 +72,16 @@ class AnimeTagger(private val context: Context) {
      */
     suspend fun tag(bytes: ByteArray): Result? = withContext(Dispatchers.Default) {
         val handle = acquire() ?: return@withContext null
-        val bitmap = decode(bytes) ?: return@withContext null
         val startedAt = System.currentTimeMillis()
 
-        return@withContext try {
+        // Ловится Throwable, а не Exception, и это не перестраховка. Модель
+        // весит 167 МБ, телефон не обязан столько отдать, и нехватка памяти
+        // приходит как OutOfMemoryError — это Error, а не Exception, поэтому
+        // обработчик Exception её пропускал и приложение падало. Сюда же
+        // попадает UnsatisfiedLinkError, если у устройства нет библиотеки
+        // под свою архитектуру.
+        try {
+            val bitmap = decode(bytes) ?: return@withContext null
             val input = toInputTensor(bitmap)
             try {
                 // Типы указаны явно: у `run` есть перегрузки с `RunOptions` и
@@ -88,8 +96,10 @@ class AnimeTagger(private val context: Context) {
             } finally {
                 input.close()
             }
-        } catch (error: Exception) {
-            Log.w(TAG, "тегер не отработал: ${error.message}")
+        } catch (error: Throwable) {
+            // Отмена корутины — не поломка модели, её надо пропустить наружу.
+            if (error is CancellationException) throw error
+            Log.w(TAG, "тегер не отработал: ${error.javaClass.simpleName}: ${error.message}")
             null
         }
     }
@@ -133,6 +143,16 @@ class AnimeTagger(private val context: Context) {
         synchronized(this) {
             sessionRef.get()?.let { return it }
 
+            // Проверка ДО загрузки. Если памяти не хватает, попытка всё равно
+            // убьёт процесс — но уже нативно, внутри ONNX Runtime, мимо
+            // Java-обработчиков: там своя куча, и исключение в неё не доходит.
+            // Единственная защита — не начинать.
+            val free = runCatching { freeMemoryMb() }.getOrDefault(-1)
+            if (free in 0 until REQUIRED_FREE_MB) {
+                Log.w(TAG, "не гружу модель: свободно ${free} МБ, нужно ${REQUIRED_FREE_MB} МБ")
+                return null
+            }
+
             val model = runCatching { materialiseModel() }.getOrNull() ?: return null
             val tags = runCatching { loadTags() }.getOrNull() ?: return null
 
@@ -140,10 +160,34 @@ class AnimeTagger(private val context: Context) {
                 val environment = OrtEnvironment.getEnvironment()
                 val options = SessionOptions().apply { setIntraOpNumThreads(2) }
                 Handle(environment.createSession(model.absolutePath, options), tags.first, tags.second)
-            }.getOrNull() ?: return null
+            }.getOrNull()
 
-            return if (sessionRef.compareAndSet(null, created)) created else created
+            if (created == null) {
+                // Чаще всего это нехватка памяти: 167 МБ весов плюс рабочие
+                // буферы. Один запуск на телефоне с 2 ГБ ОЗУ на этом уже может
+                // не уложиться, и второй точно не уложится.
+                val reason = runCatching { freeMemoryMb() }.getOrDefault(0)
+                Log.w(TAG, "модель не загрузилась, свободной памяти ~${reason} МБ")
+                return null
+            }
+
+            val winner = sessionRef.compareAndSet(null, created)
+            if (!winner) {
+                // Другой поток успел первым: его сессию и используем, нашу
+                // закрываем. Раньше здесь утекала целая вторая сессия с её
+                // копией весов в нативной памяти.
+                sessionRef.get()?.also { runCatching { created.session.close() } }
+            }
+            return sessionRef.get() ?: created
         }
+    }
+
+    /** Свободная память устройства, МБ; 0, если система не ответила. */
+    private fun freeMemoryMb(): Int {
+        val info = ActivityManager.MemoryInfo()
+        (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager)
+            .getMemoryInfo(info)
+        return (info.availMem / 1048576L).toInt()
     }
 
     private fun materialiseModel(): File {
@@ -185,15 +229,37 @@ class AnimeTagger(private val context: Context) {
         return names to categories
     }
 
+    /**
+     * Декодирует с уменьшением, а не «как есть».
+     *
+     * Раньше картинка просто отвергалась, если длинная сторона больше 8192 px.
+     * Но 8192×8192 в ARGB_8888 — это 268 МБ, то есть отказ срабатывал уже
+     * после того, как система потеряла память. Теперь берётся максимальный
+     * степень-двойки `inSampleSize`, при которой длинная сторона не больше
+     * [DECODE_TARGET_EDGE_PX]. Замеры показали, что разрешение на результат
+     * не влияет, поэтому уменьшать безопасно.
+     */
     private fun decode(bytes: ByteArray): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        if (bounds.outWidth > MAX_INPUT_EDGE_PX || bounds.outHeight > MAX_INPUT_EDGE_PX) {
-            Log.w(TAG, "картинка ${bounds.outWidth}×${bounds.outHeight} больше допустимого")
-            return null
+
+        var sample = 1
+        var longEdge = maxOf(bounds.outWidth, bounds.outHeight)
+        while (longEdge / 2 >= DECODE_TARGET_EDGE_PX) {
+            longEdge /= 2
+            sample *= 2
         }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options())
+
+        return BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            },
+        )
     }
 
     /**
@@ -244,7 +310,13 @@ class AnimeTagger(private val context: Context) {
         private const val EXPECTED_MODEL_BYTES = 174_952_996L
 
         private const val INPUT_SIZE = 448
-        private const val MAX_INPUT_EDGE_PX = 8192
+
+        /**
+         * До какого размера ужимается картинка при декодировании. 1280 px
+         * хватает с запасом: модель всё равно сведёт её к 448×448, а замеры
+         * показали, что уменьшение ниже не меняет результат.
+         */
+        private const val DECODE_TARGET_EDGE_PX = 1280
 
         /** Четыре оценки, дальше идут теги. */
         private const val RATING_COUNT = 4
@@ -259,6 +331,16 @@ class AnimeTagger(private val context: Context) {
          */
         const val CHARACTER_THRESHOLD = 0.60f
         const val APPEARANCE_THRESHOLD = 0.45f
+
+        /**
+         * Сколько свободной памяти нужно телефону, чтобы загрузить модель.
+         *
+         * 167 МБ весов плюс рабочий набор ONNX Runtime — примерно вдвое
+         * больше. Порог взят с запасом: загрузка, которой памяти не хватило,
+         * роняет процесс нативно внутри рантайма, и поймать это нечем — до
+         * Java-обработчиков дело не доходит.
+         */
+        const val REQUIRED_FREE_MB = 400
 
         /** Показываем пятёрку: правильный ответ в ней есть всегда. */
         const val CHARACTER_KEEP = 5
