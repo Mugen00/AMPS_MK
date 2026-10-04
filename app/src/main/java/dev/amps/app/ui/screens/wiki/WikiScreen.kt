@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.ImageSearch
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
@@ -73,6 +74,7 @@ import dev.amps.app.data.model.CharacterHypothesis
 import dev.amps.app.data.model.FrameContent
 import dev.amps.app.data.model.FrameHit
 import dev.amps.app.data.model.FrameVerdict
+import dev.amps.app.data.remote.TraceMoeClient
 import dev.amps.app.ui.components.ConfidenceDial
 import dev.amps.app.ui.components.EmptyState
 import dev.amps.app.ui.components.InfoChip
@@ -143,6 +145,13 @@ fun WikiScreen(
                     // «определить нечего» — это тоже результат, и прятать его
                     // значит оставлять пользователя без объяснения.
                     if (content.analyzed) item { TagCard(content) { url -> openUrl(context, url) } }
+                }
+
+                // 1.0.6b: доказательство, по которому вообще названа серия. Идёт
+                // выше карточки IQDB: trace.moe сравнивал кадры, а IQDB искал
+                // похожую картинку в бо́ру-базах, и подменять одно другим нельзя.
+                page.frameMatch?.let {
+                    item { TraceMatchCard(page) }
                 }
 
                 page.frame?.let { hit ->
@@ -320,11 +329,12 @@ private fun VerdictCard(verdict: FrameVerdict, onOpen: (String) -> Unit) {
  *
  *  - **пятёрка персонажей с процентами.** Именно пятёрка, а не один: на наборе
  *    из 36 картинок с известным ответом правильный персонаж попал в неё в
- *    100 % случаев и первым — лишь в 55,6 %. Поэтому подпись — «предположения
- *    по тегам», а не «персонаж определён». Первые три уточнены именами через
- *    AniList, остальные показаны так, как есть, и подписаны честно;
- *  - **описание внешности**, собранное шаблоном из словаря: `aqua_hair` →
- *    «бирюзовые», `school_uniform` → «школьная форма».
+ *    100 % случаев и первым — примерно в половине. Поэтому подпись — «предположения
+ *    по тегам», а не «персонаж определён». Имена здесь появляются **только если
+ *    серию подтвердил внешний источник**: на скриншотах аниме тегер называет
+ *    персонажей уверенно и неверно, поэтому без подтверждения он оставляет одно
+ *    описание внешности;  - **описание внешности**, собранное шаблоном из словаря:
+ *    `aqua_hair` → «бирюзовые», `school_uniform` → «школьная форма».
  *
  * Если тегер отработал, но не нашёл ничего — так и написано, что картинка не
  * похожа на иллюстрацию. Если модель не смогла запуститься — написано, что
@@ -356,8 +366,18 @@ private fun TagCard(content: FrameContent, onOpen: (String) -> Unit) {
                 style = MaterialTheme.typography.titleSmall,
             )
             Text(
-                text = "Правильное имя в этой пятёрке оказывалось в 100 % замеров, " +
-                    "первым — в 55,6 %. Поэтому показаны все пять, а не один.",
+                text = "Показаны все пять, а не один: на наборе из 36 картинок правильное " +
+                    "имя оказывалось в пятёрке всегда, а первым — примерно в половине случаев.",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Имена здесь появляются только когда серию подтвердил внешний источник. " +
+                    "Замер на восьми скриншотах аниме: IQDB на них не нашёл ничего, а тегер выдал " +
+                    "чужих персонажей с уверенностью выше порога — то есть говорил уверенно и неверно. " +
+                    "Поэтому неподтверждённые гипотезы остаются подписанными бо́ру-тегом, а если " +
+                    "внешнего подтверждения нет, имён здесь нет вовсе — остаётся описание внешности.",
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
             )
@@ -650,6 +670,103 @@ private fun FrameFoundCard(hit: FrameHit, sha256: String?, onOpenSource: () -> U
                 fontFamily = FontFamily.Monospace,
             )
         }
+    }
+}
+
+/**
+ * **1.0.6b: доказательство, по которому серия вообще получила название.**
+ *
+ * Карточка рисуется только когда страница пришла из trace.moe. Если находки
+ * нет — серия названа по бо́ру-тегам, и показывать «имя файла в архиве» было бы
+ * выдумкой: у IQDB такого имени не существует.
+ *
+ * Поэтому здесь показывается не «результат поиска», а проверяемые факты:
+ * [TraceMoeClient.Match.sourceFilename] — имя файла в архиве, из которого
+ * trace.moe и взял название серии; по нему находку можно перепроверить
+ * вручную. Серия, эпизод, таймкод и сходство — то, что сервис сообщил
+ * дословно, без округления в свою пользу.
+ *
+ * **Уверенность словами, а не только процентом.** 60 % звучат как «почти
+ * уверен», хотя на деле означают «сервис не знает». Поэтому WEAK читается как
+ * «похоже, но не уверен» и сразу объясняет, откуда взялось снижение сходства —
+ * обрезанный или отредактированный скриншот. [TraceMoeClient.Confidence.UNUSABLE]
+ * сюда не доходит вовсе: репозиторий отбрасывает такие находки ещё до страницы,
+ * потому что показывать шум как находку — то же враньё, только наоборот.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TraceMatchCard(page: AnimeWikiPage) {
+    val match = page.frameMatch ?: return
+    val scheme = MaterialTheme.colorScheme
+    // UNUSABLE сюда не доходит, см. KDoc: показывать шум как находку — то же
+    // враньё, только с обратным знаком.
+    val trusted = match.confidence == TraceMoeClient.Confidence.TRUSTED
+    val accent = if (trusted) AmpsColors.cyan else AmpsColors.amber
+    val percent = (match.similarity * 100f + 0.5f).toInt()
+
+    SectionCard(
+        title = "Кадр найден в базе серий",
+        icon = Icons.Default.Movie,
+        trailing = { InfoChip("trace.moe", color = AmpsColors.cyan) },
+    ) {
+        Text(
+            text = "Название серии взято не из бо́ру-тегов, а из совпадения самого кадра: " +
+                "trace.moe сравнивает хеши кадров видеозаписей, поэтому отвечает там, где IQDB " +
+                "отвечает «no relevant matches» — на скриншоте аниме.",
+            style = MaterialTheme.typography.bodySmall,
+            color = scheme.onSurfaceVariant,
+        )
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Файл в архиве источника",
+            style = MaterialTheme.typography.labelLarge,
+            color = scheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = match.sourceFilename.ifBlank { "имя файла сервис не вернул" },
+            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+            color = if (match.sourceFilename.isBlank()) scheme.onSurfaceVariant else scheme.onSurface,
+        )
+        // Объяснение про доказательство даётся только когда доказательство
+        // есть: пустое имя файла обещать нечем, и подпись под ним была бы выдумкой.
+        match.sourceFilename.takeIf { it.isNotBlank() }?.let {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = "Это и есть доказательство, откуда взялось название: файл лежит в архиве " +
+                    "источника, и его можно открыть и сверить самому.",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        StatRow("Серия", page.media.title.best ?: "AniList #${match.anilistId}")
+        StatRow("Эпизод", match.episode?.toString() ?: "сервис не указал")
+        StatRow("Таймкод", match.timestamp, valueColor = accent)
+        StatRow("Сходство", "$percent %", valueColor = accent)
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = if (trusted) "найдено точно" else "похоже, но не уверен",
+            style = MaterialTheme.typography.titleSmall,
+            color = accent,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = if (trusted) {
+                "Сходство выше порога доверия trace.moe (85 %): это совпадение кадров, " +
+                    "а не похожая картинка. Серию можно называть прямо."
+            } else {
+                "Сходство между 50 % и 85 %: сервис считает кадр похожим, но не тем же самым. " +
+                    "Обычно так выходит из обрезанного или отредактированного скриншота — " +
+                    "субтитры, рамка проигрывателя, наложенный интерфейс, — поэтому сходство ниже. " +
+                    "Серия названа с этой оговоркой, а не на правах точного совпадения."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = scheme.onSurfaceVariant,
+        )
     }
 }
 

@@ -1,5 +1,7 @@
 package dev.amps.app.data.model
 
+import dev.amps.app.data.remote.TraceMoeClient
+
 /** Domain models for the anime wiki page. */
 
 /**
@@ -154,6 +156,15 @@ data class AnimeWikiPage(
     val rosterPlaces: List<RosterEntry> = emptyList(),
     /** 1.0.2: отпечаток кадра, чтобы можно было отправить его в общий индекс. */
     val frameHash: String? = null,
+    /**
+     * 1.0.6b: находка trace.moe, если серия названа по совпадению кадра.
+     *
+     * Это **доказательство**, по которому вообще появилась эта страница: имя
+     * файла в архиве, серия, эпизод, секунда и сходство. Без него вики-страница
+     * выглядит так, будто серия названа по бо́ру-тегам, а это другой и более
+     * слабый путь. Название серии в [media] взято именно из этого совпадения.
+     */
+    val frameMatch: TraceMoeClient.Match? = null,
 )
 
 data class SourceRef(val label: String, val url: String? = null, val note: String? = null)
@@ -215,4 +226,12 @@ data class EmptyResult(
     val raw: String?,
     val searchedImage: String? = null,
     val searchedImageSha256: String? = null,
+    /**
+     * 1.0.6b: описание внешности и ссылки на поиск по нему.
+     *
+     * Нужно потому, что «ничего не найдено» — худший ответ: человек остаётся
+     * с картинкой и без единого движения вперёд. Описание внешности — это то,
+     * что модель определяет верно, и из него собирается запрос.
+     */
+    val content: dev.amps.app.data.model.FrameContent? = null,
 )

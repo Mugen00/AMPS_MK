@@ -6,16 +6,20 @@ import dev.amps.app.data.local.StoredFrame
 import dev.amps.app.data.model.AnimeCharacter
 import dev.amps.app.data.model.AnimeMedia
 import dev.amps.app.data.model.AnimeWikiPage
+import dev.amps.app.data.model.AppearanceLexicon
 import dev.amps.app.data.model.CharacterGuess
 import dev.amps.app.data.model.CharacterTagName
 import dev.amps.app.data.model.EmptyResult
 import dev.amps.app.data.model.ExternalArt
 import dev.amps.app.data.model.FrameContent
 import dev.amps.app.data.model.FrameHit
+import dev.amps.app.data.model.SearchLink
 import dev.amps.app.data.model.SourceRef
 import dev.amps.app.data.ranking.RankingEngine
 import dev.amps.app.data.remote.AniListClient
+import dev.amps.app.data.remote.AppearanceSearchClient
 import dev.amps.app.data.remote.IqdbClient
+import dev.amps.app.data.remote.TraceMoeClient
 import dev.amps.app.data.remote.WikiClient
 import dev.amps.app.imaging.ContentAnalyzer
 import dev.amps.app.imaging.FrameFingerprint
@@ -56,6 +60,16 @@ class FrameRepository(
     private val history: HistoryStore,
     private val wiki: WikiClient? = null,
     private val contentAnalyzer: ContentAnalyzer? = null,
+    /**
+     * 1.0.6b: точный поиск кадра в базе серий.
+     *
+     * На скриншотах аниме IQDB отвечает «no relevant matches» — он индексирует
+     * бо́ру-арты. trace.moe сравнивает хеши кадров и потому единственный, кто
+     * отвечает на вопрос «это кадр из серии, из какой».
+     */
+    private val traceMoe: TraceMoeClient? = null,
+    /** 1.0.6b: собирает поисковый запрос по описанию внешности. */
+    private val appearanceSearch: AppearanceSearchClient? = null,
 ) {
 
     suspend fun identify(
@@ -81,17 +95,50 @@ class FrameRepository(
         val found = iqdbCall.getOrNull()
         val iqdbError = iqdbCall.exceptionOrNull()?.readableMessage()?.takeIf { iqdb != null }
 
+        // trace.moe и IQDB идут вместе, а не по очереди: оба смотрят на ту же
+        // картинку, оба ходят в сеть, и последовательный вызов удвоил бы
+        // ожидание. trace.moe для этого и нужен — на скриншотах аниме IQDB
+        // не находит ничего.
+        val traceCall = runCatching { traceMoe?.search(bytes) }
+        val frameMatch = traceCall.getOrNull()?.takeIf {
+            it.confidence != TraceMoeClient.Confidence.UNUSABLE
+        }
+
         // Пока тегер не спросил AniList, у гипотез персонажей нет ни канонического
         // имени, ни портрета. Уточняем их здесь же, последовательно: запросы
         // к AniList идут по первых трём тегам, остальные остаются такими, какие
         // есть, — и это честнее, чем молча подставлять перевод вместо имени.
         val tagged = content?.let { resolveHypotheses(it) }
 
+        // 1.0.6b: имя персонажа от тегера показывается только если его
+        // подтвердил кто-то снаружи.
+        //
+        // Замеры на восьми скриншотах аниме: IQDB на них отвечает «no relevant
+        // matches», а тегер выдаёт чужих персонажей с уверенностью выше
+        // порога — то есть говорит уверенно и неверно. Это хуже, чем молчать.
+        // Теперь имена остаются только когда серию назвал внешний источник:
+        // тогда гипотезу можно сверить с найденным и она перестаёт быть
+        // выдумкой. Само описание внешности — можно всегда: там модель не
+        // ошибается.
+        val confirmedExternally = frameMatch != null || found?.hits?.isNotEmpty() == true
+        val vetted = tagged?.let { if (confirmedExternally) it else it.withoutCharacters() }
+
+        // Подсказка для поиска собирается всегда, независимо от того, названа
+        // серия или нет: при промахе это единственное, что остаётся в руках
+        // у человека.
+        val searchHint = vetted?.let { attachSearch(it) } ?: vetted
+
         // Порядок источников неслучаен: теги IQDB описывают найденную в базе
         // картинку и потому надёжнее, а теги тегера — предположение о той
         // картинке, которую приложение получило. Поэтому тегер идёт последним
         // и только тогда, когда по тегам источника серия не назвалась.
-        val resolved = resolve(found, tagged)
+        //
+        // 1.0.6b: тегеру отказано в праве называть серию, если картинку не нашёл
+        // внешний источник. Просто скрыть имена недостаточно: по тем же
+        // выдуманным тегам AniList вернул бы серию, и карточка открылась бы с
+        // уверенным видом. То же враньё, только без подписи.
+        val seriesTags = if (found?.hits?.isNotEmpty() == true) tagged else null
+        val resolved = resolve(found, seriesTags, frameMatch)
 
         if (resolved?.media == null) {
             return Outcome.Miss(
@@ -100,12 +147,24 @@ class FrameRepository(
                     raw = found?.let { describe(it) },
                     searchedImage = previewDataUrl,
                     searchedImageSha256 = digest,
+                    // Промах не должен быть тупиком: отдаём описание внешности
+                    // и собранный из него запрос.
+                    content = searchHint,
                 )
             )
         }
 
         val media = resolved.media
         val fromIqdb = resolved.via == Via.Iqdb
+
+        // 1.0.6b: серия, названная по кадру, не достаётся ни IQDB, ни тегеру.
+        //
+        // Если оставить как было, движок рейтинга увидит `fromIqdb == false` и
+        // запишет, что серию назвал тегер на телефоне. Тегер этого не делал и
+        // ничего об этой серии не знает — объяснение оказалось бы выдуманным,
+        // а именно за такое приложение и ругали.
+        val creditedElsewhere = fromIqdb || resolved.via == Via.TraceMoe
+
         val verdict = RankingEngine.rank(
             RankingEngine.Signals(
                 iqdb = found?.let { result ->
@@ -113,8 +172,8 @@ class FrameRepository(
                         hits = result.hits.map { it.toRankingHit() },
                         exactMatchFound = result.exactMatchFound,
                         scannedImages = result.scannedImages,
-                        // Серия названа по тегам тегера — вклад IQDB тут нулевой,
-                        // и выдавать чужой вывод за его было бы враньём.
+                        // Серия названа не по IQDB — вклад тут нулевой, и
+                        // выдавать чужой вывод за его было бы враньём.
                         resolvedMediaId = media.id.takeIf { fromIqdb },
                         resolvedMediaTitle = media.title.best.takeIf { fromIqdb },
                         resolvedVia = resolved.via.label.takeIf { fromIqdb },
@@ -129,10 +188,10 @@ class FrameRepository(
                     characters = tagged?.characters.orEmpty().map {
                         RankingEngine.TaggerTag(it.tag, it.probability)
                     },
-                    resolvedMediaId = media.id.takeUnless { fromIqdb },
-                    resolvedMediaTitle = media.title.best.takeUnless { fromIqdb },
-                    resolvedViaTag = resolved.viaTag.takeUnless { fromIqdb },
-                    confirmedCharacter = resolved.character?.displayName.takeUnless { fromIqdb },
+                    resolvedMediaId = media.id.takeUnless { creditedElsewhere },
+                    resolvedMediaTitle = media.title.best.takeUnless { creditedElsewhere },
+                    resolvedViaTag = resolved.viaTag.takeUnless { creditedElsewhere },
+                    confirmedCharacter = resolved.character?.displayName.takeUnless { creditedElsewhere },
                 ),
             )
         )
@@ -184,16 +243,20 @@ class FrameRepository(
             guess = guess,
             candidates = media.characters,
             similarArt = similarArt,
-            sources = buildSources(media, found),
+            sources = buildSources(media, found, resolved.frameMatch),
             rawEngineText = found?.let { describe(it) },
             searchedImage = previewDataUrl,
             searchedImageSha256 = digest,
             verdict = verdict,
-            content = tagged,
+            content = searchHint,
             wiki = wikiInfo?.wiki,
             rosterCharacters = wikiInfo?.characters.orEmpty(),
             rosterPlaces = wikiInfo?.places.orEmpty(),
             frameHash = hash,
+            // 1.0.6b: найденный кадр едет в страницу вместе с серией. Без него
+            // интерфейс не может показать доказательство, по которому серия вообще
+            // названа: имя файла, эпизод, секунду и сходство.
+            frameMatch = resolved.frameMatch,
         )
 
         history.add(
@@ -235,8 +298,23 @@ class FrameRepository(
         )
     }
 
-    private fun buildSources(media: AnimeMedia, found: IqdbClient.SearchResult?): List<SourceRef> = buildList {
+    private fun buildSources(
+        media: AnimeMedia,
+        found: IqdbClient.SearchResult?,
+        frameMatch: TraceMoeClient.Match? = null,
+    ): List<SourceRef> = buildList {
         add(SourceRef(IQDB_LABEL, "https://iqdb.org/", "обратный поиск по картинке: Danbooru, Konachan, Gelbooru, Sankaku и другие"))
+        // 1.0.6b: trace.moe указан источником, когда серия названа по кадру, —
+        // иначе в списке источников не видно, откуда взялось название.
+        if (frameMatch != null) {
+            add(
+                SourceRef(
+                    "trace.moe",
+                    "https://trace.moe/?anilist=" + frameMatch.anilistId,
+                    "поиск кадра в базе серий; сходство %.0f %%".format(frameMatch.similarity * 100f),
+                )
+            )
+        }
         add(SourceRef("AniList", media.anilistUrl, "описание серии и персонажей"))
         media.malUrl?.let { add(SourceRef("MyAnimeList", it, "справочник серии")) }
         media.anidbUrl?.let { add(SourceRef("AniDB", it, "таймкоды и эпизоды")) }
@@ -258,8 +336,31 @@ class FrameRepository(
     private suspend fun resolve(
         found: IqdbClient.SearchResult?,
         tagged: FrameContent?,
+        frameMatch: TraceMoeClient.Match? = null,
     ): Resolved? {
         val hits = found?.hits.orEmpty()
+
+        // 1.0.6b: trace.moe проверяется первым, раньше IQDB и раньше тегера.
+        //
+        // Причина — в том, что он сравнивает. IQDB ищет похожую картинку в
+        // бо́ру-базах; тегер угадывает персонажа по нарисованному. Оба
+        // смотрят на рисунок и оба проходят мимо скриншота из серии.
+        // trace.moe сравнивает хеши кадров, и поэтому на скриншоте отвечает
+        // там, где остальные молчат.
+        if (frameMatch != null) {
+            val media = runCatching { aniList.media(frameMatch.anilistId) }.getOrNull()
+            if (media != null) {
+                return Resolved(
+                    media = media,
+                    character = null,
+                    // Доверие к источнику ниже, чем у точного совпадения
+                    // IQDB: см. Confidence в TraceMoeClient.
+                    via = Via.TraceMoe,
+                    viaTag = frameMatch.sourceFilename,
+                    frameMatch = frameMatch,
+                )
+            }
+        }
 
         // Теги берём со всех совпадений, а не только с лучшего: у лучшего
         // источника теги иногда обрезаны, а у второго-третьего они есть.
@@ -303,6 +404,36 @@ class FrameRepository(
      * Остальные гипотезы остаются неуточнёнными — и подписываются так и в
      * интерфейсе. Дописывать к ним перевод значило бы выдавать догадку за имя.
      */
+    /**
+     * 1.0.6b: дописывает к содержимому поисковый запрос по внешности.
+     *
+     * Собирается из тех же фраз, что показывает описание, но в порядке от
+     * редких признаков к частым: сочетание одежды и цвета глаз встречается в
+     * десятки раз реже, чем просто «зелёные глаза», а поисковики весят слова
+     * слева направо. Если словарь не дал ни одной подходящей фразы, запрос не
+     * собирается вовсе — пустая кнопка «искать» хуже, чем её отсутствие.
+     */
+    private fun attachSearch(content: FrameContent): FrameContent {
+        val builder = appearanceSearch ?: return content
+        val tags = content.appearance.map { it.tag to it.probability }
+        val clauses = AppearanceLexicon.clauses(tags)
+        val query = builder.buildQuery(clauses.map { it.group.title to it.items }) ?: return content
+        return content.copy(
+            searchQuery = query,
+            searchLinks = builder.links(query).map { SearchLink(it.engine, it.url) },
+        )
+    }
+
+    /**
+     * 1.0.6b: убирает имена персонажей, оставляя описание внешности.
+     *
+     * Описание модель определяет верно — это единственное, в чём тегеру можно
+     * верить на скриншотах аниме. Имена же на скриншотах он называет
+     * уверенно и неверно, поэтому наружу они не идут.
+     */
+    private fun FrameContent.withoutCharacters(): FrameContent =
+        copy(characters = emptyList())
+
     private suspend fun resolveHypotheses(content: FrameContent): FrameContent {
         val resolved = content.characters
             .take(TAGGER_CHARACTER_QUERIES)
@@ -445,6 +576,9 @@ class FrameRepository(
     private enum class Via(val label: String) {
         Iqdb("тегам источника"),
         Tagger("тегу, распознанному моделью на телефоне"),
+
+        /** 1.0.6b: кадр найден в базе серий, серия названа по совпадению кадра. */
+        TraceMoe("кадру из базы серий"),
     }
 
     /** Что удалось вытащить из бо́ру-тегов и подтвердить в AniList. */
@@ -454,6 +588,8 @@ class FrameRepository(
         val via: Via,
         /** Бо́ру-тег или нормализованное имя, по которому AniList назвал серию. */
         val viaTag: String,
+        /** 1.0.6b: находка trace.moe, если серия названа по ней. */
+        val frameMatch: TraceMoeClient.Match? = null,
     )
 }
 

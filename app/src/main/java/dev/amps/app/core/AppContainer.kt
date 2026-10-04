@@ -6,7 +6,9 @@ import dev.amps.app.data.remote.AniListClient
 import dev.amps.app.data.remote.CcMixterClient
 import dev.amps.app.data.remote.CoverArtClient
 import dev.amps.app.data.remote.InternetArchiveClient
+import dev.amps.app.data.remote.AppearanceSearchClient
 import dev.amps.app.data.remote.IqdbClient
+import dev.amps.app.data.remote.TraceMoeClient
 import dev.amps.app.data.remote.ItunesClient
 import dev.amps.app.data.remote.JamendoClient
 import dev.amps.app.data.remote.MusicBrainzClient
@@ -49,6 +51,18 @@ class AppContainer(private val context: Context) {
     }
 
     val iqdb: IqdbClient by lazy { IqdbClient(httpClient) }
+
+    /**
+     * 1.0.6b: точный поиск кадра в базе серий.
+     *
+     * Нужен потому, что на скриншотах аниме IQDB отвечает «no relevant
+     * matches», а тегер обучен на бо́ру-артах и там молчит. Единственный
+     * источник, который сравнивает кадры, а не картинки целиком.
+     */
+    val traceMoe: TraceMoeClient by lazy { TraceMoeClient(httpClient) }
+
+    /** 1.0.6b: собирает поисковый запрос по описанию внешности и даёт ссылки. */
+    val appearanceSearch: AppearanceSearchClient by lazy { AppearanceSearchClient() }
     val aniList: AniListClient by lazy { AniListClient(httpClient) }
 
     val wiki: WikiClient by lazy { WikiClient(plainHttpClient) }
@@ -84,6 +98,8 @@ class AppContainer(private val context: Context) {
             history = history,
             wiki = wiki,
             contentAnalyzer = contentAnalyzer,
+            traceMoe = traceMoe,
+            appearanceSearch = appearanceSearch,
         )
     }
     val musicRepository: MusicRepository by lazy {

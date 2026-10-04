@@ -7,6 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,12 +21,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.ImageSearch
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,13 +54,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import dev.amps.app.data.model.FrameContent
 import dev.amps.app.ui.components.EmptyState
+import dev.amps.app.ui.components.InfoChip
+import dev.amps.app.ui.components.SectionCard
 import dev.amps.app.ui.components.StageProgress
 import dev.amps.app.ui.theme.AmpsColors
+import dev.amps.app.util.openUrl
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,6 +78,7 @@ fun FrameSearchScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val navigation by viewModel.navigation.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
@@ -173,12 +184,104 @@ fun FrameSearchScreen(
                     message = miss.reason,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                // 1.0.6b: «ничего не найдено» — худший ответ, потому что человек
+                // остаётся с картинкой и без единого движения вперёд. Описание
+                // внешности — то, что модель определяет безошибочно, поэтому из
+                // него собран запрос и готовы ссылки на поисковики.
+                //
+                // Показываем только когда запрос действительно собран: пустой
+                // блок с кнопками без запроса хуже его отсутствия.
+                miss.content
+                    ?.takeIf { !it.searchQuery.isNullOrBlank() && it.searchLinks.isNotEmpty() }
+                    ?.let { hint ->
+                        AppearanceSearchHint(hint) { url -> openUrl(context, url) }
+                    }
             }
 
             PipelineCard()
 
             Spacer(Modifier.height(20.dp))
         }
+    }
+}
+
+/**
+ * 1.0.6b: подсказка, которая остаётся, когда промах.
+ *
+ * **Почему поиск по внешности, а не по имени.** Имя на скриншоте аниме
+ * определить нельзя: тегер обучен на иллюстрациях и на кадрах называет
+ * персонажей уверенно и неверно. А вот цвет волос, глаза и одежду он читает
+ * верно даже там, где IQDB и trace.moe молчат. Из этих признаков и собран
+ * запрос.
+ *
+ * **Почему это подсказка, а не ответ.** «Длинные белые волосы, школьная форма»
+ * подходит половине героев аниме, поэтому такой запрос персонажа не находит —
+ * он лишь сужает круг, а решение принимает человек. Подписать это «результатом
+ * поиска» было бы ровно тем же враньём, от которого приложение лечится.
+ *
+ * **Почему кнопка открывает браузер, а не ищет внутри приложения.** Проверено:
+ * и DuckDuckGo, и Mojeek на автоматический запрос отдают капчу при коде 200
+ * (`anomaly-modal__puzzle` и `captcha-wrap`). Разбирать такую выдачу значит
+ * вшить конструкцию, которая рано или поздно сломается; обычный браузер
+ * ломаться не умеет, а капчу при необходимости проходит человек.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AppearanceSearchHint(content: FrameContent, onOpen: (String) -> Unit) {
+    val query = content.searchQuery ?: return
+    SectionCard(
+        title = "Поиск по внешности",
+        icon = Icons.Default.TravelExplore,
+        trailing = { InfoChip("подсказка", color = AmpsColors.amber) },
+    ) {
+        Text(
+            text = "Ничего не нашлось — но описание внешности модель определяет верно, " +
+                "даже когда кадр никто опознать не смог. Из него собран запрос:",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        content.description?.let { description ->
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "Запрос: «$query»",
+            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Spacer(Modifier.height(12.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            content.searchLinks.forEach { link ->
+                OutlinedButton(onClick = { onOpen(link.url) }) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(link.engine)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Это подсказка для проверки, а не ответ: признаки внешности подходят " +
+                "половине героев аниме, и по ним персонажа не назвать. Поиск идёт в браузере, " +
+                "где при необходимости пройдётся капча.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
