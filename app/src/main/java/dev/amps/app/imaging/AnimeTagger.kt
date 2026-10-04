@@ -1,24 +1,23 @@
 package dev.amps.app.imaging
 
-import android.app.ActivityManager
+import android.content.ComponentName
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.Bundle
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.Message
+import android.os.Messenger
+import android.os.RemoteException
 import android.util.Log
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.FloatBuffer
-import java.util.concurrent.atomic.AtomicReference
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
-// В ONNX Runtime Java API `SessionOptions` — вложенный класс `OrtSession`,
-// отдельного класса `ai.onnxruntime.SessionOptions` нет.
-import ai.onnxruntime.OrtSession.SessionOptions
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.resume
 
 /**
  * Распознавание персонажа и внешности по картинке, целиком на устройстве.
@@ -33,9 +32,14 @@ import ai.onnxruntime.OrtSession.SessionOptions
  * Разрешение на вход не влияет: на тех же картинках сжатие до 230 px по
  * ширине меняло итог на 0 из 21. Поэтому модель тянет 448×448, как обучена.
  *
- * Порог [CHARACTER_THRESHOLD] выбран по измеренному разрыву: уверенное
- * определение даёт 0,73, а мусор на не-anime картинках держится у 0,50–0,53.
- * Между ними пусто, поэтому 0,60 отсекает шум, не задевая настоящие находки.
+ * Порог 0,60 выбран по измеренному разрыву: уверенное определение даёт 0,73,
+ * а мусор на не-anime картинках держится у 0,50–0,53. Между ними пусто,
+ * поэтому 0,60 отсекает шум, не задевая настоящие находки.
+ *
+ * Сам вычислитель живёт в отдельном процессе, см. [TagService]. Здесь только
+ * разговор с ним. Это не архитектура ради архитектуры: падение внутри ONNX
+ * Runtime — нативный SIGSEGV, мимо любых Java-обработчиков, и без отдельного
+ * процесса оно уносит всё приложение вместе с музыкой и поиском по вики.
  */
 class AnimeTagger(private val context: Context) {
 
@@ -61,289 +65,183 @@ class AnimeTagger(private val context: Context) {
             }
     }
 
-    private val sessionRef = AtomicReference<Handle?>(null)
+    private val tokens = AtomicInteger(0)
 
-    private class Handle(val session: OrtSession, val tags: List<String>, val categories: IntArray)
+    /** Ответы, которые ещё не пришли, по номеру запроса. */
+    private val pending = ConcurrentHashMap<Int, (Result?) -> Unit>()
+
+    /** `null` — процесса тегера нет, и мы уже пробовали его поднять. */
+    @Volatile
+    private var remote: Messenger? = null
 
     /**
-     * Разбирает и запускает модель. `null` — модель недоступна или не
-     * смогла отработать; вызывающий обязан трактовать это как «определить
-     * нечего», а не как «персонажа нет».
+     * Тегер упал или не поднялся. После этого `tag()` возвращает `null`
+     * мгновенно, не пытаясь поднять процесс заново на каждом кадре: если он
+     * один раз не поднялся, повторные попытки только замучают телефон.
      */
-    suspend fun tag(bytes: ByteArray): Result? = withContext(Dispatchers.Default) {
-        val handle = acquire() ?: return@withContext null
-        val startedAt = System.currentTimeMillis()
+    @Volatile
+    private var dead = false
 
-        // Ловится Throwable, а не Exception, и это не перестраховка. Модель
-        // весит 167 МБ, телефон не обязан столько отдать, и нехватка памяти
-        // приходит как OutOfMemoryError — это Error, а не Exception, поэтому
-        // обработчик Exception её пропускал и приложение падало. Сюда же
-        // попадает UnsatisfiedLinkError, если у устройства нет библиотеки
-        // под свою архитектуру.
-        try {
-            val bitmap = decode(bytes) ?: return@withContext null
-            val input = toInputTensor(bitmap)
-            try {
-                // Типы указаны явно: у `run` есть перегрузки с `RunOptions` и
-                // `Map<String, OnnxValue>`, и без подсказки компилятор не может
-                // выбрать единственную подходящую.
-                val output = handle.session.run(
-                    mapOf<String, OnnxTensor>(handle.session.inputInfo.keys.first() to input)
-                ).use { results ->
-                    results[0].value as FloatArray
-                }
-                buildResult(handle, output, System.currentTimeMillis() - startedAt)
-            } finally {
-                input.close()
-            }
-        } catch (error: Throwable) {
-            // Отмена корутины — не поломка модели, её надо пропустить наружу.
-            if (error is CancellationException) throw error
-            Log.w(TAG, "тегер не отработал: ${error.javaClass.simpleName}: ${error.message}")
-            null
+    /** Поднимает процесс тегера только один поток, остальные ждут здесь. */
+    private val bindLock = Any()
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val replyMessenger = Messenger(object : Handler(Looper.getMainLooper()) {
+        override fun handleMessage(message: Message) {
+            val answer = pending.remove(message.arg1) ?: return
+            answer(if (message.what == TagProtocol.MSG_RESULT) read(message.data) else null)
         }
-    }
+    })
 
-    private fun buildResult(handle: Handle, output: FloatArray, elapsedMs: Long): Result {
-        val characters = ArrayList<Tag>()
-        val appearance = ArrayList<Tag>()
-
-        // Первые четыре выхода — оценки general/sensitive/questionable/explicit,
-        // теги начинаются с пятого и идут в том же порядке, что в CSV.
-        for (i in handle.tags.indices) {
-            val index = i + RATING_COUNT
-            if (index >= output.size) break
-            val probability = sigmoid(output[index])
-            val category = handle.categories[i]
-            when {
-                category == CATEGORY_CHARACTER && probability >= CHARACTER_THRESHOLD ->
-                    characters += Tag(handle.tags[i], category, probability)
-                category == CATEGORY_GENERAL && probability >= APPEARANCE_THRESHOLD ->
-                    appearance += Tag(handle.tags[i], category, probability)
-            }
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            remote = Messenger(binder)
         }
 
-        characters.sortByDescending { it.probability }
-        appearance.sortByDescending { it.probability }
-
-        return Result(
-            characters = characters.take(CHARACTER_KEEP),
-            appearance = appearance.take(APPEARANCE_KEEP),
-            elapsedMs = elapsedMs,
-        )
+        override fun onServiceDisconnected(name: ComponentName?) {
+            // Процесс `:tagger` умер — обычно вместе с моделью. Всё, что было
+            // в полёте, честно отменяется, и дальше тегер не поднимается.
+            remote = null
+            dead = true
+            releasePending(null)
+            Log.w(TAG, "процесс тегера умер, дальше распознавание недоступно")
+        }
     }
 
     /**
-     * Модель лежит в assets, но ONNX Runtime открывает её по пути. Поэтому
-     * при первом запуске файл один раз копируется в файлы приложения.
-     * Размер около 167 МБ, поэтому копирование ленивое и помеченное.
-     */
-    private fun acquire(): Handle? {
-        sessionRef.get()?.let { return it }
-        synchronized(this) {
-            sessionRef.get()?.let { return it }
-
-            // Проверка ДО загрузки. Если памяти не хватает, попытка всё равно
-            // убьёт процесс — но уже нативно, внутри ONNX Runtime, мимо
-            // Java-обработчиков: там своя куча, и исключение в неё не доходит.
-            // Единственная защита — не начинать.
-            val free = runCatching { freeMemoryMb() }.getOrDefault(-1)
-            if (free in 0 until REQUIRED_FREE_MB) {
-                Log.w(TAG, "не гружу модель: свободно ${free} МБ, нужно ${REQUIRED_FREE_MB} МБ")
-                return null
-            }
-
-            val model = runCatching { materialiseModel() }.getOrNull() ?: return null
-            val tags = runCatching { loadTags() }.getOrNull() ?: return null
-
-            val created = runCatching {
-                val environment = OrtEnvironment.getEnvironment()
-                val options = SessionOptions().apply { setIntraOpNumThreads(2) }
-                Handle(environment.createSession(model.absolutePath, options), tags.first, tags.second)
-            }.getOrNull()
-
-            if (created == null) {
-                // Чаще всего это нехватка памяти: 167 МБ весов плюс рабочие
-                // буферы. Один запуск на телефоне с 2 ГБ ОЗУ на этом уже может
-                // не уложиться, и второй точно не уложится.
-                val reason = runCatching { freeMemoryMb() }.getOrDefault(0)
-                Log.w(TAG, "модель не загрузилась, свободной памяти ~${reason} МБ")
-                return null
-            }
-
-            val winner = sessionRef.compareAndSet(null, created)
-            if (!winner) {
-                // Другой поток успел первым: его сессию и используем, нашу
-                // закрываем. Раньше здесь утекала целая вторая сессия с её
-                // копией весов в нативной памяти.
-                sessionRef.get()?.also { runCatching { created.session.close() } }
-            }
-            return sessionRef.get() ?: created
-        }
-    }
-
-    /** Свободная память устройства, МБ; 0, если система не ответила. */
-    private fun freeMemoryMb(): Int {
-        val info = ActivityManager.MemoryInfo()
-        (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager)
-            .getMemoryInfo(info)
-        return (info.availMem / 1048576L).toInt()
-    }
-
-    private fun materialiseModel(): File {
-        val target = File(context.filesDir, MODEL_FILE)
-        // Файл считается готовым только если длина совпадает: обрыв копирования
-        // оставил бы после него модель, которая падает при первой загрузке.
-        if (target.exists() && target.length() == EXPECTED_MODEL_BYTES) return target
-
-        target.delete()
-        val temporary = File(target.parentFile, "$MODEL_FILE.part")
-        temporary.delete()
-        context.assets.open(ASSET_MODEL).use { input ->
-            temporary.outputStream().use { output -> input.copyTo(output) }
-        }
-        if (!temporary.renameTo(target)) {
-            temporary.delete()
-            throw IllegalStateException("не удалось сохранить модель")
-        }
-        return target
-    }
-
-    private fun loadTags(): Pair<List<String>, IntArray> {
-        val names = ArrayList<String>(TAG_COUNT)
-        val categories = IntArray(TAG_COUNT)
-        var index = 0
-        context.assets.open(ASSET_TAGS).bufferedReader().useLines { lines ->
-            lines.drop(1).forEach { line ->
-                if (line.isBlank() || index >= TAG_COUNT) return@forEach
-                // tag_id,category,name — порядок колонок задан SmilingWolf.
-                val parts = line.split(",", limit = 3)
-                if (parts.size == 3) {
-                    names += parts[2].trim()
-                    categories[index] = parts[1].trim().toIntOrNull() ?: 0
-                    index++
-                }
-            }
-        }
-        if (index != TAG_COUNT) throw IllegalStateException("в списке тегов $index из $TAG_COUNT")
-        return names to categories
-    }
-
-    /**
-     * Декодирует с уменьшением, а не «как есть».
+     * Разбирает один кадр.
      *
-     * Раньше картинка просто отвергалась, если длинная сторона больше 8192 px.
-     * Но 8192×8192 в ARGB_8888 — это 268 МБ, то есть отказ срабатывал уже
-     * после того, как система потеряла память. Теперь берётся максимальный
-     * степень-двойки `inSampleSize`, при которой длинная сторона не больше
-     * [DECODE_TARGET_EDGE_PX]. Замеры показали, что разрешение на результат
-     * не влияет, поэтому уменьшать безопасно.
+     * `null` — распознать нечего: процесс тегера недоступен, упал или не
+     * ответил вовремя. Это честный отказ, а не «персонажа на картинке нет».
      */
-    private fun decode(bytes: ByteArray): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    suspend fun tag(bytes: ByteArray): Result? {
+        if (dead || bytes.isEmpty()) return null
 
-        var sample = 1
-        var longEdge = maxOf(bounds.outWidth, bounds.outHeight)
-        while (longEdge / 2 >= DECODE_TARGET_EDGE_PX) {
-            longEdge /= 2
-            sample *= 2
+        val messenger = ensureBound() ?: return null
+        val path = writeTemporary(bytes) ?: return null
+        val token = tokens.incrementAndGet()
+
+        return try {
+            withTimeoutOrNull(REPLY_TIMEOUT_MS) {
+                suspendCancellableCoroutine { continuation ->
+                    pending[token] = { result -> continuation.resume(result) }
+                    val request = Message.obtain(null, TagProtocol.MSG_ANALYZE).apply {
+                        arg1 = token
+                        data = Bundle().apply {
+                            putString(TagProtocol.KEY_PATH, path)
+                            putParcelable(TagProtocol.KEY_REPLY_TO, replyMessenger)
+                        }
+                    }
+                    try {
+                        messenger.send(request)
+                    } catch (error: RemoteException) {
+                        pending.remove(token)
+                        continuation.resume(null)
+                    }
+                    continuation.invokeOnCancellation { pending.remove(token) }
+                }
+            }
+        } finally {
+            File(path).delete()
         }
+    }
 
-        return BitmapFactory.decodeByteArray(
-            bytes,
-            0,
-            bytes.size,
-            BitmapFactory.Options().apply {
-                inSampleSize = sample
-                inPreferredConfig = Bitmap.Config.ARGB_8888
-            },
+    private fun read(data: Bundle?): Result? {
+        if (data == null) return null
+        val characters = readTags(data, TagProtocol.KEY_NAMES, TagProtocol.KEY_PROBS, TaggerEngine.CATEGORY_CHARACTER)
+        val appearance = readTags(
+            data,
+            TagProtocol.KEY_NAMES + TagProtocol.KEY_NAMES,
+            TagProtocol.KEY_PROBS + TagProtocol.KEY_PROBS,
+            TaggerEngine.CATEGORY_GENERAL,
         )
+        return Result(
+            characters = characters,
+            appearance = appearance,
+            elapsedMs = data.getLong(TagProtocol.KEY_ELAPSED_MS),
+        )
+    }
+
+    private fun readTags(
+        data: Bundle,
+        namesKey: String,
+        probsKey: String,
+        category: Int,
+    ): List<Tag> {
+        val names = data.getStringArrayList(namesKey).orEmpty()
+        val probs = data.getFloatArray(probsKey) ?: FloatArray(0)
+        val count = minOf(names.size, probs.size)
+        return (0 until count)
+            .map { Tag(names[it], category, probs[it]) }
+            .sortedByDescending { it.probability }
     }
 
     /**
-     * Модель обучена на 448×448 в раскладке NHWC, каналы BGR, значения
-     * 0..255 без нормализации. Растягиваем, а не обрезаем: по краям кадра
-     * обычно и находится персонаж, а центральная вырезка его срезает.
+     * Кладёт картинку во временный файл.
+     *
+     * Не через `Bundle`: JPEG весит мегабайты, а транзакция Binder ограничена
+     * примерно 1 МБ, и большая картинка порвала бы связь сама по себе.
      */
-    private fun toInputTensor(bitmap: Bitmap): OnnxTensor {
-        val scaled = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
-        val buffer: FloatBuffer = ByteBuffer
-            .allocateDirect(INPUT_SIZE * INPUT_SIZE * 3 * 4)
-            .order(ByteOrder.nativeOrder())
-            .asFloatBuffer()
+    private fun writeTemporary(bytes: ByteArray): String? = runCatching {
+        val directory = File(context.cacheDir, "tagger").apply { mkdirs() }
+        val file = File(directory, "frame-${tokens.get()}-${bytes.size}.jpg")
+        file.writeBytes(bytes)
+        file.absolutePath
+    }.getOrNull()
 
-        val row = IntArray(INPUT_SIZE)
-        for (y in 0 until INPUT_SIZE) {
-            scaled.getPixels(row, 0, INPUT_SIZE, 0, y, INPUT_SIZE, 1)
-            for (x in 0 until INPUT_SIZE) {
-                val pixel = row[x]
-                val red = (pixel shr 16) and 0xFF
-                val green = (pixel shr 8) and 0xFF
-                val blue = pixel and 0xFF
-                // BGR, как ждёт экспорт ONNX.
-                buffer.put(blue.toFloat())
-                buffer.put(green.toFloat())
-                buffer.put(red.toFloat())
+    /**
+     * Дожидается готовой связи с процессом тегера.
+     *
+     * Поднятие процесса идёт асинхронно, поэтому здесь мы ждём. Раньше второй
+     * вызов, увидев пометку «привязка идёт», сразу получал `null` — то есть
+     * два кадра подряд давали ложный отказ, хотя тегер был в порядке. Теперь
+     * все вызовы стоят в одной очереди на замке и выходят по первому же
+     * готовому соединению.
+     */
+    private fun ensureBound(): Messenger? {
+        if (dead) return null
+        remote?.let { return it }
+
+        synchronized(bindLock) {
+            if (dead) return null
+            remote?.let { return it }
+
+            val intent = Intent(context, TagService::class.java)
+            val started = runCatching {
+                context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            }.getOrDefault(false)
+
+            if (!started) {
+                Log.w(TAG, "процесс тегера не поднялся")
+                dead = true
+                return null
+            }
+
+            repeat(BIND_ATTEMPTS) {
+                remote?.let { return it }
+                if (dead) return null
+                Thread.sleep(BIND_POLL_MS)
             }
         }
-        buffer.rewind()
-
-        return OnnxTensor.createTensor(
-            OrtEnvironment.getEnvironment(),
-            buffer,
-            longArrayOf(1, INPUT_SIZE.toLong(), INPUT_SIZE.toLong(), 3),
-        )
+        return remote
     }
 
-    private fun sigmoid(x: Float): Float = 1f / (1f + kotlin.math.exp(-x))
+    private fun releasePending(result: Result?) {
+        val waiting = pending.values.toList()
+        pending.clear()
+        mainHandler.post { waiting.forEach { it(result) } }
+    }
 
     companion object {
         private const val TAG = "AnimeTagger"
 
-        private const val ASSET_MODEL = "models/anime_tagger_int8.onnx"
-        private const val ASSET_TAGS = "models/anime_tags.csv"
-        private const val MODEL_FILE = "anime_tagger_int8.onnx"
-
-        /** Длина model_int8.onnx в байтах; защита от недокачанного файла. */
-        private const val EXPECTED_MODEL_BYTES = 174_952_996L
-
-        private const val INPUT_SIZE = 448
-
         /**
-         * До какого размера ужимается картинка при декодировании. 1280 px
-         * хватает с запасом: модель всё равно сведёт её к 448×448, а замеры
-         * показали, что уменьшение ниже не меняет результат.
+         * Первый разбор дольше: модель копируется из assets — 167 МБ. Потом
+         * секунды. Две минуты — это уже не «медленно», а «не работает».
          */
-        private const val DECODE_TARGET_EDGE_PX = 1280
-
-        /** Четыре оценки, дальше идут теги. */
-        private const val RATING_COUNT = 4
-        private const val TAG_COUNT = 10_861
-
-        private const val CATEGORY_GENERAL = 0
-        private const val CATEGORY_CHARACTER = 4
-
-        /**
-         * Между мусором (0,50–0,53) и уверенной находкой (0,73) измерен
-         * разрыв. Ни одно настоящее определение не опускалось ниже 0,60.
-         */
-        const val CHARACTER_THRESHOLD = 0.60f
-        const val APPEARANCE_THRESHOLD = 0.45f
-
-        /**
-         * Сколько свободной памяти нужно телефону, чтобы загрузить модель.
-         *
-         * 167 МБ весов плюс рабочий набор ONNX Runtime — примерно вдвое
-         * больше. Порог взят с запасом: загрузка, которой памяти не хватило,
-         * роняет процесс нативно внутри рантайма, и поймать это нечем — до
-         * Java-обработчиков дело не доходит.
-         */
-        const val REQUIRED_FREE_MB = 400
-
-        /** Показываем пятёрку: правильный ответ в ней есть всегда. */
-        const val CHARACTER_KEEP = 5
-        const val APPEARANCE_KEEP = 24
+        private const val REPLY_TIMEOUT_MS = 120_000L
+        private const val BIND_ATTEMPTS = 60
+        private const val BIND_POLL_MS = 100L
     }
 }

@@ -73,11 +73,13 @@ android {
         applicationId = "dev.amps.app"
         minSdk = 24
         targetSdk = 35
-        // 1.0.6a: нехватка памяти на телефоне роняла процесс через несколько
-        // секунд после разбора кадра. Исправление — largeHeap, проверка
-        // свободной памяти до загрузки модели и Throwable вместо Exception.
-        versionCode = 9
-        versionName = "1.0.6a"
+        // 1.0.6b: тегер вынесен в отдельный процесс. Падение внутри ONNX Runtime —
+// нативный SIGSEGV, мимо Java-обработчиков; в общем процессе оно уносило
+// всё приложение. Теперь Android убьёт только процесс `:tagger`.
+// Также largeHeap, проверка свободной памяти до загрузки модели и
+// Throwable вместо Exception в разборе кадра.
+        versionCode = 10
+        versionName = "1.0.6b"
         resourceConfigurations += listOf("ru", "en")
 
         ndk {

@@ -68,6 +68,24 @@
                 android:resource="@xml/amps_file_paths" />
         </provider>
 
+        <!--
+            1.0.6a: тегер живёт в отдельном процессе.
+
+            Падение внутри ONNX Runtime — нативный SIGSEGV, который не ловится
+            ни одним Java-обработчиком и уносит процесс целиком. Когда тегер
+            был частью приложения, это означало падение всего приложения.
+            Теперь Android убьёт только этот процесс, а основной получит
+            отключение связи и напишет «распознавание недоступно».
+
+            exported=false — наружу из процесса никто не ходит, общение
+            только внутри приложения через bindService.
+        -->
+        <service
+            android:name=".imaging.TagService"
+            android:enabled="true"
+            android:exported="false"
+            android:process=":tagger" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
