@@ -3,8 +3,8 @@ package dev.amps.app.imaging
 import android.app.ActivityManager
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Log
+import dev.amps.app.util.ImageLoader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -238,29 +238,27 @@ class TaggerEngine(private val context: Context) {
      * степень-двойки `inSampleSize`, при которой длинная сторона не больше
      * [DECODE_TARGET_EDGE_PX]. Замеры показали, что разрешение на результат
      * не влияет, поэтому уменьшать безопасно.
+     *
+     * **Самим декодером больше не владеет тегер.** Он зовёт [ImageLoader.decode],
+     * где кроме `BitmapFactory` есть `android.graphics.ImageDecoder`: фото
+     * с айфона в HEIC и AVIF раньше до модели не доходили вообще — не читались
+     * на этапе разбора картинки. На API 24–27 поведение прежнее: там
+     * `ImageDecoder` в системе нет, и `BitmapFactory` остаётся единственным
+     * путём.
+     *
+     * Отказ приходит не молча: [ImageLoader.Decode.Failed] несёт причину, и
+     * она пишется в лог с именем формата. Молчаливый пустой список в
+     * интерфейсе выглядел бы как «персонажа на картинке нет», а на деле
+     * означал бы «файл не прочитан».
      */
-    private fun decode(bytes: ByteArray): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-        var sample = 1
-        var longEdge = maxOf(bounds.outWidth, bounds.outHeight)
-        while (longEdge / 2 >= DECODE_TARGET_EDGE_PX) {
-            longEdge /= 2
-            sample *= 2
+    private fun decode(bytes: ByteArray): Bitmap? =
+        when (val decoded = ImageLoader.decode(bytes, DECODE_TARGET_EDGE_PX)) {
+            is ImageLoader.Decode.Image -> decoded.bitmap
+            is ImageLoader.Decode.Failed -> {
+                Log.w(TAG, "кадр не декодирован: ${decoded.reason}")
+                null
+            }
         }
-
-        return BitmapFactory.decodeByteArray(
-            bytes,
-            0,
-            bytes.size,
-            BitmapFactory.Options().apply {
-                inSampleSize = sample
-                inPreferredConfig = Bitmap.Config.ARGB_8888
-            },
-        )
-    }
 
     /**
      * Модель обучена на 448×448 в раскладке NHWC, каналы BGR, значения

@@ -1,6 +1,8 @@
 # Build output
 build/
 */build/
+# Кэш Kotlin-сессии: появляется рядом с проектом и в коммит не годится.
+.kotlin/
 .gradle/
 .gradle-home/
 .tmp/

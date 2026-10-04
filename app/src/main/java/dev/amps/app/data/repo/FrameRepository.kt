@@ -23,6 +23,7 @@ import dev.amps.app.data.remote.TraceMoeClient
 import dev.amps.app.data.remote.WikiClient
 import dev.amps.app.imaging.ContentAnalyzer
 import dev.amps.app.imaging.FrameFingerprint
+import dev.amps.app.util.ImageLoader
 import dev.amps.app.util.readableMessage
 import dev.amps.app.util.sha256
 import java.util.UUID
@@ -83,6 +84,12 @@ class FrameRepository(
         // отличить «ту же самую картинку» от «похожей на неё».
         val hash = runCatching { FrameFingerprint.dHash(bytes) }.getOrNull()
 
+        // 1.0.7: форма кадра. Размеры берутся из заголовка файла, а решать
+        // по ним надо до того, как результат уедет в интерфейс: на книжной
+        // картинке точного ответа не будет, и человек должен узнать об этом
+        // вместе с промахом, а не гадать, что именно сломалось.
+        val frameShape = shapeOf(bytes)
+
         // Модель содержимого считает локально и ни о чём внешнем не знает,
         // поэтому запускаем её вместе с IQDB, а не по очереди: два запроса
         // подряд — это две задержки в ряд. В первый запуск модель копируется
@@ -121,12 +128,20 @@ class FrameRepository(
         // выдумкой. Само описание внешности — можно всегда: там модель не
         // ошибается.
         val confirmedExternally = frameMatch != null || found?.hits?.isNotEmpty() == true
-        val vetted = tagged?.let { if (confirmedExternally) it else it.withoutCharacters() }
+        val vetted = if (!confirmedExternally) tagged?.withoutCharacters() else tagged
+
+        // 1.0.7: тегер может схлопнуться — и тогда даже подтверждённый серией
+        // тег персонажа врёт. Поэтому проверка стоит выше проверки
+        // «подтвердил ли кто-то снаружи»: подтверждение говорит, что серия
+        // названа верно, но не делает верным имя на вырезанном персонаже.
+        val collapsed = vetted?.charactersCollapsed() == true
+        val trustworthy = if (collapsed) vetted?.withoutCharacters(unreliable = true) else vetted
 
         // Подсказка для поиска собирается всегда, независимо от того, названа
         // серия или нет: при промахе это единственное, что остаётся в руках
-        // у человека.
-        val searchHint = vetted?.let { attachSearch(it) } ?: vetted
+        // у человека. Форма кадра приезжает сюда же и едет дальше и в промах,
+        // и на страницу серии: объяснение нужно в обоих случаях.
+        val searchHint = trustworthy?.let { attachSearch(it.copy(frameShape = frameShape)) }
 
         // Порядок источников неслучаен: теги IQDB описывают найденную в базе
         // картинку и потому надёжнее, а теги тегера — предположение о той
@@ -137,13 +152,18 @@ class FrameRepository(
         // внешний источник. Просто скрыть имена недостаточно: по тем же
         // выдуманным тегам AniList вернул бы серию, и карточка открылась бы с
         // уверенным видом. То же враньё, только без подписи.
-        val seriesTags = if (found?.hits?.isNotEmpty() == true) tagged else null
+        //
+        // 1.0.7: сюда идёт `trustworthy`, а не `tagged`. Схлопнувшийся тег
+        // персонажа не годится даже тогда, когда серию подтвердил источник:
+        // Итачи Учиха, превращённый в `suiseiseki`, увёл бы поиск в чужую
+        // серию уверенным видом.
+        val seriesTags = if (found?.hits?.isNotEmpty() == true) trustworthy else null
         val resolved = resolve(found, seriesTags, frameMatch)
 
         if (resolved?.media == null) {
             return Outcome.Miss(
                 EmptyResult(
-                    reason = missReason(found, iqdbError, tagged),
+                    reason = missReason(found, iqdbError, trustworthy),
                     raw = found?.let { describe(it) },
                     searchedImage = previewDataUrl,
                     searchedImageSha256 = digest,
@@ -183,9 +203,13 @@ class FrameRepository(
                 },
                 iqdbError = iqdbError,
                 tagger = RankingEngine.TaggerResult(
-                    available = tagged?.analyzed == true,
-                    hasPerson = tagged?.hasPerson == true,
-                    characters = tagged?.characters.orEmpty().map {
+                    // 1.0.7: движку рейтинга отдаётся `trustworthy`. Схлопнувшийся
+                    // тег — это не подтверждение, а одиночный выброс; если отдать
+                    // его движку, вердикт «уверены» был бы поднят враньём, и
+                    // ровно это приложение уже делало на скриншотах.
+                    available = trustworthy?.analyzed == true,
+                    hasPerson = trustworthy?.hasPerson == true,
+                    characters = trustworthy?.characters.orEmpty().map {
                         RankingEngine.TaggerTag(it.tag, it.probability)
                     },
                     resolvedMediaId = media.id.takeUnless { creditedElsewhere },
@@ -430,9 +454,80 @@ class FrameRepository(
      * Описание модель определяет верно — это единственное, в чём тегеру можно
      * верить на скриншотах аниме. Имена же на скриншотах он называет
      * уверенно и неверно, поэтому наружу они не идут.
+     *
+     * [unreliable] — 1.0.7: причина сокрытия схлопывание тегера, а не
+     * отсутствие внешнего подтверждения. Флаг нужен интерфейсу, чтобы
+     * объяснить человеку, почему имён нет, иначе пустой список выглядит как
+     * «персонажа определить не удалось».
      */
-    private fun FrameContent.withoutCharacters(): FrameContent =
-        copy(characters = emptyList())
+    private fun FrameContent.withoutCharacters(unreliable: Boolean = false): FrameContent =
+        copy(characters = emptyList(), charactersUnreliable = unreliable)
+
+    /**
+     * 1.0.7: признак того, что тегер схлопнулся на одном теге.
+     *
+     * **Что измерено.** На семи картинках с вырезанными персонажами тегер на
+     * всех семи выдал одного и того же персонажа с уверенностью 0,96–0,998,
+     * причём неверно: Итачи Учиха → `suiseiseki`, Нацу → `suiseiseki`,
+     * Цзинлю → `suigintou`. Всего на семь картинок — три тега. Модель вне
+     * своего распределения (она обучена на фан-арте Danbooru, а дали
+     * вырезанного персонажа на чужом фоне) не разбрасывается по кандидатам,
+     * а забивает один частый тег с запредельной уверенностью.
+     *
+     * **Почему правило такое простое.** У тега уже есть вероятность каждого
+     * имени, и у схлопывания есть ровно один след в этих числах: лидер выше
+     * всех остальных так, как на настоящей находке не бывает. Схлопывание —
+     * это не «много имён», это **одно** имя, забившее всё остальное. Три
+     * условия, каждое со своим числом:
+     *
+     * - **лидер ≥ [COLLAPSE_LEADER]** — 0,95. Ниже этой планки в измеренных
+     *   схлопываниях не было ни разу (там 0,96–0,998), а настоящие находки по
+     *   замерам тегера держатся около 0,73, и мусор на не-anime картинках — у
+     *   0,50–0,53. То есть 0,95 отсекает и уверенные находки, и шум, и ловит
+     *   только выброс;
+     * - **второе место ≤ [COLLAPSE_RUNNER_UP]** — 0,75. У настоящей находки
+     *   рядом с лидером почти всегда стоит ещё кто-то: картинка редко бывает
+     *   настолько однозначной, что модель не колеблется. Тишина на втором
+     *   месте — это и есть «остальные теги с низкой уверенностью»;
+     * - **отрыв ≥ [COLLAPSE_GAP]** — 0,20. Страховка от пары «0,96 и 0,80»:
+     *   там распределение размыто, а не схлопнуто. При лидере 0,96 этот отрыв
+     *   означает второе место не выше 0,76 — то есть ровно то «тихое» второе
+     *   место, которое и наблюдалось в замерах.
+     *
+     * Эвристику «посчитай энтропию первых пяти тегов» сознательно не делаем:
+     * её нечем объяснить одним замером, а неверное срабатывание здесь стоит
+     * дороже пропуска — показанное имя останется в интерфейсе навсегда.
+     */
+    private fun FrameContent.charactersCollapsed(): Boolean {
+        val leader = characters.firstOrNull()?.probability ?: return false
+        val runnerUp = characters.getOrNull(1)?.probability ?: 0f
+        return leader >= COLLAPSE_LEADER &&
+            runnerUp <= COLLAPSE_RUNNER_UP &&
+            leader - runnerUp >= COLLAPSE_GAP
+    }
+
+    /**
+     * 1.0.7: форма кадра по пропорции сторон.
+     *
+     * Границы взяты из замера на 21 картинке: широкие кадры (1,6–2,1) дают
+     * сходство 96,2–100 % — точное совпадение; книжные и квадратные (меньше
+     * 1,2) дают 24–67 % — шум. Пересечения нет ни одного, поэтому границы
+     * проходят там, где кончается совпадение и начинается шум.
+     *
+     * Промежуток 1,2–1,6 не измерен, и для него возвращается `null`: лучше
+     * не показать ничего, чем показать правдоподобную, но не измеренную
+     * метку.
+     */
+    private fun shapeOf(bytes: ByteArray): String? {
+        val ratio = ImageLoader.aspectRatio(bytes)
+        if (ratio <= 0f) return null
+        return when {
+            ratio >= WIDE_FRAME_RATIO -> FrameContent.SHAPE_WIDE
+            ratio > NARROW_FRAME_RATIO -> null
+            ratio > SQUARE_FRAME_RATIO -> FrameContent.SHAPE_SQUARE
+            else -> FrameContent.SHAPE_PORTRAIT
+        }
+    }
 
     private suspend fun resolveHypotheses(content: FrameContent): FrameContent {
         val resolved = content.characters
@@ -526,6 +621,13 @@ class FrameRepository(
         when {
             tagged == null || !tagged.analyzed ->
                 append(". Модель на телефоне не отработала, поэтому второго мнения о картинке не было.")
+            // 1.0.7: пустой список здесь означает не «персонажа нет», а
+            // «модель схлопнулась на одном теге». Разные вещи — разные слова:
+            // первое просит другую картинку, второе требует перекодировать ту
+            // же или взять широкий кадр.
+            tagged.charactersUnreliable ->
+                append(". Модель на телефоне схлопнулась на одном теге с уверенностью около 1,0 — " +
+                    "на вырезанном персонаже она ведёт себя именно так, поэтому имя здесь не показано.")
             tagged.characters.isEmpty() ->
                 append(". Модель на телефоне персонажа на картинке тоже не нашла — по её замерам " +
                     "на не-иллюстрациях оценки держатся у 0,50–0,53, а настоящая находка даёт 0,73. " +
@@ -570,6 +672,28 @@ class FrameRepository(
          * честной пометкой, что имя для них не уточнялось.
          */
         const val TAGGER_CHARACTER_QUERIES = 3
+
+        /**
+         * 1.0.7: с какого места кадр считается широким.
+         *
+         * Замер на 21 картинке: пропорция 1,6 и выше — сходство 96,2–100 %,
+         * то есть точное совпадение. Ниже 1,2 — 24–67 %, то есть шум.
+         */
+        const val WIDE_FRAME_RATIO = 1.6f
+
+        /** Граница между «квадратом» и «книжным». Всё, что уже, — книжное. */
+        const val SQUARE_FRAME_RATIO = 0.8f
+
+        /**
+         * Выше этой пропорции книжного поведения уже нет — но там начинается
+         * неизмеренный промежуток 1,2–1,6, поэтому форма не называется вовсе.
+         */
+        const val NARROW_FRAME_RATIO = 1.2f
+
+        /** Границы схлопывания тегера; обоснованы в [charactersCollapsed]. */
+        const val COLLAPSE_LEADER = 0.95f
+        const val COLLAPSE_RUNNER_UP = 0.75f
+        const val COLLAPSE_GAP = 0.20f
     }
 
     /** Откуда взялась серия: от тегов источника или от тегов модели. */

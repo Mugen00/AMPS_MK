@@ -1,5 +1,7 @@
 package dev.amps.app.data.remote
 
+import android.util.Log
+import dev.amps.app.util.ImageLoader
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -77,14 +79,22 @@ class TraceMoeClient(
      * Картинка уходит файлом, а не в теле запроса: JPEG весит мегабайты, а
      * trace.moe принимает multipart так же, как IQDB. Файл удаляется сразу —
      * сервис хранит его около часа, а у нас он не нужен дольше одного запроса.
+     *
+     * **Тип файла объявляется по байтам, а не строкой в коде.** Раньше здесь
+     * стояло `image/jpeg` на все случаи, и на PNG, WebP, HEIC или AVIF заголовок
+     * попросту врал: сервер получал `Content-Type: image/jpeg` с телом другого
+     * формата. Теперь [ImageLoader.sniff] смотрит сигнатуру первых байтов, и
+     * наружу уходит настоящий тип. Форматы, которые сервис принимает неохотно,
+     * перекодируются в JPEG — надёжнее всего именно он.
      */
-    suspend fun search(jpegBytes: ByteArray): Match? {
-        if (jpegBytes.isEmpty()) return null
+    suspend fun search(imageBytes: ByteArray): Match? {
+        if (imageBytes.isEmpty()) return null
 
-        val temporary = File.createTempFile("tm", ".jpg")
+        val payload = payload(imageBytes) ?: return null
+        val temporary = File.createTempFile("tm", "." + payload.format.extension)
         return try {
-            temporary.writeBytes(jpegBytes)
-            execute(temporary)
+            temporary.writeBytes(payload.bytes)
+            execute(temporary, payload.format.mime)
         } catch (error: Exception) {
             // trace.moe бывает недоступен. Это повод не искать, а не упасть.
             null
@@ -93,13 +103,37 @@ class TraceMoeClient(
         }
     }
 
-    private fun execute(image: File): Match? {
+    /** Что уходит на сервер: байты и честный MIME к ним. */
+    private data class Payload(val bytes: ByteArray, val format: ImageLoader.Format)
+
+    /**
+     * Решает, что отправить, по сигнатуре байтов.
+     *
+     * Три формата уходят как есть — trace.moe их понимает. Остальное, а
+     * вместе с ним любой неопознанный файл, перекодируется в JPEG: JPEG
+     * сервис принимает надёжнее всего, а отказ по Content-Type обошёлся бы
+     * тишиной. Если прочитать файл нечем — возвращается `null`, и поиск не
+     * выполняется вовсе, вместо того чтобы отправить серверу мусор.
+     */
+    private fun payload(bytes: ByteArray): Payload? {
+        val format = ImageLoader.sniff(bytes)
+        if (format != null && format in ACCEPTED_AS_IS) return Payload(bytes, format)
+
+        val jpeg = ImageLoader.toJpeg(bytes)
+        if (jpeg == null) {
+            Log.w(TAG, "не удалось перекодировать картинку в JPEG: ${ImageLoader.sniff(bytes)?.mime ?: "формат не распознан"}")
+            return null
+        }
+        return Payload(jpeg, ImageLoader.Format.JPEG)
+    }
+
+    private fun execute(image: File, mimeType: String): Match? {
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart(
                 "image",
                 image.name,
-                image.asRequestBody("image/jpeg".toMediaType()),
+                image.asRequestBody(mimeType.toMediaType()),
             )
             .build()
 
@@ -175,6 +209,21 @@ class TraceMoeClient(
 
     private companion object {
         const val ENDPOINT = "https://api.trace.moe/search"
+        const val TAG = "TraceMoeClient"
+
+        /**
+         * Форматы, которые trace.moe принимает без перекодирования.
+         *
+         * Три, а не «все известные»: сервис отдаёт первое совпадение по хешам
+         * кадров и JPEG/PNG/WebP разбирает уверенно, а HEIC, AVIF и GIF
+         * приводит к отказу или к пустому ответу. Всё, чего здесь нет, уходит
+         * в JPEG — это единственный формат, в котором сервис не врёт.
+         */
+        val ACCEPTED_AS_IS = setOf(
+            ImageLoader.Format.JPEG,
+            ImageLoader.Format.PNG,
+            ImageLoader.Format.WEBP,
+        )
 
         /**
          * `ignoreUnknownKeys` здесь не удобство, а условие работы.

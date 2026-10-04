@@ -184,6 +184,15 @@ fun FrameSearchScreen(
                     message = miss.reason,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                // 1.0.8: «ничего не нашлось» на книжной картинке — не беда
+                // пользователя и не сбой поиска. Точное совпадение по ней
+                // невозможно, и это надо сказать прямо, иначе человек будет
+                // пробовать другие картинки вместо того, чтобы взять широкий
+                // кадр. Блок ставится независимо от поисковой подсказки: он
+                // объясняет причину промаха, а подсказка — что делать дальше.
+                miss.content
+                    ?.takeIf { it.narrowFrame }
+                    ?.let { FrameShapeNotice(it) }
                 // 1.0.6b: «ничего не найдено» — худший ответ, потому что человек
                 // остаётся с картинкой и без единого движения вперёд. Описание
                 // внешности — то, что модель определяет безошибочно, поэтому из
@@ -201,6 +210,64 @@ fun FrameSearchScreen(
             PipelineCard()
 
             Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+/**
+ * 1.0.8: правда о книжной картинке — до всяких подсказок.
+ *
+ * **Почему это не «возможно, ничего не нашлось», а объяснение.** Точный поиск
+ * кадра физически не работает на пропорции меньше 1,2: замер на 21 картинке
+ * дал по широким кадрам 16:9 (пропорция 1,6–2,1) сходство 96,2–100 %, то есть
+ * точное совпадение, а по книжным и квадратным — 24–67 %, то есть шум.
+ * Пересечения не было ни на одной картинке, поэтому закон жёсткий.
+ *
+ * **Почему обрезку не предлагаем.** Проверено отдельно: у точного кадра,
+ * обрезанного в портрет, сходство падает обратно в шум. Единственное, что
+ * работает, — широкий кадр из той же серии, поэтому совет именно такой.
+ * Молчаливый промах заставляет человека перебирать картинки заново и
+ * винить приложение, а здесь видно, что делать.
+ */
+@Composable
+private fun FrameShapeNotice(content: FrameContent) {
+    val shape = content.frameShape.orEmpty()
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = AmpsColors.amber.copy(alpha = 0.14f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = AmpsColors.amber,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Картинка $shape — точного поиска кадра не будет",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = AmpsColors.amber,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Замер на 21 картинке: широкие кадры 16:9 (пропорция 1,6–2,1) trace.moe узнаёт " +
+                    "точно — сходство 96,2–100 %. Книжные и квадратные (пропорция меньше 1,2) дают " +
+                    "24–67 %, то есть шум, и пересечения с точными совпадениями не было ни разу.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Обрезать картинку не поможет: у точного кадра, обрезанного в портрет, сходство " +
+                    "падает обратно в шум. Нужен широкий кадр из той же серии — например снимок экрана " +
+                    "плеера во весь экран.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

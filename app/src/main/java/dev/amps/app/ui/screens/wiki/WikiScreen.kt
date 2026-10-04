@@ -359,7 +359,58 @@ private fun TagCard(content: FrameContent, onOpen: (String) -> Unit) {
             color = scheme.onSurfaceVariant,
         )
 
-        if (content.characters.isNotEmpty()) {
+        // 1.0.8: форма кадра объясняется здесь же, а не только на промахе.
+        // Серия могла быть названа по тегам источника, и тогда человек видит
+        // найденное, но не понимает, почему точного совпадения по кадру не
+        // было. Причина одна и та же, объяснять её надо одинаково.
+        content.frameShape?.takeIf { content.narrowFrame }?.let { shape ->
+            Spacer(Modifier.height(12.dp))
+            Surface(
+                color = AmpsColors.amber.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(horizontal = 10.dp, vertical = 9.dp)) {
+                    Text(
+                        text = "Картинка $shape: точного поиска кадра по ней не будет",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = AmpsColors.amber,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Замер на 21 картинке: широкие кадры 16:9 (пропорция 1,6–2,1) trace.moe " +
+                            "узнаёт точно, сходство 96,2–100 %. Книжные и квадратные (меньше 1,2) дают " +
+                            "24–67 % — шум, пересечения не было ни разу. Обрезка не помогает: у точного " +
+                            "кадра, обрезанного в портрет, сходство падает. Нужен широкий кадр из той же серии.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        // 1.0.8: имена скрыты не потому, что внешнего подтверждения не было,
+        // а потому что тегер на этой картинке схлопнулся. Причины разные, и
+        // молчаливое отсутствие имён заставило бы человека гадать, что
+        // не так с картинкой.
+        if (content.charactersUnreliable) {
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = "Имена персонажей не показаны",
+                style = MaterialTheme.typography.titleSmall,
+                color = AmpsColors.amber,
+            )
+            Text(
+                text = "Модель здесь схлопнулась: она выдала одного персонажа с уверенностью около 1,0, " +
+                    "а все остальные теги остались тихими. Замер на 7 картинках с вырезанными персонажами " +
+                    "показал ровно это: Итачи Учиха превратился в suiseiseki, Нацу — тоже в suiseiseki, " +
+                    "Цзинлю — в suigintou, и на семь картинок пришлось всего три тега. Модель обучена на " +
+                    "фан-арте Danbooru, и вырезанный персонаж на чужом фоне — вне её распределения. " +
+                    "Описание внешности ниже остаётся верным: там модель не ошибается.",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+        } else if (content.characters.isNotEmpty()) {
             Spacer(Modifier.height(14.dp))
             Text(
                 text = "Кто это — предположения по тегам",
