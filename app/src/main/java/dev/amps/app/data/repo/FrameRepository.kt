@@ -7,8 +7,10 @@ import dev.amps.app.data.model.AnimeCharacter
 import dev.amps.app.data.model.AnimeMedia
 import dev.amps.app.data.model.AnimeWikiPage
 import dev.amps.app.data.model.CharacterGuess
+import dev.amps.app.data.model.CharacterTagName
 import dev.amps.app.data.model.EmptyResult
 import dev.amps.app.data.model.ExternalArt
+import dev.amps.app.data.model.FrameContent
 import dev.amps.app.data.model.FrameHit
 import dev.amps.app.data.model.SourceRef
 import dev.amps.app.data.ranking.RankingEngine
@@ -24,18 +26,24 @@ import java.util.UUID
 /**
  * Превращает одну картинку в вики-страницу.
  *
- * **С 1.0.5 источник ровно один — IQDB.** Он ищет по иллюстрациям, скриншотам
- * и фотографиям: то есть по тому, что реально имеет смысл искать, а не по
- * кадрам видеозаписей. AniList отвечает на второй вопрос — «кто это и что это
- * за произведение»: по бо́ру-тегам `belgium_(hetalia)` он находит персонажа, а
- * по персонажу — серию. Вики фандома отвечает на третий — «что этот персонаж
- * вообще собой представляет».
+ * **С 1.0.5 внешний источник ровно один — IQDB.** Он ищет по иллюстрациям,
+ * скриншотам и фотографиям: то есть по тому, что реально имеет смысл искать, а
+ * не по кадрам видеозаписей. AniList отвечает на второй вопрос — «кто это и
+ * что это за произведение»: по бо́ру-тегам `belgium_(hetalia)` он находит
+ * персонажа, а по персонажу — серию. Вики фандома отвечает на третий — «что
+ * этот персонаж вообще собой представляет».
+ *
+ * **С 1.0.6 добавился второй источник — локальный.** Аниме-тегер на телефоне
+ * даёт собственные бо́ру-теги, и на них работает **та же** цепочка, что и на
+ * тегах IQDB: `AniListClient.searchCharacters` → лучший по `favourites` → его
+ * `appearances[0]` (сортировка `POPULARITY_DESC`) → `media(id)` = серия.
+ * Тегер не заменяет IQDB, а расширяет покрытие: IQDB находит точное совпадение
+ * с источником, тегер работает с любой иллюстрацией, даже не лежащей в индексе.
  *
  * **Почему цепочка именно такая.** Раньше серию называл trace.moe по совпадению
  * кадра в видеозаписи. У IQDB нет номеров эпизодов, но зато есть теги, а теги
  * персонажа почти всегда уникальны для произведения: `belgium` в AniList
- * находится ровно один, и его появления дают серию. Это и есть новый способ
- * получить произведение, и он работает там, где кадр видео не нужен вовсе.
+ * находится ровно один, и его появления дают серию.
  *
  * Ни один источник не доверяется сам себе. [RankingEngine] сводит находки в
  * одно взвешенное, объяснённое решение, а когда базы внутри IQDB спорят,
@@ -57,13 +65,14 @@ class FrameRepository(
         previewDataUrl: String? = null,
     ): Outcome {
         val digest = bytes.sha256()
-        // Отпечаток остаётся полезным и без trace.moe: он попадает в карточку и
-        // позволяет отличить «ту же самую картинку» от «похожей на неё».
+        // Отпечаток остаётся полезным: он попадает в карточку и позволяет
+        // отличить «ту же самую картинку» от «похожей на неё».
         val hash = runCatching { FrameFingerprint.dHash(bytes) }.getOrNull()
 
         // Модель содержимого считает локально и ни о чём внешнем не знает,
         // поэтому запускаем её вместе с IQDB, а не по очереди: два запроса
-        // подряд — это две задержки в ряд.
+        // подряд — это две задержки в ряд. В первый запуск модель копируется
+        // из assets в файлы приложения, это дольше обычного.
         val content = contentAnalyzer?.let { analyzer ->
             runCatching { analyzer.analyze(bytes) }.getOrNull()
         }
@@ -72,70 +81,59 @@ class FrameRepository(
         val found = iqdbCall.getOrNull()
         val iqdbError = iqdbCall.exceptionOrNull()?.readableMessage()?.takeIf { iqdb != null }
 
-        val labels = content?.labels.orEmpty().map { RankingEngine.Label(it.label, it.confidence) }
+        // Пока тегер не спросил AniList, у гипотез персонажей нет ни канонического
+        // имени, ни портрета. Уточняем их здесь же, последовательно: запросы
+        // к AniList идут по первых трём тегам, остальные остаются такими, какие
+        // есть, — и это честнее, чем молча подставлять перевод вместо имени.
+        val tagged = content?.let { resolveHypotheses(it) }
 
-        // Отказ IQDB не должен ронять весь поиск, но и молчать о нём нельзя:
-        // «сервис не ответил» и «совпадений нет» — это разные вещи, и пользователю
-        // нужно знать, какая из них случилась.
-        if (found == null) {
+        // Порядок источников неслучаен: теги IQDB описывают найденную в базе
+        // картинку и потому надёжнее, а теги тегера — предположение о той
+        // картинке, которую приложение получило. Поэтому тегер идёт последним
+        // и только тогда, когда по тегам источника серия не назвалась.
+        val resolved = resolve(found, tagged)
+
+        if (resolved?.media == null) {
             return Outcome.Miss(
                 EmptyResult(
-                    reason = iqdbError?.let { "IQDB не ответил: $it" }
-                        ?: "Источник поиска не настроен",
-                    raw = null,
+                    reason = missReason(found, iqdbError, tagged),
+                    raw = found?.let { describe(it) },
                     searchedImage = previewDataUrl,
                     searchedImageSha256 = digest,
                 )
             )
         }
 
-        // `best` — вычисляемое свойство, поэтому компилятор не может сузить его тип
-        // после проверки на null. Кладём в локальную переменную: дальше она
-        // неизменна, и все умолчания Kotlin работают как обычно.
-        val hit = found.best
-        if (hit == null) {
-            return Outcome.Miss(
-                EmptyResult(
-                    reason = missReason(found, content?.hasPerson == false),
-                    raw = describe(found),
-                    searchedImage = previewDataUrl,
-                    searchedImageSha256 = digest,
-                )
-            )
-        }
-
-        // Персонажа и серию ищем по тегам. Это запросы к AniList, и каждый стоит
-        // времени, поэтому берём только самое необходимое: персонажа по первому
-        // подходящему тегу, серию — по самой популярной из его появлений.
-        val resolved = resolve(hit, found.hits)
-        val media = resolved?.media
-        if (media == null) {
-            return Outcome.Miss(
-                EmptyResult(
-                    reason = "Совпадения нашлись (лучшее — ${hit.similarity} % в базе «${hit.source}»), " +
-                        "но серию по ним назвать не вышло: у совпадения нет бо́ру-тегов персонажа или серии, " +
-                        "а по одному проценту AniList серию не подберёт. Это не ошибка приложения — " +
-                        "найдено просто слишком мало данных.",
-                    raw = describe(found),
-                    searchedImage = previewDataUrl,
-                    searchedImageSha256 = digest,
-                )
-            )
-        }
-
+        val media = resolved.media
+        val fromIqdb = resolved.via == Via.Iqdb
         val verdict = RankingEngine.rank(
             RankingEngine.Signals(
-                iqdb = RankingEngine.IqdbResult(
-                    hits = found.hits.map { it.toRankingHit() },
-                    exactMatchFound = found.exactMatchFound,
-                    scannedImages = found.scannedImages,
-                    resolvedMediaId = media.id,
-                    resolvedMediaTitle = media.title.best,
-                    resolvedVia = resolved.via,
-                    resolvedViaTag = resolved.viaTag,
-                    confirmedCharacter = resolved.character?.displayName,
+                iqdb = found?.let { result ->
+                    RankingEngine.IqdbResult(
+                        hits = result.hits.map { it.toRankingHit() },
+                        exactMatchFound = result.exactMatchFound,
+                        scannedImages = result.scannedImages,
+                        // Серия названа по тегам тегера — вклад IQDB тут нулевой,
+                        // и выдавать чужой вывод за его было бы враньём.
+                        resolvedMediaId = media.id.takeIf { fromIqdb },
+                        resolvedMediaTitle = media.title.best.takeIf { fromIqdb },
+                        resolvedVia = resolved.via.label.takeIf { fromIqdb },
+                        resolvedViaTag = resolved.viaTag.takeIf { fromIqdb },
+                        confirmedCharacter = resolved.character?.displayName.takeIf { fromIqdb },
+                    )
+                },
+                iqdbError = iqdbError,
+                tagger = RankingEngine.TaggerResult(
+                    available = tagged?.analyzed == true,
+                    hasPerson = tagged?.hasPerson == true,
+                    characters = tagged?.characters.orEmpty().map {
+                        RankingEngine.TaggerTag(it.tag, it.probability)
+                    },
+                    resolvedMediaId = media.id.takeUnless { fromIqdb },
+                    resolvedMediaTitle = media.title.best.takeUnless { fromIqdb },
+                    resolvedViaTag = resolved.viaTag.takeUnless { fromIqdb },
+                    confirmedCharacter = resolved.character?.displayName.takeUnless { fromIqdb },
                 ),
-                labels = labels,
             )
         )
 
@@ -143,19 +141,26 @@ class FrameRepository(
             CharacterGuess(
                 character = it,
                 score = 1.0,
-                reason = "имя «${resolved.characterTag}» взято из тегов источника и найдено в AniList; " +
-                    "серия взята из его появлений",
+                reason = if (fromIqdb) {
+                    "имя «${resolved.viaTag}» взято из тегов источника и найдено в AniList; " +
+                        "серия взята из его появлений"
+                } else {
+                    "имя «${resolved.viaTag}» распознала модель на телефоне, AniList его подтвердил; " +
+                        "серия взята из его появлений, но совпадения картинки в базах не было"
+                },
             )
         }
 
-        val frameHit = FrameHit(
-            source = hit.source,
-            similarityPercent = hit.similarity,
-            url = hit.url,
-            exactMatch = hit.isBest,
-        )
+        val frameHit = found?.best?.let { hit ->
+            FrameHit(
+                source = hit.source,
+                similarityPercent = hit.similarity,
+                url = hit.url,
+                exactMatch = hit.isBest,
+            )
+        }
 
-        val similarArt = found.hits.map { art ->
+        val similarArt = found?.hits.orEmpty().map { art ->
             ExternalArt(
                 source = art.source,
                 title = art.seriesTags.firstOrNull()
@@ -180,11 +185,11 @@ class FrameRepository(
             candidates = media.characters,
             similarArt = similarArt,
             sources = buildSources(media, found),
-            rawEngineText = describe(found),
+            rawEngineText = found?.let { describe(it) },
             searchedImage = previewDataUrl,
             searchedImageSha256 = digest,
             verdict = verdict,
-            content = content,
+            content = tagged,
             wiki = wikiInfo?.wiki,
             rosterCharacters = wikiInfo?.characters.orEmpty(),
             rosterPlaces = wikiInfo?.places.orEmpty(),
@@ -198,14 +203,14 @@ class FrameRepository(
                 title = media.title.best ?: "Без названия",
                 subtitle = buildString {
                     append("найдено по картинке")
-                    frameHit.similarityPercent?.let { append(" · совпадение $it %") }
+                    frameHit?.similarityPercent?.let { append(" · совпадение $it %") }
                     guess?.character?.displayName?.let { append(" · $it") }
                 },
                 imageUrl = media.cover,
                 createdAt = System.currentTimeMillis(),
                 frame = StoredFrame(
                     anilistId = media.id,
-                    similarity = frameHit.similarityPercent?.let { it / 100.0 },
+                    similarity = frameHit?.similarityPercent?.let { it / 100.0 },
                     characterName = guess?.character?.displayName,
                     engine = IQDB_LABEL,
                 ),
@@ -239,51 +244,105 @@ class FrameRepository(
     }
 
     /**
-     * Ищет серию и персонажа по бо́ру-тегам IQDB.
+     * Ищет серию и персонажа по бо́ру-тегам — сначала IQDB, потом тегера.
      *
-     * Порядок неслучаен: тег персонажа уникальнее тега серии, а серия, взятая
-     * из появлений персонажа, точнее, чем поиск по названию. Сначала пробуем
-     * персонажа, и только если он не нашёлся — название серии.
+     * Порядок внутри IQDB неслучаен: тег персонажа уникальнее тега серии, а
+     * серия, взятая из появлений персонажа, точнее, чем поиск по названию.
+     * Сначала пробуем персонажа, и только если он не нашёлся — название серии.
+     *
+     * Теги тегера идут **последними** и только когда по IQDB не вышло: их
+     * описывает модель, а не база, по которой что-то нашлось. Проверка идёт
+     * по первым [TAGGER_CHARACTER_QUERIES] тегам — по замерам остальные обычно
+     * мусорные, а каждый запрос к AniList стоит времени.
      */
     private suspend fun resolve(
-        best: IqdbClient.Hit,
-        hits: List<IqdbClient.Hit>,
+        found: IqdbClient.SearchResult?,
+        tagged: FrameContent?,
     ): Resolved? {
+        val hits = found?.hits.orEmpty()
+
         // Теги берём со всех совпадений, а не только с лучшего: у лучшего
         // источника теги иногда обрезаны, а у второго-третьего они есть.
         val characterTags = tagsOf(hits) { it.characterTags }
         val seriesTags = tagsOf(hits) { it.seriesTags }
 
         for (tag in characterTags) {
-            val found = runCatching { aniList.searchCharacters(tag, CHARACTER_LIMIT) }.getOrNull().orEmpty()
-            // `favourites` — единственная честная мера «настоящести» персонажа:
-            // строка поиска AniList может вернуть однофамильца из другой серии.
-            val character = found.maxByOrNull { it.favourites } ?: continue
+            val character = searchCharacter(tag) ?: continue
             val mediaRef = character.appearances.firstOrNull() ?: continue
             val media = runCatching { aniList.media(mediaRef.id) }.getOrNull() ?: continue
-            return Resolved(
-                media = media,
-                character = character,
-                via = "тегу персонажа «$tag»",
-                viaTag = tag,
-                characterTag = tag,
-            )
+            return Resolved(media = media, character = character, via = Via.Iqdb, viaTag = tag)
         }
 
         for (tag in seriesTags) {
             val found = runCatching { aniList.searchMedia(tag, MEDIA_LIMIT) }.getOrNull().orEmpty()
             val pick = found.maxByOrNull { (it.favourites ?: 0) + (it.popularity ?: 0) } ?: continue
             val media = runCatching { aniList.media(pick.id) }.getOrNull() ?: continue
-            return Resolved(
-                media = media,
-                character = null,
-                via = "тегу серии «$tag»",
-                viaTag = tag,
-                characterTag = null,
-            )
+            return Resolved(media = media, character = null, via = Via.Iqdb, viaTag = tag)
+        }
+
+        // Тегера спрашиваем только теперь. Имя бо́ру-тега приводится к виду,
+        // который понимает поиск AniList, — см. [CharacterTagName].
+        for (tag in tagged?.characterQueryTags().orEmpty()) {
+            val character = searchCharacter(tag) ?: continue
+            val mediaRef = character.appearances.firstOrNull() ?: continue
+            val media = runCatching { aniList.media(mediaRef.id) }.getOrNull() ?: continue
+            return Resolved(media = media, character = character, via = Via.Tagger, viaTag = tag)
         }
         return null
     }
+
+    /**
+     * Уточняет гипотезы персонажей именами из AniList.
+     *
+     * Модель отдаёт бо́ру-строки, а пользователю показывать `rem_(re:zero)`
+     * вместо «Rem» — значит отдать ему служебную разметку базы. Поэтому по
+     * первым [TAGGER_CHARACTER_QUERIES] тегам идёт тот же запрос, что и при
+     * поиске серии, и найденный персонаж заменяет гипотезу именем, портретом
+     * и серией.
+     *
+     * Остальные гипотезы остаются неуточнёнными — и подписываются так и в
+     * интерфейсе. Дописывать к ним перевод значило бы выдавать догадку за имя.
+     */
+    private suspend fun resolveHypotheses(content: FrameContent): FrameContent {
+        val resolved = content.characters
+            .take(TAGGER_CHARACTER_QUERIES)
+            .mapNotNull { hypothesis ->
+                val query = CharacterTagName.normalize(hypothesis.tag) ?: return@mapNotNull null
+                val character = searchCharacter(query) ?: return@mapNotNull null
+                hypothesis.copy(
+                    name = character.displayName ?: hypothesis.name,
+                    anilistId = character.id.takeIf { it > 0 },
+                    image = character.image,
+                    mediaTitle = character.appearances.firstOrNull()?.title?.best,
+                )
+            }
+            .associateBy { it.tag }
+
+        if (resolved.isEmpty()) return content
+        return content.copy(characters = content.characters.map { resolved[it.tag] ?: it })
+    }
+
+    /**
+     * Один запрос к AniList за персонажем.
+     *
+     * `favourites` — единственная честная мера «настоящести»: строка поиска
+     * AniList по короткому имени охотно отдаёт однофамильцев из других серий,
+     * и без этой сортировки приложение называло бы не того.
+     */
+    private suspend fun searchCharacter(query: String): AnimeCharacter? =
+        runCatching { aniList.searchCharacters(query, CHARACTER_LIMIT) }.getOrNull()
+            .orEmpty()
+            .maxByOrNull { it.favourites }
+
+    /**
+     * Имена для запросов по гипотезам тегера: первые
+     * [TAGGER_CHARACTER_QUERIES] нормализованных имён, без повторов.
+     */
+    private fun FrameContent.characterQueryTags(): List<String> =
+        characters
+            .mapNotNull { CharacterTagName.normalize(it.tag) }
+            .distinct()
+            .take(TAGGER_CHARACTER_QUERIES)
 
     private fun tagsOf(hits: List<IqdbClient.Hit>, selector: (IqdbClient.Hit) -> List<String>): List<String> =
         hits.flatMap(selector)
@@ -302,24 +361,48 @@ class FrameRepository(
     )
 
     /**
-     * Честный текст для пустого ответа IQDB.
+     * Честный текст для пустого ответа.
      *
-     * Два разных случая, которые нельзя смешивать: на картинке нет людей (то
-     * есть это, скорее всего, вообще не кадр аниме) и люди есть, но картинки
-     * нет в индексе. Пользователь должен понимать, куда смотреть.
+     * Тут три разных случая, и смешивать их нельзя: **IQDB не ответил**,
+     * **IQDB ответил, но совпадений нет**, и **модель на телефоне тоже ничего
+     * не нашла**. Третий — самый честный и самый полезный вывод: на не-иллюстрациях
+     * оценки модели держатся у 0,50–0,53, настоящая находка даёт 0,73, порог
+     * стоит на 0,60. Пользователь должен понимать, куда смотреть, а не гадать,
+     * что именно сломалось.
      */
-    private fun missReason(found: IqdbClient.SearchResult, noPerson: Boolean): String = buildString {
-        append("IQDB просмотрел ")
-        append(found.scannedImages?.toString() ?: "несколько миллионов")
-        append(" изображений и не нашёл совпадений")
-        if (noPerson) {
-            append(". На картинке при этом нет ни одного человека — скорее всего, это вообще не кадр аниме")
+    private fun missReason(
+        found: IqdbClient.SearchResult?,
+        iqdbError: String?,
+        tagged: FrameContent?,
+    ): String = buildString {
+        when {
+            iqdbError != null -> append("IQDB не ответил: $iqdbError")
+            found == null -> append("Источник поиска не настроен")
+            else -> {
+                append("IQDB просмотрел ")
+                append(found.scannedImages?.toString() ?: "несколько миллионов")
+                append(" изображений и не нашёл совпадений")
+            }
         }
-        append(". ")
-        append(
-            "IQDB ищет по иллюстрациям и скриншотам, которые уже лежат в бо́ру-базах; " +
-                "обычное фото или скриншот из видеоигры там не лежат."
-        )
+
+        if (iqdbError == null) {
+            append(
+                ". IQDB ищет по иллюстрациям и скриншотам, которые уже лежат в бо́ру-базах; " +
+                    "обычное фото или скриншот из видеоигры там не лежат."
+            )
+        }
+
+        when {
+            tagged == null || !tagged.analyzed ->
+                append(". Модель на телефоне не отработала, поэтому второго мнения о картинке не было.")
+            tagged.characters.isEmpty() ->
+                append(". Модель на телефоне персонажа на картинке тоже не нашла — по её замерам " +
+                    "на не-иллюстрациях оценки держатся у 0,50–0,53, а настоящая находка даёт 0,73. " +
+                    "Скорее всего, это вообще не иллюстрация аниме.")
+            else ->
+                append(". Модель на телефоне предложила персонажей (${tagged.characters.take(3).joinToString(", ") { it.name }}), " +
+                    "но AniList не смог назвать по их именам ни персонажа, ни серию.")
+        }
     }
 
     /** Текстовый слепок ответа: показывается пользователю целиком, а не выдумывается. */
@@ -347,17 +430,30 @@ class FrameRepository(
         const val CHARACTER_LIMIT = 6
         const val MEDIA_LIMIT = 6
 
-        /** Теги, из которых серию не вывести: служебные слова бо́ру-разметки. */
-        const val ONLY_MARKERS = "|||"
+        /**
+         * Сколько гипотез тегера уточняются именами через AniList.
+         *
+         * Три, а не пять: по замерам правильный персонаж стоит первым в 55,6 %
+         * случаев и входит в пятёрку в 100 %, то есть третий тег почти всегда
+         * уже мусорный. Пятый и четвёртый показываются такими, какие есть, с
+         * честной пометкой, что имя для них не уточнялось.
+         */
+        const val TAGGER_CHARACTER_QUERIES = 3
     }
 
-    /** Что удалось вытащить из тегов IQDB и подтвердить в AniList. */
+    /** Откуда взялась серия: от тегов источника или от тегов модели. */
+    private enum class Via(val label: String) {
+        Iqdb("тегам источника"),
+        Tagger("тегу, распознанному моделью на телефоне"),
+    }
+
+    /** Что удалось вытащить из бо́ру-тегов и подтвердить в AniList. */
     private data class Resolved(
         val media: AnimeMedia,
         val character: AnimeCharacter?,
-        val via: String,
+        val via: Via,
+        /** Бо́ру-тег или нормализованное имя, по которому AniList назвал серию. */
         val viaTag: String,
-        val characterTag: String?,
     )
 }
 

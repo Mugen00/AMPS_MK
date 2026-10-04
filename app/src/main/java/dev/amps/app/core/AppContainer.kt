@@ -13,6 +13,7 @@ import dev.amps.app.data.remote.MusicBrainzClient
 import dev.amps.app.data.remote.WikiClient
 import dev.amps.app.data.repo.FrameRepository
 import dev.amps.app.data.repo.MusicRepository
+import dev.amps.app.imaging.AnimeTagger
 import dev.amps.app.imaging.ContentAnalyzer
 import dev.amps.app.media.MediaStoreImporter
 import kotlinx.coroutines.flow.first
@@ -64,7 +65,17 @@ class AppContainer(private val context: Context) {
     val history: HistoryStore by lazy { HistoryStore(context) }
 
     val mediaStoreImporter: MediaStoreImporter by lazy { MediaStoreImporter(context) }
-    val contentAnalyzer: ContentAnalyzer by lazy { ContentAnalyzer() }
+
+    /**
+     * 1.0.6: аниме-тегер вместо ML Kit.
+     *
+     * Контекст у него обязателен: модель лежит в assets, а ONNX Runtime
+     * открывает её по пути, поэтому тегер один раз копирует файл в `filesDir`.
+     * Поэтому он ленивый — 167 МБ не должны копироваться ради приложения,
+     * которым пользователь только слушает музыку.
+     */
+    val animeTagger: AnimeTagger by lazy { AnimeTagger(context) }
+    val contentAnalyzer: ContentAnalyzer by lazy { ContentAnalyzer(animeTagger) }
 
     val frameRepository: FrameRepository by lazy {
         FrameRepository(

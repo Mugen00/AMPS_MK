@@ -67,7 +67,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.amps.app.data.model.AnimeCharacter
 import dev.amps.app.data.model.AnimeMedia
 import dev.amps.app.data.model.AnimeWikiPage
+import dev.amps.app.data.model.AppearanceLexicon
 import dev.amps.app.data.model.CharacterGuess
+import dev.amps.app.data.model.CharacterHypothesis
 import dev.amps.app.data.model.FrameContent
 import dev.amps.app.data.model.FrameHit
 import dev.amps.app.data.model.FrameVerdict
@@ -137,7 +139,10 @@ fun WikiScreen(
                 }
 
                 page.content?.let { content ->
-                    if (content.analyzed) item { FrameContentCard(content) }
+                    // Показываем и когда модель отработала, но не нашла ничего:
+                    // «определить нечего» — это тоже результат, и прятать его
+                    // значит оставлять пользователя без объяснения.
+                    if (content.analyzed) item { TagCard(content) { url -> openUrl(context, url) } }
                 }
 
                 page.frame?.let { hit ->
@@ -306,37 +311,185 @@ private fun VerdictCard(verdict: FrameVerdict, onOpen: (String) -> Unit) {
     }
 }
 
+/**
+ * **1.0.6: карточка разбора картинки переехала с ML Kit на аниме-тегер.**
+ *
+ * Раньше здесь показывались общие словари — «person», «sky», «building», —
+ * из которых нельзя было сделать ничего, кроме вывода «человек есть». Теперь
+ * модель на телефоне выдаёт бо́ру-теги, и из них получается две честные вещи:
+ *
+ *  - **пятёрка персонажей с процентами.** Именно пятёрка, а не один: на наборе
+ *    из 36 картинок с известным ответом правильный персонаж попал в неё в
+ *    100 % случаев и первым — лишь в 55,6 %. Поэтому подпись — «предположения
+ *    по тегам», а не «персонаж определён». Первые три уточнены именами через
+ *    AniList, остальные показаны так, как есть, и подписаны честно;
+ *  - **описание внешности**, собранное шаблоном из словаря: `aqua_hair` →
+ *    «бирюзовые», `school_uniform` → «школьная форма».
+ *
+ * Если тегер отработал, но не нашёл ничего — так и написано, что картинка не
+ * похожа на иллюстрацию. Если модель не смогла запуститься — написано, что
+ * это сбой. Разные причины пустоты подписаны по-разному, потому что это
+ * разные вещи.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FrameContentCard(content: FrameContent) {
+private fun TagCard(content: FrameContent, onOpen: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    val buckets = listOf(
-        "Люди" to content.subjects,
-        "Место" to content.placeHints,
-        "Предметы" to content.itemHints,
-    ).filter { it.second.isNotEmpty() }
-    if (buckets.isEmpty() && content.labels.isEmpty()) return
-
-    SectionCard(title = "Что видно на картинке", icon = Icons.Default.Visibility) {
+    SectionCard(
+        title = "Что распознано на картинке",
+        icon = Icons.Default.Visibility,
+        trailing = {
+            InfoChip("на самом телефоне", color = AmpsColors.cyan)
+        },
+    ) {
         Text(
-            text = "Определено на самом телефоне, без интернета и без отправки картинки наружу. " +
-                "Это общие признаки, а не названия — имена персонажей и мест приходят из бо́ру-тегов и вики.",
+            text = "Определено локально, без интернета и без отправки картинки наружу. " +
+                "Всё, что ниже, — предположения модели по тегам, а не проверенные факты.",
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurfaceVariant,
         )
-        buckets.forEach { (title, values) ->
-            if (values.isEmpty()) return@forEach
+
+        if (content.characters.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = "Кто это — предположения по тегам",
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                text = "Правильное имя в этой пятёрке оказывалось в 100 % замеров, " +
+                    "первым — в 55,6 %. Поэтому показаны все пять, а не один.",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
             Spacer(Modifier.height(8.dp))
-            Text(title, style = MaterialTheme.typography.labelLarge, color = scheme.onSurfaceVariant)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                values.forEach { InfoChip(text = it, color = scheme.primary) }
+            content.characters.forEach { hypothesis ->
+                HypothesisRow(hypothesis, onOpen)
             }
         }
-        if (buckets.isEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                content.labels.take(8).forEach { InfoChip(text = it.label, color = scheme.primary) }
+
+        val clauses = AppearanceLexicon.clauses(content.appearance.map { it.tag to it.probability })
+        if (clauses.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            Text("Внешность", style = MaterialTheme.typography.titleSmall)
+            content.description?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(it, style = MaterialTheme.typography.bodyMedium)
             }
+            clauses.forEach { clause ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = clause.group.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = scheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    clause.items.forEach { phrase -> InfoChip(text = phrase, color = scheme.primary) }
+                }
+            }
+            Text(
+                text = "Описание собрано из тегов источника по словарю. Чего в словаре нет, в описании нет: " +
+                    "ничего не додумывается вместо отсутствующего тега.",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+        }
+
+        if (content.emptyButAnalyzed) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Картинка не похожа на иллюстрацию — определять нечего.",
+                style = MaterialTheme.typography.titleSmall,
+                color = AmpsColors.amber,
+            )
+            Text(
+                text = "Модель отработала и не нашла ни персонажа, ни признаков внешности. " +
+                    "По её замерам на таких картинках оценки держатся у 0,50–0,53, " +
+                    "а настоящая находка даёт 0,73, поэтому пустой список здесь — честный ответ, а не сбой. " +
+                    "На кадрах видеозаписей она молчит всегда, и это правильно: " +
+                    "тегер обучен на иллюстрациях, а не на видео.",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+        }
+
+        if (content.elapsedMs > 0) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Анализ занял ${content.elapsedMs} мс" +
+                    if (content.elapsedMs >= FIRST_RUN_MS) " — включая копирование модели при первом запуске" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * С какого времени замер считается «первым запуском». Модель весит около
+ * 167 МБ и один раз копируется из assets в файлы приложения, поэтому первый
+ * анализ всегда заметно длиннее остальных. Порог — минута: столько занимает
+ * копирование и первый запуск ONNX Runtime вместе, обычный прогон укладывается
+ * в единицы секунд.
+ */
+private const val FIRST_RUN_MS = 60_000L
+
+/**
+ * Одна строка гипотезы: процент, имя и — честно — откуда оно взято.
+ *
+ * Название AniList открывается по ссылке, а неуточнённый тег — нет: выдумывать
+ * адрес персонажа, которого в базе нет, нельзя.
+ */
+@Composable
+private fun HypothesisRow(hypothesis: CharacterHypothesis, onOpen: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp)
+            .then(
+                if (hypothesis.anilistId != null) {
+                    Modifier.clickable { onOpen("https://anilist.co/character/${hypothesis.anilistId}") }
+                } else {
+                    Modifier
+                }
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        InfoChip("${hypothesis.percent} %", color = if (hypothesis.resolved) AmpsColors.cyan else scheme.onSurfaceVariant)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = hypothesis.name,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = if (hypothesis.resolved) {
+                    "имя из AniList по тегу «${hypothesis.tag}»" +
+                        (hypothesis.mediaTitle?.let { " · серия: $it" } ?: "")
+                } else {
+                    "тег «${hypothesis.tag}», имя в AniList не уточнялось"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        hypothesis.image?.let {
+            Spacer(Modifier.width(8.dp))
+            NetworkImage(
+                url = it,
+                contentDescription = hypothesis.name,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(14.dp)),
+            )
         }
     }
 }
@@ -501,7 +654,8 @@ private fun FrameFoundCard(hit: FrameHit, sha256: String?, onOpenSource: () -> U
 }
 
 /**
- * **1.0.5: здесь разведены две разные вещи, которые раньше были одной.**
+ * **1.0.5: здесь разведены две разные вещи, которые раньше были одной, а с
+ * 1.0.6 — уже три.**
  *
  * Прежде карточка называлась «Персонаж в кадре», а сверху показывала первого
  * кандидата из AniList, даже если совпадение по тегам не нашлось вовсе. Это
@@ -509,10 +663,16 @@ private fun FrameFoundCard(hit: FrameHit, sha256: String?, onOpenSource: () -> U
  * на картинке.
  *
  * Теперь:
- * - сверху — только тот, кого IQDB назвал по бо́ру-тегу и кого AniList
- *   подтвердил; подпись прямо говорит, что это «по тегам источника»;
+ * - сверху — только тот, кого источник назвал по бо́ру-тегу и кого AniList
+ *   подтвердил. Тегом может быть и бо́ру-тег найденной источником картинки, и
+ *   тег, который распознала модель на телефоне; подпись говорит «по тегам», а
+ *   строкой ниже объясняет, чьи именно это были теги;
  * - ниже — весь состав серии с честной оговоркой, что это перечень серии, а не
  *   догадка о том, кто на картинке.
+ *
+ * Пять гипотез тегера живут отдельной карточкой выше. Подставлять их сюда
+ * значило бы смешать «кого нашла модель на картинке» с «кого источник назвал по
+ * тегам», а это два разных утверждения.
  *
  * Если тегов не было вовсе, не выдумывается ничего: так и написано, что
  * определить нечем и почему.
@@ -529,7 +689,7 @@ private fun CharacterCard(
         title = "Персонаж",
         icon = Icons.Default.Face,
         trailing = {
-            found?.let { InfoChip("по тегам источника", color = AmpsColors.cyan) }
+            found?.let { InfoChip("по тегам", color = AmpsColors.cyan) }
         },
     ) {
         if (found == null) {
@@ -555,7 +715,7 @@ private fun CharacterCard(
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        text = "найден по тегам источника, а не распознан на картинке",
+                        text = "имя подтверждено AniList по бо́ру-тегу, серия взята из его появлений",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -14,16 +14,14 @@ android {
         applicationId = "dev.amps.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.0.5"
+        versionCode = 8
+        versionName = "1.0.6"
         resourceConfigurations += listOf("ru", "en")
 
         ndk {
-            // Только настоящие телефоны. ML Kit тянет за собой
-            // `libmlkitcommonpipeline.so` весом около 12 МБ на каждую
-            // архитектуру, и без фильтра в APK попадают ещё и x86 с x86_64 —
-            // а это примерно 24 МБ, нужные исключительно эмуляторам. Приложение
-            // на эмуляторе не запускают, а APK раздаётся напрямую одним файлом,
+            // Только настоящие телефоны. Без фильтра в APK попадают ещё и x86 с
+            // x86_64, а они нужны исключительно эмуляторам. Приложение на
+            // эмуляторе не запускают, а APK раздаётся напрямую одним файлом,
             // поэтому эти две лишние архитектуры — чистый вес.
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
@@ -112,7 +110,8 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
 
-    // 1.0.2: object/scene labels for the frame itself, fully on-device.
-    implementation(libs.mlkit.image.labeling)
-    implementation(libs.mlkit.image.labeling.common)
+    // 1.0.6: аниме-тегер вместо ML Kit. ML Kit отдавал общие словари
+    // («человек», «волосы») и занимал 20 МБ APK — 81% размера. Тегер
+    // знает имена персонажей и весит больше, но работает.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 }
