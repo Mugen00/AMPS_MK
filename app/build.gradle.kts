@@ -1,8 +1,67 @@
+import java.net.URI
+import java.security.MessageDigest
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+/**
+ * Модель аниме-тегера качается при сборке, а не хранится в git.
+ *
+ * Файл весит 166,8 МБ. GitHub отклоняет в репозитории всё больше 100 МБ,
+ * а квота Git LFS у аккаунта исчерпана, поэтому оба способа держать модель
+ * в репозитории закрыты. Оригинал лежит на Hugging Face
+ * (`SmilingWolf/wd-swinv2-tagger-v3`, Apache-2.0) — там он и должен быть.
+ *
+ * Сверка обязательна: молча собранный APK с битой моделью уехал бы
+ * пользователю, и виноват был бы R8, а не сеть.
+ */
+val animeTagger = layout.projectDirectory.file("src/main/assets/models/anime_tagger_int8.onnx")
+val animeTaggerSha256 = "d91e54a7a0097014aeed5c41410747531e262d25ee5c2f6e946b7647f0b5878c"
+val animeTaggerSource = "https://huggingface.co/SmilingWolf/wd-swinv2-tagger-v3/resolve/main/model.onnx"
+
+val fetchAnimeTagger by tasks.registering {
+    description = "Скачивает модель аниме-тегера и сверяет SHA256."
+    group = "setup"
+
+    val target = animeTagger
+    val expected = animeTaggerSha256
+    val source = animeTaggerSource
+
+    // Модель меняется редко, поэтому при верном файле сеть не трогается:
+    // иначе каждая сборка ждала бы 167 МБ.
+    onlyIf { !target.asFile.exists() || sha256(target.asFile) != expected }
+
+    doLast {
+        target.asFile.parentFile.mkdirs()
+        val partial = target.asFile.resolveSibling("${target.asFile.name}.part")
+        partial.delete()
+        logger.lifecycle("Скачиваю модель аниме-тегера (166,8 МБ) с Hugging Face…")
+
+        val connection = URI(source).toURL().openConnection()
+        connection.connectTimeout = 30_000
+        connection.readTimeout = 300_000
+        connection.inputStream.use { input ->
+            partial.outputStream().use { output -> input.copyTo(output) }
+        }
+
+        val actual = sha256(partial)
+        if (actual != expected) {
+            partial.delete()
+            throw GradleException(
+                "Модель скачалась, но не сошлась по SHA256.\n" +
+                    "  ожидалось: $expected\n  получено:  $actual\n" +
+                    "Файл не используется и удалён: это либо обрыв загрузки, " +
+                    "либо подмена на стороне сервера.",
+            )
+        }
+        if (!partial.renameTo(target.asFile)) {
+            throw GradleException("не удалось сохранить модель в ${target.asFile}")
+        }
+        logger.lifecycle("Модель готова, SHA256 сошёлся.")
+    }
 }
 
 android {
@@ -114,4 +173,21 @@ dependencies {
     // («человек», «волосы») и занимал 20 МБ APK — 81% размера. Тегер
     // знает имена персонажей и весит больше, но работает.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
+}
+
+tasks.named("preBuild").configure { dependsOn(fetchAnimeTagger) }
+
+/** SHA256 файла в нижнем регистре; для отсутствующего файла — пустая строка. */
+fun sha256(file: File): String {
+    if (!file.exists()) return ""
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { stream ->
+        val buffer = ByteArray(1 shl 16)
+        while (true) {
+            val read = stream.read(buffer)
+            if (read <= 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
 }
