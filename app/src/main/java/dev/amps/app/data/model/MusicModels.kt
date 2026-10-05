@@ -411,12 +411,235 @@ enum class FreeTrackFilter(
 
 /** Lowercase, punctuation-free `artist + title`; the cross-source merge key. */
 fun musicDedupeKey(artist: String?, title: String): String =
-    (normalize(artist.orEmpty()) + "|" + normalize(title)).trim('|')
-        .ifEmpty { normalize(title) }
+    (musicNormalize(artist.orEmpty()) + "|" + musicNormalize(title)).trim('|')
+        .ifEmpty { musicNormalize(title) }
 
-private fun normalize(value: String): String = value
+/**
+ * Приводит строку к сравнимому виду: нижний регистр, без знаков препинания.
+ *
+ * Вынесено наружу не для красоты, а потому что теперь тем же правилом
+ * пользуется ранжирование: дедупликация отвечает на вопрос «это один и тот же
+ * трек?», а ранжирование — «насколько он похож на запрос». Если правила
+ * разойдутся, одинаковые треки окажутся в разных местах списка, и это будет
+ * выглядеть как ошибка поиска.
+ *
+ * `\p{L}` и `\p{N}` вместо `a-z0-9` — обязательны: кириллица в названиях
+ * встречается постоянно, и латинская маска стёрла бы её в пустую строку.
+ */
+fun musicNormalize(value: String): String = value
     .lowercase(Locale.ROOT)
     .replace(NON_ALNUM, "")
     .trim()
 
 private val NON_ALNUM = Regex("[^\\p{L}\\p{N}]")
+
+// --- Ранжирование и сводка по лицензиям ----------------------------------------
+
+/**
+ * Что человек ожидает получить от поиска. Выбирается **до** нажатия «найти».
+ *
+ * Отдельная настройка, а не украшение, потому что ответы двух режимов
+ * принципиально разные: в [ANY] выдача смешанная, и пользователь должен видеть,
+ * где кончается то, что можно забрать, и начинается то, что можно только
+ * посмотреть. В [DOWNLOADABLE] строки без файла в выдачу не попадают вовсе, но
+ * поиск всё равно выполняется по метаданным — чтобы в случае провала сказать
+ * «треки найдены, скачать нельзя», а не показать пустоту.
+ */
+enum class MusicSearchScope(val label: String, val blurb: String) {
+    ANY(
+        label = "Любая музыка",
+        blurb = "Сначала то, что реально скачивается, затем ссылки на запись. " +
+            "У каждой строки написано, что с ней можно сделать.",
+    ),
+    DOWNLOADABLE(
+        label = "Только скачиваемое",
+        blurb = "Только источники с открытой лицензией и прямой ссылкой на файл. " +
+            "Если таких не нашлось — приложение так и скажет, молчать об этом нельзя.",
+    ),
+}
+
+/**
+ * Насколько строка подходит под запрос, по убыванию уверенности.
+ *
+ * Числа в [weight] намеренно разнесены с зазором не меньше [MIN_TIER_GAP]:
+ * ранжирование складывает вес совпадения с весом лицензии и площадки, и при
+ * меньшем зазоре бонус за «CC0 вместо CC BY» смог бы перепрыгнуть целую ступень
+ * совпадения. Совпадение по названию должно быть сильнее любых бонусов.
+ */
+enum class MatchTier(val weight: Int, val label: String) {
+    EXACT_TITLE_AND_ARTIST(112, "название и исполнитель совпали точно"),
+    EXACT_TITLE(100, "название совпало точно"),
+    TITLE_PREFIX(88, "название начинается с запроса"),
+    TITLE_CONTAINS(76, "название содержит запрос целиком"),
+    ARTIST_EXACT(64, "совпал исполнитель"),
+    PARTIAL_TITLE(52, "частичное совпадение по названию"),
+
+    /**
+     * Жанр стоит ниже названия намеренно: «punk» находит и панк, и любой альбом
+     * с тегом «punk» в описании. Это признак того, что трек примерно подходит,
+     * а не того, что он тот самый. Но он всё равно выше «ничего не нашлось»:
+     * запрос «jazz» — это законный запрос, и выбрасывать под него найденное
+     * нельзя, иначе «любой жанр» просто не работает.
+     */
+    GENRE_MATCH(40, "совпал жанр"),
+
+    PARTIAL_ARTIST(28, "частичное совпадение по исполнителю"),
+    NONE(0, "совпадения нет"),
+    ;
+
+    companion object {
+        const val MIN_TIER_GAP = 12
+    }
+}
+
+/** Что лежит в строке выдачи: файл или только описание записи. */
+enum class MusicHitKind(val label: String, val shortLabel: String) {
+    /** Источник публикует прямую ссылку на аудиофайл под открытой лицензией. */
+    FILE("Файл с открытой лицензией", "файл"),
+
+    /** iTunes / MusicBrainz / Deezer: описание существует, аудиофайла у нас нет. */
+    METADATA("Только метаданные — скачать нельзя", "метаданные"),
+}
+
+/**
+ * Одна строка объединённой выдачи.
+ *
+ * Раньше музыкальные результаты жили в двух разных списках и в двух вкладках, и
+ * человек узнавал о лицензии только постфактум — уже нажав на строку. Здесь у
+ * строки есть ровно тот минимум, который нужен для честного решения «качать или
+ * смотреть», прямо в списке: [kind], [license] и [downloadable].
+ */
+data class MusicHit(
+    val source: MusicSource,
+    val kind: MusicHitKind,
+    val sourceId: String,
+    val title: String,
+    val artist: String? = null,
+    val album: String? = null,
+    val year: Int? = null,
+    val genre: String? = null,
+    val durationSec: Int? = null,
+    val coverUrl: String? = null,
+    val license: MusicLicense = MusicLicense.UNKNOWN,
+    val pageUrl: String? = null,
+    val match: MatchTier = MatchTier.NONE,
+    val score: Int = 0,
+    val freeTrack: FreeTrack? = null,
+    val metadata: MusicSearchResult? = null,
+) {
+    val key: String get() = "${source.name}:$sourceId"
+
+    /**
+     * Единственный признак, по которому кнопка скачивания вообще может быть
+     * активна: лицензия прочитана **и** источник даёт прямую ссылку на файл.
+     * Всё остальное — описание, а не музыка.
+     */
+    val downloadable: Boolean get() = freeTrack?.downloadable == true
+
+    /** Куда ведёт нажатие на строку. `null` возможен только для битой строки. */
+    val target: TrackTarget?
+        get() = freeTrack?.let { TrackTarget.Free(it) }
+            ?: metadata?.let { TrackTarget.Metadata(it) }
+}
+
+/** Одна лицензия в сводке: сколько строк под ней. */
+data class LicenceBadge(val label: String, val count: Int)
+
+/**
+ * Что получилось в выдаче, если посчитать это честно, а не «просто отдадим
+ * первые N строк».
+ *
+ * Именно этой сводкой закрывается требование «человек должен видеть, что
+ * именно он получит»: одно число «скачиваемых строк» и перечень лицензий
+ * говорят больше, чем любой текст в описании источника.
+ */
+data class LicenceSummary(
+    val fileRows: Int = 0,
+    val metadataRows: Int = 0,
+    val downloadableRows: Int = 0,
+    /** Строки с файлом, но без читаемой лицензии: скачать их нельзя. */
+    val blockedRows: Int = 0,
+    val nonCommercialRows: Int = 0,
+    val shareAlikeRows: Int = 0,
+    val unknownLicenceRows: Int = 0,
+    val badges: List<LicenceBadge> = emptyList(),
+) {
+    val hasFiles: Boolean get() = fileRows > 0
+    val hasMetadata: Boolean get() = metadataRows > 0
+
+    /** Смешанная выдача: в списке есть и скачиваемое, и то, что скачать нельзя. */
+    val mixed: Boolean get() = hasFiles && hasMetadata
+
+    /**
+     * Одна строка для баннера над списком.
+     *
+     * Отдельная ветка для «файлов нет вообще» — самый важный случай: именно там
+     * раньше была пустота, и пустота читалась как «музыки не существует».
+     */
+    val headline: String
+        get() = when {
+            fileRows == 0 && metadataRows > 0 ->
+                "Скачать нечего: найдено $metadataRows ${russianRecords(metadataRows)}, это только метаданные"
+            mixed ->
+                "Скачиваемых строк: $downloadableRows из ${fileRows + metadataRows}. " +
+                    "Остальные — только метаданные"
+            hasFiles ->
+                "Все $fileRows ${russianFiles(fileRows)} — скачиваемые файлы с открытой лицензией"
+            else -> ""
+        }
+
+    /** Перечень лицензий; смешивание видно, а не спрятано за «смешанная лицензия». */
+    val licenceLine: String
+        get() {
+            val parts = badges.map { "${it.label} — ${it.count}" }.toMutableList()
+            if (unknownLicenceRows > 0) parts += "лицензия не указана — $unknownLicenceRows"
+            if (parts.isEmpty()) return ""
+            val head = parts.joinToString(" · ")
+            return when {
+                nonCommercialRows > 0 -> "$head. NC: только некоммерческое использование"
+                shareAlikeRows > 0 -> "$head. SA: при перепубликации — те же условия"
+                else -> head
+            }
+        }
+
+    private companion object {
+        /** Русские окончания считаются по последним двум цифрам: 11 уже не «запись». */
+        fun russianRecords(count: Int): String {
+            val tail = count % 100
+            if (tail in 11..14) return "записей"
+            return when (count % 10) {
+                1 -> "запись"
+                2, 3, 4 -> "записи"
+                else -> "записей"
+            }
+        }
+
+        fun russianFiles(count: Int): String {
+            val tail = count % 100
+            if (tail in 11..14) return "строк"
+            return when (count % 10) {
+                1 -> "строка"
+                2, 3, 4 -> "строки"
+                else -> "строк"
+            }
+        }
+    }
+}
+
+/** Итог объединённого поиска: строки уже отсортированы и объяснены. */
+data class UnifiedSearchResults(
+    val query: String = "",
+    val hits: List<MusicHit> = emptyList(),
+    val errors: List<MusicSourceError> = emptyList(),
+    /**
+     * Сколько записей нашли источники метаданных — **в том числе те, что не
+     * попали в выдачу**.
+     *
+     * Отдельное поле, потому что режим «только скачиваемое» не показывает
+     * метаданные вовсе, и без этого числа провал выглядел бы как «такой музыки
+     * не существует». С ним можно сказать прямо: треки найдены, скачать их нельзя.
+     */
+    val metadataFound: Int = 0,
+) {
+    val isEmpty: Boolean get() = hits.isEmpty()
+}

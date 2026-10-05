@@ -20,12 +20,16 @@ import dev.amps.app.data.model.FreeTrackResults
 import dev.amps.app.data.model.MusicLicense
 import dev.amps.app.data.model.MusicLink
 import dev.amps.app.data.model.MusicSearchResult
+import dev.amps.app.data.model.MusicSearchScope
 import dev.amps.app.data.model.MusicSource
 import dev.amps.app.data.model.MusicSourceError
 import dev.amps.app.data.model.SearchResults
 import dev.amps.app.data.model.TrackTarget
 import dev.amps.app.data.model.TrackWikiPage
+import dev.amps.app.data.model.UnifiedSearchResults
 import dev.amps.app.data.model.musicDedupeKey
+import dev.amps.app.data.ranking.MusicQuery
+import dev.amps.app.data.ranking.MusicRanker
 import dev.amps.app.data.remote.CcMixterClient
 import dev.amps.app.data.remote.CoverArtClient
 import dev.amps.app.data.remote.InternetArchiveClient
@@ -40,8 +44,9 @@ import dev.amps.app.util.guessMimeType
 import dev.amps.app.util.hex
 import dev.amps.app.util.htmlToPlainText
 import dev.amps.app.util.readableMessage
-import kotlinx.serialization.encodeToString
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,7 +54,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -177,31 +184,153 @@ class MusicRepository(
         val term = query.trim()
         if (term.isEmpty()) return@withContext SearchResults()
 
-        val itunesCall = async { runCatching { itunes.searchSongs(term, limit) } }
-        val brainzCall = async { runCatching { musicBrainz.searchRecordings(term, limit) } }
+        val itunesCall = async { withSource(MusicSource.ITUNES, "iTunes") { itunes.searchSongs(term, limit) } }
+        val brainzCall = async { withSource(MusicSource.MUSICBRAINZ, "MusicBrainz") { musicBrainz.searchRecordings(term, limit) } }
         val fromItunes = itunesCall.await()
         val fromBrainz = brainzCall.await()
 
-        val errors = buildList {
-            fromItunes.exceptionOrNull()?.let {
-                add(MusicSourceError(MusicSource.ITUNES, "iTunes: ${it.readableMessage()}"))
+        val merged = mergeMetadata(fromItunes.value.orEmpty(), fromBrainz.value.orEmpty())
+        val errors = listOfNotNull(fromItunes.error, fromBrainz.error)
+
+        // Сортировка нужна и здесь: даже когда открыта вкладка «Поиск», строки
+        // идут в порядке полезности, а не в порядке ответа сервера.
+        val ranked = MusicRanker.rank(MusicQuery.of(term), merged.map(MusicRanker::fromMetadata), limit)
+        val byKey = ranked.associateBy { it.key }
+        SearchResults(
+            results = merged.filter { byKey.containsKey("${it.source.name}:${it.sourceId}") },
+            errors = errors,
+        )
+    }
+
+    /**
+     * Главная точка входа поиска: одна выдача из метаданных и свободных треков.
+     *
+     * **Почему один список, а не две вкладки.** Пользователь пришёл за музыкой,
+     * а не за описанием записи. Когда скачиваемый трек и строка iTunes лежали в
+     * разных списках, выбор «что взять» был невозможен: сравнивать приходилось
+     * в уме. Здесь обе половины в одной выдаче, но помечены по-разному, и
+     * [MusicRanker] ставит скачиваемое выше всего остального.
+     *
+     * Метаданные опрашиваются в обоих режимах, даже когда нужен только файл:
+     * если скачиваемого не нашлось, именно метаданные позволяют сказать
+     * «треки найдены, скачать их нельзя» вместо молчаливой пустоты.
+     */
+    suspend fun searchAll(
+        query: String,
+        scope: MusicSearchScope,
+        limit: Int = 30,
+    ): UnifiedSearchResults = withContext(Dispatchers.IO) {
+        val term = query.trim()
+        if (term.isEmpty()) return@withContext UnifiedSearchResults()
+
+        // В режиме «любая музыка» метаданные и файлы делят место. В режиме
+        // «только скачиваемое» файлов просим заметно больше — иначе выдача
+        // вырождается в несколько строк на запрос.
+        val wantFiles = scope == MusicSearchScope.DOWNLOADABLE
+        val fileLimit = if (wantFiles) limit else (limit * 2 / 3).coerceAtLeast(8)
+        val metaLimit = if (wantFiles) HONEST_METADATA_LIMIT else limit
+
+        // Любая прочитанная лицензия подходит: NC-трек скачать можно, просто
+        // не для коммерции. Скрывать его молча было бы враньём — вместо этого
+        // он получает метку NC и понижается в порядке.
+        val filter = FreeTrackFilter.CREATIVE_COMMONS
+
+        val itunesCall = async {
+            withSource(MusicSource.ITUNES, "iTunes", METADATA_TIMEOUT_MS) { itunes.searchSongs(term, metaLimit) }
+        }
+        val brainzCall = async {
+            withSource(MusicSource.MUSICBRAINZ, "MusicBrainz", METADATA_TIMEOUT_MS) {
+                musicBrainz.searchRecordings(term, metaLimit)
             }
-            fromBrainz.exceptionOrNull()?.let {
-                add(MusicSourceError(MusicSource.MUSICBRAINZ, "MusicBrainz: ${it.readableMessage()}"))
+        }
+        val jamendoCall = async {
+            val client = jamendo
+            val outcome: SourceOutcome<List<FreeTrack>> = if (client == null) {
+                // Молча пропустить источник нельзя: Jamendo — единственный живой
+                // источник полных треков, и его отсутствие выглядело бы как
+                // «свободной музыки нет», хотя поиск просто не настроен.
+                SourceOutcome(emptyList(), MusicSourceError(MusicSource.JAMENDO, "Jamendo не настроен: не задан client_id"))
+            } else {
+                val call = withSource(MusicSource.JAMENDO, "Jamendo", FILE_TIMEOUT_MS) {
+                    client.search(term, fileLimit)
+                }
+                // Jamendo отвечает HTTP 200, а ошибку кладёт в тело ответа. Без
+                // этой проверки «неверный client_id» выглядел бы как «свободной
+                // музыки по этому запросу нет».
+                val note = call.value?.note
+                when {
+                    !note.isNullOrBlank() ->
+                        SourceOutcome(call.value?.tracks.orEmpty(), MusicSourceError(MusicSource.JAMENDO, "Jamendo: $note"))
+                    call.error != null -> SourceOutcome(emptyList<FreeTrack>(), call.error)
+                    else -> SourceOutcome(call.value?.tracks.orEmpty(), null)
+                }
+            }
+            outcome
+        }
+        val archiveCall = async {
+            withSource(MusicSource.INTERNET_ARCHIVE, "Internet Archive", FILE_TIMEOUT_MS) {
+                internetArchive.search(term, filter, fileLimit)
+            }
+        }
+        @Suppress("DEPRECATION")
+        val ccMixterCall = async {
+            withSource(MusicSource.CCMIXTER, "ccMixter", FILE_TIMEOUT_MS) {
+                ccMixter.search(term, filter, fileLimit)
             }
         }
 
+        val fromItunes = itunesCall.await()
+        val fromBrainz = brainzCall.await()
+        val fromJamendo = jamendoCall.await()
+        val fromArchive = archiveCall.await()
+        val fromCcMixter = ccMixterCall.await()
+
+        val metadata = mergeMetadata(fromItunes.value.orEmpty(), fromBrainz.value.orEmpty())
+        val fileRows = (fromJamendo.value.orEmpty() + fromArchive.value.orEmpty() + fromCcMixter.value.orEmpty())
+            .filter { filter.accepts(it.license) }
+
+        val hits = fileRows
+            .distinctBy { it.key }
+            .map(MusicRanker::fromFreeTrack)
+            .plus(metadata.map(MusicRanker::fromMetadata))
+
+        val errors = listOfNotNull(
+            fromItunes.error,
+            fromBrainz.error,
+            fromJamendo.error,
+            fromArchive.error,
+            fromCcMixter.error,
+        ).distinctBy { it.source }
+
+        UnifiedSearchResults(
+            query = term,
+            hits = MusicRanker.rank(MusicQuery.of(term), hits, limit),
+            errors = errors,
+            // Считается до ранжирования и до обрезки: именно эти записи нужны,
+            // чтобы сказать «треки найдены, скачать их нельзя», когда свободных
+            // треков не нашлось вовсе.
+            metadataFound = metadata.size,
+        )
+    }
+
+    /**
+     * Склейка метаданных по одному и тому же треку.
+     *
+     * iTunes побеждает при коллизии: у него чище каталог и уже готовый размер
+     * обложки. Строка MusicBrainz добавляется, только если принесла MBID — без
+     * него вики-страница не дотянется до Cover Art Archive.
+     */
+    private fun mergeMetadata(
+        fromItunes: List<MusicSearchResult>,
+        fromBrainz: List<MusicSearchResult>,
+    ): List<MusicSearchResult> {
         val merged = LinkedHashMap<String, MusicSearchResult>()
-        fromItunes.getOrDefault(emptyList()).forEach { row ->
-            merged.putIfAbsent(row.dedupeKey, row)
-        }
-        fromBrainz.getOrDefault(emptyList()).forEach { row ->
+        fromItunes.forEach { row -> merged.putIfAbsent(row.dedupeKey, row) }
+        fromBrainz.forEach { row ->
             val existing = merged[row.dedupeKey]
             if (existing == null) {
                 merged[row.dedupeKey] = row
             } else if (existing.releaseMbid == null) {
-                // Same song, but iTunes has no MBID: keep it so the wiki page
-                // can still reach the Cover Art Archive.
                 merged[row.dedupeKey] = existing.copy(
                     releaseMbid = row.releaseMbid,
                     recordingMbid = row.recordingMbid,
@@ -211,8 +340,7 @@ class MusicRepository(
                 )
             }
         }
-
-        SearchResults(results = merged.values.toList(), errors = errors)
+        return merged.values.toList()
     }
 
     // --- B. свободные треки ------------------------------------------------
@@ -230,36 +358,106 @@ class MusicRepository(
         filter: FreeTrackFilter,
         limit: Int = 20,
     ): FreeTrackResults = withContext(Dispatchers.IO) {
-        val perSource = (limit + 2) / 3
-        val jamendoCall = async { runCatching { jamendo?.search(query, perSource) } }
-        val ccCall = async { runCatching { ccMixter.search(query, filter, perSource) } }
-        val archiveCall = async { runCatching { internetArchive.search(query, filter, perSource) } }
+        val term = query.trim()
+        val perSource = ((limit + 2) / 3).coerceAtLeast(1)
+        val jamendoCall = async {
+            val client = jamendo
+            val outcome: SourceOutcome<List<FreeTrack>> = if (client == null) {
+                SourceOutcome(emptyList(), MusicSourceError(MusicSource.JAMENDO, "Jamendo не настроен: не задан client_id"))
+            } else {
+                val call = withSource(MusicSource.JAMENDO, "Jamendo", FILE_TIMEOUT_MS) {
+                    client.search(term, perSource)
+                }
+                val note = call.value?.note
+                when {
+                    !note.isNullOrBlank() ->
+                        SourceOutcome(call.value?.tracks.orEmpty(), MusicSourceError(MusicSource.JAMENDO, "Jamendo: $note"))
+                    call.error != null -> SourceOutcome(emptyList<FreeTrack>(), call.error)
+                    else -> SourceOutcome(call.value?.tracks.orEmpty(), null)
+                }
+            }
+            outcome
+        }
+        @Suppress("DEPRECATION")
+        val ccCall = async {
+            withSource(MusicSource.CCMIXTER, "ccMixter", FILE_TIMEOUT_MS) { ccMixter.search(term, filter, perSource) }
+        }
+        val archiveCall = async {
+            withSource(MusicSource.INTERNET_ARCHIVE, "Internet Archive", FILE_TIMEOUT_MS) {
+                internetArchive.search(term, filter, perSource)
+            }
+        }
         val fromJamendo = jamendoCall.await()
         val fromCc = ccCall.await()
         val fromArchive = archiveCall.await()
 
-        val errors = buildList {
-            fromJamendo.getOrNull()?.note?.let { add(MusicSourceError(MusicSource.JAMENDO, "Jamendo: $it")) }
-            fromJamendo.exceptionOrNull()?.let { add(MusicSourceError(MusicSource.JAMENDO, "Jamendo: ${it.readableMessage()}")) }
-            fromCc.exceptionOrNull()?.let { add(MusicSourceError(MusicSource.CCMIXTER, "ccMixter: ${it.readableMessage()}")) }
-            fromArchive.exceptionOrNull()?.let {
-                add(MusicSourceError(MusicSource.INTERNET_ARCHIVE, "Internet Archive: ${it.readableMessage()}"))
-            }
-        }
+        val errors = listOfNotNull(fromJamendo.error, fromCc.error, fromArchive.error)
 
-        val merged = LinkedHashMap<String, FreeTrack>()
         // Jamendo умеет фильтровать по лицензии только на своей стороне, поэтому
         // вторая проверка — наша: `accepts` отсекает NC-записи, если пользователь
         // выбрал «свободные».
-        val jamendoRows = fromJamendo.getOrNull()?.tracks.orEmpty().filter { track ->
-            filter.accepts(track.license)
-        }
-        (jamendoRows + fromArchive.getOrDefault(emptyList()) + fromCc.getOrDefault(emptyList())).forEach { row ->
-            val key = "${row.source.name}:${row.sourceId}"
-            if (merged[key] == null) merged[key] = row
-        }
+        val rows = (fromJamendo.value.orEmpty() + fromArchive.value.orEmpty() + fromCc.value.orEmpty())
+            .filter { filter.accepts(it.license) }
+            .distinctBy { it.key }
 
-        FreeTrackResults(results = merged.values.take(limit), errors = errors)
+        // Список не обрезается до `limit` до ранжирования: иначе отсечение
+        // побирало бы половину настоящих совпадений ради строк, которым всё
+        // равно не найтись в первых двадцати.
+        val ranked = MusicRanker.rank(
+            MusicQuery.of(term),
+            rows.map(MusicRanker::fromFreeTrack),
+            limit,
+        )
+        val keys = ranked.map { it.key }.toSet()
+        FreeTrackResults(
+            results = ranked.mapNotNull { it.freeTrack }.filter { it.key in keys },
+            errors = errors,
+        )
+    }
+
+    // --- устойчивость к отказам источников ---------------------------------
+
+    /** Что вернул источник: либо значение, либо текст ошибки для баннера. */
+    private data class SourceOutcome<T>(
+        val value: T? = null,
+        val error: MusicSourceError? = null,
+    )
+
+    /**
+     * Запускает один источник так, чтобы он не мог уронить весь поиск.
+     *
+     * **Здесь три отдельных случая, и их нельзя смешивать.**
+     *
+     *  * `TimeoutCancellationException` — источник не ответил вовсе. Это его
+     *    собственная поломка, и она превращается в строку баннера: остальные
+     *    источники должны показать результат. Перехватывать её надо **первой**,
+     *    потому что она является подвидом `CancellationException` — поймав
+     *    не ту ветку, мы бы превратили тихо ушедший в молчание источник в
+     *    «отменённый поиск».
+     *  * `CancellationException` — отменили сам поиск (пользователь допечатал
+     *    запрос, или экран закрыт). Это не ошибка источника: исключение
+     *    пробрасывается наружу, иначе отменённый запрос продолжил бы писать
+     *    результат поверх уже показанного нового.
+     *  * Всё остальное — настоящая ошибка источника, показывается и не роняет
+     *    остальные.
+     *
+     * Раньше здесь стоял голый `runCatching`, который ловил и то, и другое:
+     * падение одного источника было терпимо, но отмена поиска тоже становилась
+     * «пустым результатом» — и он затирал собой более свежий ответ.
+     */
+    private suspend fun <T> withSource(
+        source: MusicSource,
+        label: String,
+        timeoutMs: Long = METADATA_TIMEOUT_MS,
+        block: suspend () -> T,
+    ): SourceOutcome<T> = try {
+        SourceOutcome(value = withTimeout(timeoutMs) { block() })
+    } catch (timeout: TimeoutCancellationException) {
+        SourceOutcome(error = MusicSourceError(source, "$label не ответил за ${timeoutMs / 1000} с"))
+    } catch (cancel: CancellationException) {
+        throw cancel
+    } catch (error: Throwable) {
+        SourceOutcome(error = MusicSourceError(source, "$label: ${error.readableMessage()}"))
     }
 
     // --- D. трек-вики ------------------------------------------------------
@@ -999,6 +1197,29 @@ class MusicRepository(
     private companion object {
         const val MAX_TARGETS = 80
         const val PROGRESS_INTERVAL_MS = 120L
+
+        /**
+         * Сколько секунд ждём каждый источник.
+         *
+         * Метаданным хватает шести: это один-два запроса. Файловым источникам
+         * нужно больше — Internet Archive делает по дополнительному запросу на
+         * каждую находку, и на медленной сети это десятки секунд.
+         *
+         * Ограничение нужно потому, что пять источников опрашиваются параллельно,
+         * и без него один зависший съедал бы весь общий таймаут и поиск выглядел
+         * бы «ничего не нашлось» из-за одного плохого соединения.
+         */
+        const val METADATA_TIMEOUT_MS = 6_000L
+        const val FILE_TIMEOUT_MS = 12_000L
+
+        /**
+         * Сколько записей всё равно опрашиваем в режиме «только скачиваемое».
+         *
+         * Эти строки не показываются — они нужны только для честного сообщения
+         * «треки найдены, скачать их нельзя». Без них провал выглядел бы как
+         * «музыки такого названия не существует», а это неправда.
+         */
+        const val HONEST_METADATA_LIMIT = 8
 
         /**
          * Обложка вшивается в теги файла, а не показывается отдельно, поэтому

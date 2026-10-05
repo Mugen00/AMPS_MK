@@ -39,6 +39,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import dev.amps.app.core.AppContainer
 import dev.amps.app.core.AppSettings
+import dev.amps.app.ui.screens.auth.AuthScreen
+import dev.amps.app.ui.screens.auth.AuthViewModel
+import dev.amps.app.ui.screens.auth.SessionUi
 import dev.amps.app.ui.screens.framesearch.FrameSearchScreen
 import dev.amps.app.ui.screens.framesearch.FrameSearchViewModel
 import dev.amps.app.ui.screens.history.HistoryScreen
@@ -103,6 +106,7 @@ private object Routes {
     const val MUSIC = "music"
     const val MUSIC_TRACK = "music/track"
     const val SETTINGS = "settings"
+    const val AUTH = "auth"
     const val HISTORY = "history"
     const val UPDATE = "update"
 }
@@ -131,6 +135,9 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
     )
     val settingsViewModel: SettingsViewModel = viewModel(
         factory = SettingsViewModel.Factory(container.settings)
+    )
+    val authViewModel: AuthViewModel = viewModel(
+        factory = AuthViewModel.Factory(container.accounts, container.session)
     )
 
     val frameState by frameViewModel.state.collectAsStateWithLifecycle()
@@ -192,9 +199,24 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                 )
             }
             composable(Routes.SETTINGS) {
+                val session by authViewModel.session.collectAsStateWithLifecycle()
+                val signed = session as? SessionUi.Signed
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     onOpenUpdates = { navController.navigate(Routes.UPDATE) },
+                    onOpenAccount = { navController.navigate(Routes.AUTH) },
+                    sessionLabel = signed?.session
+                        ?.takeIf { !it.isGuest }
+                        ?.login,
+                )
+            }
+            // 1.0.9: вход, регистрация и безопасность. Аккаунт не блокирует
+            // приложение — гость пользуется им целиком, поэтому экран
+            // открывается по кнопке, а не принудительно на старте.
+            composable(Routes.AUTH) {
+                AuthScreen(
+                    viewModel = authViewModel,
+                    onBack = { navController.popBackStack() },
                 )
             }
             composable(Routes.UPDATE) {

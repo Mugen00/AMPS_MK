@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -44,7 +45,12 @@ import dev.amps.app.ui.theme.AmpsColors
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel, onOpenUpdates: () -> Unit = {}) {
+fun SettingsScreen(
+    viewModel: SettingsViewModel,
+    onOpenUpdates: () -> Unit = {},
+    onOpenAccount: () -> Unit = {},
+    sessionLabel: String? = null,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val installedVersion = remember {
@@ -71,6 +77,32 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenUpdates: () -> Unit = {})
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Spacer(Modifier.height(4.dp))
+
+            // 1.0.9: аккаунт первым, потому что от него зависит, пишется ли
+            // история. Гостю показывается честное объяснение, а не «войдите,
+            // чтобы пользоваться приложением» — пользоваться можно и так.
+            SectionCard(title = "Аккаунт", icon = Icons.Default.Person) {
+                Text(
+                    sessionLabel ?: "Гость",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (sessionLabel != null) {
+                        "История поиска сохраняется. Пароль и код 2FA на этом устройстве."
+                    } else {
+                        "Гостевой режим: поиск по кадру и по музыке работает полностью, " +
+                            "история не сохраняется. Аккаунт хранится только на этом устройстве — " +
+                            "на сервер ничего не отправляется."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onOpenAccount) {
+                    Text(if (sessionLabel != null) "Аккаунт и безопасность" else "Войти или создать")
+                }
+            }
 
             SectionCard(title = "Ключи API", icon = Icons.Default.VpnKey) {
                 Text(

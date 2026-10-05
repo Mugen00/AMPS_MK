@@ -62,8 +62,16 @@ data class StoredTrack(
  * Search history as a plain JSON file: a handful of entries does not justify a
  * database, and keeping it on disk means the wiki can be reopened later — по
  * сохранённому id серия дочитывается из AniList даже без сети.
+ *
+ * 1.0.9: [writesHistory] — гостевой режим. Гость ищет ровно так же, как
+ * пользователь аккаунта, но его поиски не попадают в историю. Проверка стоит
+ * здесь, а не в каждом месте вызова, потому что мест вызова три, а правило
+ * одно; разъехавшееся по коду правило рано или поздно забудет одно из них.
  */
-class HistoryStore(private val context: Context) {
+class HistoryStore(
+    private val context: Context,
+    private val writesHistory: () -> Boolean = { true },
+) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val file: File get() = File(context.filesDir, "history.json")
@@ -77,6 +85,10 @@ class HistoryStore(private val context: Context) {
     }
 
     suspend fun add(entry: HistoryEntry) = withContext(Dispatchers.IO) {
+        // Гость не оставляет следов. Проверка идёт на записи, а не на чтении:
+        // уже сохранённая история аккаунта должна оставаться видимой и после
+        // выхода из него.
+        if (!writesHistory()) return@withContext
         val updated = (listOf(entry) + _entries.value)
             .distinctBy { it.id }
             .take(MAX_ENTRIES)

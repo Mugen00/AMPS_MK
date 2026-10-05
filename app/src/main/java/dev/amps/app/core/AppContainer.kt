@@ -1,6 +1,7 @@
 package dev.amps.app.core
 
 import android.content.Context
+import dev.amps.app.data.local.AccountStore
 import dev.amps.app.data.local.HistoryStore
 import dev.amps.app.data.remote.AniListClient
 import dev.amps.app.data.remote.CcMixterClient
@@ -18,7 +19,11 @@ import dev.amps.app.data.repo.MusicRepository
 import dev.amps.app.imaging.AnimeTagger
 import dev.amps.app.imaging.ContentAnalyzer
 import dev.amps.app.media.MediaStoreImporter
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -33,6 +38,36 @@ import java.util.concurrent.TimeUnit
 class AppContainer(private val context: Context) {
 
     val settings = SettingsStore(context)
+
+    /**
+     * 1.0.9: аккаунты и сессия.
+     *
+     * Аккаунты локальные — в приватном хранилище телефона. В репозиторий они
+     * не попадают намеренно: история Git безвозвратна, и хеш пароля или
+     * секрет 2FA, однажды попавшие в коммит, остаются там навсегда.
+     */
+    val accounts by lazy { AccountStore(context) }
+    val session by lazy { SessionStore(context) }
+
+    /**
+     * Текущий режим для синхронных проверок.
+     *
+     * [SessionStore.session] — поток, а история спрашивает «писать или нет»
+     * из обычного кода. Здесь держится последнее прочитанное значение:
+     * до первого срабатывания коллектора принимается `true`, иначе первый
+     * же запуск приложения гостем стёр бы возможность записи в историю
+     * до того, как система успела прочитать сессию.
+     */
+    @Volatile
+    private var writesHistory: Boolean = true
+
+    init {
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            session.session.collect { current ->
+                writesHistory = current.writesHistory
+            }
+        }
+    }
 
     private val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -76,7 +111,9 @@ class AppContainer(private val context: Context) {
         JamendoClient(httpClient) { settings.settings.first().jamendoClientId }
     }
 
-    val history: HistoryStore by lazy { HistoryStore(context) }
+    val history: HistoryStore by lazy {
+        HistoryStore(context) { writesHistory }
+    }
 
     val mediaStoreImporter: MediaStoreImporter by lazy { MediaStoreImporter(context) }
 

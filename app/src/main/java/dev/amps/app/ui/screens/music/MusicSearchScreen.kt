@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
@@ -69,7 +70,10 @@ import dev.amps.app.data.model.DownloadProgress
 import dev.amps.app.data.model.DownloadState
 import dev.amps.app.data.model.FreeTrack
 import dev.amps.app.data.model.FreeTrackFilter
-import dev.amps.app.data.model.MusicSearchResult
+import dev.amps.app.data.model.LicenceSummary
+import dev.amps.app.data.model.MusicHit
+import dev.amps.app.data.model.MusicHitKind
+import dev.amps.app.data.model.MusicSearchScope
 import dev.amps.app.data.model.MusicSourceError
 import dev.amps.app.data.repo.MusicRepository
 import dev.amps.app.ui.components.EmptyState
@@ -133,7 +137,7 @@ fun MusicSearchScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 singleLine = true,
-                label = { Text("Название трека") },
+                label = { Text("Название трека или «исполнитель — трек»") },
                 placeholder = { Text("например: One More Time") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 trailingIcon = {
@@ -146,6 +150,11 @@ fun MusicSearchScreen(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { viewModel.submit() }),
             )
+
+            // Что человек получит — выбирается ДО поиска, а не после. Это
+            // единственное место, где можно честно сказать «здесь будут файлы»
+            // или «здесь будут только ссылки», не обманывая его результатом.
+            ScopePicker(state.scope, state.scope.blurb) { viewModel.onScopeChange(it) }
 
             TabRow(selectedTabIndex = state.tab) {
                 Tab(
@@ -178,50 +187,224 @@ fun MusicSearchScreen(
 
 // --- вкладка «Поиск» ---------------------------------------------------------
 
+/**
+ * Переключатель «что именно ищем» и пояснение под ним.
+ *
+ * Пояснение обязано быть видно **всегда**, а не только при пустой выдаче:
+ * человек должен знать про смешанные лицензии до того, как потратит время на
+ * прокрутку строк, которые скачать нельзя.
+ */
+@Composable
+private fun ScopePicker(
+    selected: MusicSearchScope,
+    blurb: String,
+    onSelect: (MusicSearchScope) -> Unit,
+) {
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        Text(
+            text = "Что ищем",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MusicSearchScope.entries.forEach { scope ->
+                FilterChip(
+                    selected = selected == scope,
+                    onClick = { onSelect(scope) },
+                    label = { Text(scope.label) },
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = blurb,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+/**
+ * Смешанная выдача: сначала скачиваемое, потом метаданные.
+ *
+ * Два списка в одном — это ровно то, что человек ожидает, пришедши за музыкой:
+ * верхняя половина ответа на вопрос «что можно забрать», нижняя — «что можно
+ * хотя бы узнать». Разделение видно и подписано, а не спрятано в сортировке.
+ */
 @Composable
 private fun MetadataTab(
     state: MusicSearchViewModel.UiState,
     viewModel: MusicSearchViewModel,
     onOpenTrack: () -> Unit,
 ) {
+    val files = state.hits.filter { it.freeTrack != null }
+    val metadata = state.hits.filter { it.freeTrack == null }
+
     Column(Modifier.fillMaxSize()) {
         SourceErrors(state.errors)
-        if (state.searching && state.results.isEmpty()) {
+        LicenceBanner(state.hitSummary)
+        if (state.searching && state.hits.isEmpty()) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
         }
-        if (state.results.isEmpty() && !state.searching) {
-            EmptyState(
-                icon = Icons.Default.Search,
-                title = if (state.hasQuery) "Ничего не нашлось" else "Найдите трек по названию",
-                message = if (state.hasQuery) {
-                    "Проверьте раскладку и написание — иначе источники не найдут запись."
-                } else {
-                    "iTunes и MusicBrainz дают только метаданные: они помогают опознать трек, " +
-                        "но файлов не отдают. Файлы — на вкладке «Свободные»."
-                },
-            )
+
+        if (state.hits.isEmpty() && !state.searching) {
+            EmptySearchResult(state)
         }
+
         LazyColumn(
             contentPadding = PaddingValues(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(state.results, key = { it.key }) { row ->
-                MetadataRow(row) {
-                    viewModel.openResult(row)
-                    onOpenTrack()
+            if (files.isNotEmpty()) {
+                item(key = "section-files") {
+                    SectionLabel(
+                        title = "Можно скачать",
+                        count = files.size,
+                        subtitle = "Свободная лицензия, файл отдаёт источник",
+                        color = AmpsColors.violet,
+                    )
+                }
+                items(files, key = { it.key }) { hit ->
+                    UnifiedTrackRow(
+                        hit = hit,
+                        onClick = {
+                            if (viewModel.openResult(hit)) onOpenTrack()
+                        },
+                        onDownload = { hit.freeTrack?.let(viewModel::downloadAndImport) },
+                    )
+                }
+            }
+
+            if (metadata.isNotEmpty()) {
+                item(key = "section-meta") {
+                    SectionLabel(
+                        title = "Только метаданные",
+                        count = metadata.size,
+                        subtitle = "Описание записи есть, файла у нас нет",
+                        color = AmpsColors.amber,
+                    )
+                }
+                items(metadata, key = { it.key }) { hit ->
+                    UnifiedTrackRow(
+                        hit = hit,
+                        onClick = {
+                            if (viewModel.openResult(hit)) onOpenTrack()
+                        },
+                        onDownload = {},
+                    )
                 }
             }
         }
     }
 }
 
+/**
+ * Пустая выдача говорит ровно то, что произошло.
+ *
+ * Три состояния различаются намеренно, потому что раньше они сливались в одно
+ * пустое место: «треки нашлись, но скачать нельзя» — это не «ничего не нашлось»,
+ * и человек в первом случае может осознанно переключить режим или поискать иначе.
+ */
 @Composable
-private fun MetadataRow(result: MusicSearchResult, onClick: () -> Unit) {
+private fun EmptySearchResult(state: MusicSearchViewModel.UiState) {
+    when {
+        !state.hasQuery -> EmptyState(
+            icon = Icons.Default.Search,
+            title = "Найдите трек по названию",
+            message = "Можно написать просто «One More Time», «исполнитель — трек» или жанр — " +
+                "«jazz». Скачиваемое показывается выше, описания — ниже.",
+        )
+
+        state.metadataOnlyNoFiles -> EmptyState(
+            icon = Icons.Default.Info,
+            title = "Треки найдены, скачать их нельзя",
+            message = "Источники описаний нашли ${state.metadataFound} записей, но файлов они не " +
+                "отдают. Скачать можно то, что публикуют Jamendo, Internet Archive и ccMixter; " +
+                "по этому запросу таких не нашлось — это не значит, что музыки не существует.",
+        )
+
+        state.nothingAtAll -> EmptyState(
+            icon = Icons.Default.Search,
+            title = "Ничего не нашлось",
+            message = "Проверьте раскладку и написание. Запрос можно упростить до одного слова — " +
+                "так находится больше, чем по полному названию.",
+        )
+
+        else -> EmptyState(
+            icon = Icons.Default.Warning,
+            title = "Источники не ответили",
+            message = "Ни один источник не вернул результат, и часть из них сообщила об ошибке — " +
+                "подробности выше. Проверьте соединение и попробуйте ещё раз.",
+        )
+    }
+}
+
+@Composable
+private fun SectionLabel(title: String, count: Int, subtitle: String, color: androidx.compose.ui.graphics.Color) {
+    Column(Modifier.padding(top = 4.dp, bottom = 2.dp)) {
+        Text(
+            text = "$title · $count",
+            style = MaterialTheme.typography.labelLarge,
+            color = color,
+        )
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * Сводка по лицензиям — то самое, что человек должен увидеть про выдачу.
+ *
+ * Считается из ответа (см. [dev.amps.app.data.ranking.MusicRanker.summarise]),
+ * а не пишется текстом: подпись, обещающая результат, который источник не
+ * прислал, хуже, чем отсутствие подписи.
+ */
+@Composable
+private fun LicenceBanner(summary: LicenceSummary) {
+    val headline = summary.headline
+    if (headline.isBlank()) return
+    val tone = when {
+        summary.fileRows == 0 -> AmpsColors.amber
+        summary.mixed -> AmpsColors.cyan
+        else -> AmpsColors.violet
+    }
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Text(text = headline, style = MaterialTheme.typography.labelMedium, color = tone)
+        val licences = summary.licenceLine
+        if (licences.isNotBlank()) {
+            Text(
+                text = licences,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Строка объединённой выдачи.
+ *
+ * Кнопка скачивания активна ровно там, где [dev.amps.app.data.model.FreeTrack.downloadable]
+ * истинно, то есть где есть и файл, и прочитанная лицензия. Всё остальное —
+ * серая подпись, потому что «скачать» рядом с описанием записи было бы обещанием,
+ * которого источник не выполняет.
+ */
+@Composable
+private fun UnifiedTrackRow(
+    hit: MusicHit,
+    onClick: () -> Unit,
+    onDownload: () -> Unit,
+) {
     TrackCard(onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             NetworkImage(
-                url = result.coverUrl,
-                contentDescription = result.title,
+                url = hit.coverUrl,
+                contentDescription = hit.title,
                 modifier = Modifier
                     .size(width = 56.dp, height = 56.dp)
                     .clip(RoundedCornerShape(12.dp)),
@@ -229,37 +412,80 @@ private fun MetadataRow(result: MusicSearchResult, onClick: () -> Unit) {
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = result.title,
+                    text = hit.title,
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                result.artist?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
                 Text(
                     text = listOfNotNull(
-                        result.album,
-                        result.year?.toString(),
-                        formatDurationSec(result.durationSec),
-                    ).joinToString(" · "),
+                        hit.artist,
+                        hit.year?.toString(),
+                        formatDurationSec(hit.durationSec),
+                    ).joinToString(" · ").ifEmpty { "автор не указан" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = hit.match.label,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    InfoChip(result.source.label, color = AmpsColors.cyan)
-                    InfoChip("только метаданные", color = AmpsColors.amber)
+            }
+            if (hit.downloadable) {
+                IconButton(onClick = onDownload) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "Скачать в музыку телефона",
+                        tint = AmpsColors.violet,
+                    )
                 }
             }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            InfoChip(hit.source.label, color = AmpsColors.cyan)
+            // Метка «что это за строка» стоит первой: именно она снимает
+            // главное недоумение — почему одна строка скачивается, а нет.
+            InfoChip(hit.kind.shortLabel, color = if (hit.downloadable) AmpsColors.violet else AmpsColors.amber)
+            hit.license.badgeLabel?.let { InfoChip(it, color = AmpsColors.violet) }
+            if (hit.license.nonCommercial) InfoChip("NC", color = AmpsColors.amber)
+            if (hit.license.shareAlike) InfoChip("SA", color = AmpsColors.amber)
+        }
+
+        // Файл есть, а лицензия не прочиталась: кнопка уже серая, но сказать об
+        // этом надо словами — иначе строка выглядит просто «ещё одним треком».
+        if (hit.kind == MusicHitKind.FILE && !hit.license.isKnown) {
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = AmpsColors.danger,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "Лицензия не указана — файл закрыт для скачивания",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AmpsColors.danger,
+                )
+            }
+        }
+
+        if (hit.license.isKnown && hit.license.requiresAttribution) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "При использовании укажите автора: ${hit.artist ?: "имя не указано"}" +
+                    (hit.pageUrl?.let { " — $it" } ?: ""),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -295,17 +521,33 @@ private fun FreeTracksTab(
         )
         Spacer(Modifier.height(8.dp))
         SourceErrors(state.errors)
+        // Сводка по лицензиям видна и здесь: выбранный фильтр «Любая CC» внутри
+        // на самом деле прячет NC-записи, и об этом лучше сказать заранее.
+        if (state.filter != FreeTrackFilter.OPEN) {
+            Text(
+                text = "Фильтр: ${state.filter.label}. Для обычного использования удобнее «Свободные (без NC)».",
+                style = MaterialTheme.typography.labelSmall,
+                color = AmpsColors.amber,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+            )
+        }
+        LicenceBanner(state.freeSummary)
         if (state.loadingFree) LinearProgressIndicator(Modifier.fillMaxWidth())
 
         if (state.freeResults.isEmpty() && !state.loadingFree) {
             EmptyState(
                 icon = Icons.Default.MusicNote,
                 title = "Свободных треков нет",
-                message = if (state.hasQuery) {
-                    "Попробуйте другое слово или смените фильтр лицензии — ccMixter ищет по тегам, " +
-                        "Internet Archive — по названию издания."
-                } else {
-                    "Введите название или тег (ambient, jazz, chiptune) и откройте вкладку «Свободные»."
+                message = when {
+                    !state.hasQuery ->
+                        "Введите название или тег (ambient, jazz, chiptune) и откройте вкладку «Свободные»."
+                    state.errors.isNotEmpty() ->
+                        "Свободные источники не ответили — подробности выше. Это их сбой, " +
+                            "а не отсутствие музыки: попробуйте ещё раз или смените фильтр."
+                    else ->
+                        "По этому запросу Jamendo, Internet Archive и ccMixter ничего не дали. " +
+                            "Смените фильтр лицензии или упростите запрос до одного слова — " +
+                            "свободные площадки ищут по тегам лучше, чем по точному названию."
                 },
             )
         }

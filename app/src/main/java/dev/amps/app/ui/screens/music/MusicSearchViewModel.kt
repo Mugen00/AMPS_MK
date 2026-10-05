@@ -8,12 +8,16 @@ import dev.amps.app.data.model.AudioLibraryEntry
 import dev.amps.app.data.model.DownloadProgress
 import dev.amps.app.data.model.FreeTrack
 import dev.amps.app.data.model.FreeTrackFilter
-import dev.amps.app.data.model.MusicSearchResult
+import dev.amps.app.data.model.LicenceSummary
+import dev.amps.app.data.model.MusicHit
+import dev.amps.app.data.model.MusicSearchScope
 import dev.amps.app.data.model.MusicSource
 import dev.amps.app.data.model.MusicSourceError
 import dev.amps.app.data.model.TrackTarget
+import dev.amps.app.data.ranking.MusicRanker
 import dev.amps.app.util.readableMessage
 import dev.amps.app.data.repo.MusicRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,12 +27,21 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * State for the "Музыка" screen: the metadata search, the free-track tab and
- * the local library.
+ * State for the "Музыка" screen: the unified search, the licence-filtered
+ * free-track tab and the local library.
  *
  * Search is debounced by [DEBOUNCE_MS] because the iTunes guidance is to stay
  * under roughly twenty requests a minute, and every source failure is turned
  * into a Russian banner instead of an exception.
+ *
+ * **Два правила, которые видны пользователю.**
+ *
+ * 1. [scope] выбирается до поиска и меняет его смысл, а не только набор строк:
+ *    в `ANY` выдача смешанная, в `DOWNLOADABLE` — только то, что можно забрать.
+ *    Поэтому переключение перезапускает поиск, а не перерисовывает старое.
+ * 2. [hitSummary] — честный счёт выдачи. Пустая строка поиска и «треки найдены,
+ *    но скачать их нельзя» — это разные состояния, и второе обязано быть видно
+ *    словами, а не пустым списком.
  */
 class MusicSearchViewModel(
     private val repository: MusicRepository,
@@ -39,8 +52,14 @@ class MusicSearchViewModel(
         val tab: Int = TAB_METADATA,
         val searching: Boolean = false,
         val loadingFree: Boolean = false,
-        val results: List<MusicSearchResult> = emptyList(),
+        /** Что человек хочет получить: файлы, метаданные или и то и другое. */
+        val scope: MusicSearchScope = MusicSearchScope.ANY,
+        val hits: List<MusicHit> = emptyList(),
+        val hitSummary: LicenceSummary = LicenceSummary(),
+        /** Что ответили источники метаданных, даже если строки не показаны. */
+        val metadataFound: Int = 0,
         val freeResults: List<FreeTrack> = emptyList(),
+        val freeSummary: LicenceSummary = LicenceSummary(),
         val filter: FreeTrackFilter = FreeTrackFilter.OPEN,
         val errors: List<MusicSourceError> = emptyList(),
         val message: String? = null,
@@ -49,6 +68,27 @@ class MusicSearchViewModel(
         val importsInProgress: Boolean = false,
     ) {
         val hasQuery: Boolean get() = query.isNotBlank()
+
+        /**
+         * Главное честное состояние: треки нашлись, но скачать их нельзя.
+         *
+         * Именно его раньше не существовало — вместо него был пустой список, а
+         * пустой список читается как «такой музыки нет вообще». Считается по
+         * [metadataFound], а не по показанным строкам: в режиме «только
+         * скачиваемое» метаданные в выдачу не попадают вовсе, и без этого поля
+         * режим молчал бы там, где должен говорить.
+         */
+        val metadataOnlyNoFiles: Boolean
+            get() = hasQuery && hitSummary.fileRows == 0 && metadataFound > 0
+
+        /**
+         * Ничего не нашлось, и хотя бы один источник ответил.
+         *
+         * Отличается от предыдущего случая принципиально: здесь не «нельзя
+         * скачать», а «нечего скачивать» — и подсказка должна быть другой.
+         */
+        val nothingAtAll: Boolean
+            get() = hasQuery && hits.isEmpty() && !searching && metadataFound == 0
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -68,7 +108,15 @@ class MusicSearchViewModel(
         _state.update { it.copy(query = value) }
         searchJob?.cancel()
         if (value.isBlank()) {
-            _state.update { it.copy(results = emptyList(), searching = false, errors = emptyList()) }
+            _state.update {
+                it.copy(
+                    hits = emptyList(),
+                    searching = false,
+                    errors = emptyList(),
+                    hitSummary = LicenceSummary(),
+                    metadataFound = 0,
+                )
+            }
             return
         }
         searchJob = viewModelScope.launch {
@@ -87,7 +135,30 @@ class MusicSearchViewModel(
 
     fun clearQuery() {
         searchJob?.cancel()
-        _state.update { it.copy(query = "", results = emptyList(), errors = emptyList(), searching = false) }
+        _state.update {
+            it.copy(
+                query = "",
+                hits = emptyList(),
+                errors = emptyList(),
+                searching = false,
+                hitSummary = LicenceSummary(),
+                metadataFound = 0,
+            )
+        }
+    }
+
+    /**
+     * Смена режима поиска перезапускает сам поиск.
+     *
+     * Перерисовать старую выдачу нельзя: в режиме «только скачиваемое» она
+     * содержала бы строки, которые человек попросил не показывать. Перезапуск
+     * дешевле и честнее, чем объяснять, почему список не изменился.
+     */
+    fun onScopeChange(scope: MusicSearchScope) {
+        if (scope == _state.value.scope) return
+        _state.update { it.copy(scope = scope, hits = emptyList(), hitSummary = LicenceSummary()) }
+        val query = _state.value.query
+        if (query.isNotBlank()) submit()
     }
 
     fun onTabChange(index: Int) {
@@ -108,20 +179,29 @@ class MusicSearchViewModel(
         freeJob?.cancel()
         freeJob = viewModelScope.launch {
             _state.update { it.copy(loadingFree = true) }
-            val outcome = runCatching {
+            val outcome = try {
                 repository.freeTracks(snapshot.query, snapshot.filter, FREE_LIMIT)
-            }.getOrElse { error ->
+            } catch (cancel: CancellationException) {
+                // Отмена — это не сбой: перезапущенный фильтр просто не должен
+                // дописывать результат поверх уже показанного.
+                throw cancel
+            } catch (error: Throwable) {
                 _state.update {
                     it.copy(
                         loadingFree = false,
                         freeResults = emptyList(),
+                        freeSummary = LicenceSummary(),
                         errors = listOf(MusicSourceError(FreeTrackErrorSource, "Свободные треки: ${error.readableMessage()}")),
                     )
                 }
                 return@launch
             }
+            // Сводка считается из того, что реально вернулось, а не из того, что
+            // обещал источник до запроса: у Jamendo с неверным client_id ответ
+            // приходит пустым, и текст ошибки живёт в теле ответа.
+            val summary = MusicRanker.summarise(outcome.results.map(MusicRanker::fromFreeTrack))
             _state.update {
-                it.copy(loadingFree = false, freeResults = outcome.results, errors = outcome.errors)
+                it.copy(loadingFree = false, freeResults = outcome.results, freeSummary = summary, errors = outcome.errors)
             }
         }
     }
@@ -137,10 +217,13 @@ class MusicSearchViewModel(
     /**
      * Registers the row, marks it as the track the wiki screen should open, and
      * returns the id for callers that want to log it. The nav graph stays flat,
-     * so the host only has to navigate to its track route.
+     * so the host only has to navigate to its own track route.
      */
-    fun openResult(result: MusicSearchResult): String =
-        repository.openTarget(TrackTarget.Metadata(result))
+    fun openResult(hit: MusicHit): Boolean {
+        val target = hit.target ?: return false
+        repository.openTarget(target)
+        return true
+    }
 
     fun openFreeTrack(track: FreeTrack): String = repository.openTarget(TrackTarget.Free(track))
 
@@ -162,13 +245,13 @@ class MusicSearchViewModel(
     }
 
     /**
- * 1.0.3: скачать **и положить в музыку телефона** одним действием.
- *
- * Раньше файл оставался внутри приложения, и обычный плеер его не видел.
- * Теперь после скачивания он кладётся в `Музыка/AMPS` с тегами и обложкой —
- * то есть в список, который пользователь уже слушает.
- */
-fun downloadAndImport(track: FreeTrack) {
+     * 1.0.3: скачать **и положить в музыку телефона** одним действием.
+     *
+     * Раньше файл оставался внутри приложения, и обычный плеер его не видел.
+     * Теперь после скачивания он кладётся в `Музыка/AMPS` с тегами и обложкой —
+     * то есть в список, который пользователь уже слушает.
+     */
+    fun downloadAndImport(track: FreeTrack) {
         viewModelScope.launch {
             runCatching { repository.importToLibrary(track) }
                 .onSuccess { imported ->
@@ -195,7 +278,10 @@ fun downloadAndImport(track: FreeTrack) {
                 }
                 .onFailure { error ->
                     _state.update {
-                        it.copy(importsInProgress = false, message = "Не удалось импортировать: ${error.readableMessage()}")
+                        it.copy(
+                            importsInProgress = false,
+                            message = "Не удалось импортировать: ${error.readableMessage()}",
+                        )
                     }
                 }
         }
@@ -219,23 +305,40 @@ fun downloadAndImport(track: FreeTrack) {
     fun dismissMessage() = _state.update { it.copy(message = null) }
 
     private suspend fun runSearch(query: String) {
+        val snapshot = _state.value
         _state.update { it.copy(searching = true) }
-        val outcome = runCatching { repository.searchTracks(query, METADATA_LIMIT) }
-        outcome
-            .onSuccess { result ->
-                _state.update {
-                    it.copy(searching = false, results = result.results, errors = result.errors)
-                }
+        val outcome = try {
+            repository.searchAll(query, snapshot.scope, SEARCH_LIMIT)
+        } catch (cancel: CancellationException) {
+            // Пользователь допечатал запрос: отменённый ответ не должен ни
+            // показаться, ни затереть собой новый.
+            throw cancel
+        } catch (error: Throwable) {
+            _state.update {
+                it.copy(
+                    searching = false,
+                    hits = emptyList(),
+                    hitSummary = LicenceSummary(),
+                    metadataFound = 0,
+                    errors = listOf(MusicSourceError(FreeTrackErrorSource, "Поиск: ${error.readableMessage()}")),
+                )
             }
-            .onFailure { error ->
-                _state.update {
-                    it.copy(
-                        searching = false,
-                        results = emptyList(),
-                        errors = listOf(MusicSourceError(FreeTrackErrorSource, "Поиск: ${error.readableMessage()}")),
-                    )
-                }
-            }
+            return
+        }
+
+        val summary = MusicRanker.summarise(outcome.hits)
+        _state.update {
+            it.copy(
+                searching = false,
+                hits = outcome.hits,
+                hitSummary = summary,
+                // Считается по ответу источников, а не по показанным строкам: в
+                // режиме «только скачиваемое» метаданные в выдачу не попадают,
+                // и без этого числа «треки найдены, скачать нельзя» не сработало бы.
+                metadataFound = outcome.metadataFound,
+                errors = outcome.errors,
+            )
+        }
         rememberQuery()
         if (_state.value.tab == TAB_FREE) loadFree()
     }
@@ -247,7 +350,13 @@ fun downloadAndImport(track: FreeTrack) {
 
         /** iTunes asks for ≥350 ms between calls; 420 ms leaves a little slack. */
         const val DEBOUNCE_MS = 420L
-        const val METADATA_LIMIT = 25
+
+        /**
+         * Объединённая выдача: пять источников, и каждый уже отдаёт свой
+         * максимум. 30 строк — это то, что человек способен пролистать, при этом
+         * достаточно, чтобы скачиваемое не оказалось на тридцатой позиции.
+         */
+        const val SEARCH_LIMIT = 30
         const val FREE_LIMIT = 20
 
         /** Banner source used when the failure belongs to the whole screen. */
