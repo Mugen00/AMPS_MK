@@ -36,6 +36,7 @@ import dev.amps.app.data.remote.InternetArchiveClient
 import dev.amps.app.data.remote.ItunesClient
 import dev.amps.app.data.remote.JamendoClient
 import dev.amps.app.data.remote.MusicBrainzClient
+import dev.amps.app.data.remote.OpenverseClient
 import dev.amps.app.media.Id3Writer
 import dev.amps.app.media.MediaStoreImporter
 import dev.amps.app.util.audioFileName
@@ -92,6 +93,12 @@ class MusicRepository(
     private val ccMixter: CcMixterClient,
     private val internetArchive: InternetArchiveClient,
     private val jamendo: JamendoClient? = null,
+    /**
+     * 1.1.1: агрегатор открытых аудио — Free Music Archive, freesound,
+     * Wikimedia и другие, все с CC-лицензией. Падает баннером отдельно от
+     * остальных источников — см. [withSource].
+     */
+    private val openverse: OpenverseClient,
     context: Context,
     private val history: HistoryStore,
     private val importer: MediaStoreImporter? = null,
@@ -359,7 +366,8 @@ class MusicRepository(
         limit: Int = 20,
     ): FreeTrackResults = withContext(Dispatchers.IO) {
         val term = query.trim()
-        val perSource = ((limit + 2) / 3).coerceAtLeast(1)
+        // 1.1.1: файловых источников четыре, и лимит делится на всех.
+        val perSource = ((limit + 3) / 4).coerceAtLeast(1)
         val jamendoCall = async {
             val client = jamendo
             val outcome: SourceOutcome<List<FreeTrack>> = if (client == null) {
@@ -387,16 +395,25 @@ class MusicRepository(
                 internetArchive.search(term, filter, perSource)
             }
         }
+        // 1.1.1: Openverse опрашивается тем же порядком, что и остальные
+        // файловые источники: параллельно, со своим таймаутом и своим баннером
+        // на случай отказа. Джамендо из его выдачи отфильтрован самим клиентом.
+        val openverseCall = async {
+            withSource(MusicSource.OPENVERSE, "Openverse", FILE_TIMEOUT_MS) {
+                openverse.search(term, perSource)
+            }
+        }
         val fromJamendo = jamendoCall.await()
         val fromCc = ccCall.await()
         val fromArchive = archiveCall.await()
+        val fromOpenverse = openverseCall.await()
 
-        val errors = listOfNotNull(fromJamendo.error, fromCc.error, fromArchive.error)
+        val errors = listOfNotNull(fromJamendo.error, fromCc.error, fromArchive.error, fromOpenverse.error)
 
         // Jamendo умеет фильтровать по лицензии только на своей стороне, поэтому
         // вторая проверка — наша: `accepts` отсекает NC-записи, если пользователь
         // выбрал «свободные».
-        val rows = (fromJamendo.value.orEmpty() + fromArchive.value.orEmpty() + fromCc.value.orEmpty())
+        val rows = (fromJamendo.value.orEmpty() + fromArchive.value.orEmpty() + fromCc.value.orEmpty() + fromOpenverse.value.orEmpty())
             .filter { filter.accepts(it.license) }
             .distinctBy { it.key }
 
@@ -1205,7 +1222,7 @@ class MusicRepository(
          * нужно больше — Internet Archive делает по дополнительному запросу на
          * каждую находку, и на медленной сети это десятки секунд.
          *
-         * Ограничение нужно потому, что пять источников опрашиваются параллельно,
+         * Ограничение нужно потому, что шесть источников опрашиваются параллельно,
          * и без него один зависший съедал бы весь общий таймаут и поиск выглядел
          * бы «ничего не нашлось» из-за одного плохого соединения.
          */

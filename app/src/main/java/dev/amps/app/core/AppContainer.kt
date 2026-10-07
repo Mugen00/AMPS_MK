@@ -8,11 +8,13 @@ import dev.amps.app.data.remote.CcMixterClient
 import dev.amps.app.data.remote.CoverArtClient
 import dev.amps.app.data.remote.InternetArchiveClient
 import dev.amps.app.data.remote.AppearanceSearchClient
+import dev.amps.app.data.remote.DanbooruClient
 import dev.amps.app.data.remote.IqdbClient
 import dev.amps.app.data.remote.TraceMoeClient
 import dev.amps.app.data.remote.ItunesClient
 import dev.amps.app.data.remote.JamendoClient
 import dev.amps.app.data.remote.MusicBrainzClient
+import dev.amps.app.data.remote.OpenverseClient
 import dev.amps.app.data.remote.WikiClient
 import dev.amps.app.data.remote.backend.BackendApi
 import dev.amps.app.data.remote.backend.SyncManager
@@ -91,6 +93,12 @@ class AppContainer(private val context: Context) {
     val iqdb: IqdbClient by lazy { IqdbClient(httpClient) }
 
     /**
+     * 1.1.1: полные теги персонажей Danbooru-поста, который нашёл IQDB.
+     * Работает без ключа; подробности — в [DanbooruClient].
+     */
+    val danbooru: DanbooruClient by lazy { DanbooruClient(httpClient) }
+
+    /**
      * 1.0.6b: точный поиск кадра в базе серий.
      *
      * Нужен потому, что на скриншотах аниме IQDB отвечает «no relevant
@@ -110,6 +118,13 @@ class AppContainer(private val context: Context) {
     val coverArt: CoverArtClient by lazy { CoverArtClient(plainHttpClient) }
     val ccMixter: CcMixterClient by lazy { CcMixterClient(plainHttpClient) }
     val internetArchive: InternetArchiveClient by lazy { InternetArchiveClient(plainHttpClient) }
+
+    /**
+     * 1.1.1: агрегатор открытых аудио (Free Music Archive, freesound,
+     * Wikimedia и другие). Ключа не требует; если анонимный лимит
+     * исчерпан, источник падает баннером, не роняя остальные.
+     */
+    val openverse: OpenverseClient by lazy { OpenverseClient(httpClient) }
     val jamendo: JamendoClient by lazy {
         JamendoClient(httpClient) { settings.settings.first().jamendoClientId }
     }
@@ -156,6 +171,7 @@ class AppContainer(private val context: Context) {
             contentAnalyzer = contentAnalyzer,
             traceMoe = traceMoe,
             appearanceSearch = appearanceSearch,
+            danbooru = danbooru,
         )
     }
     val musicRepository: MusicRepository by lazy {
@@ -166,6 +182,7 @@ class AppContainer(private val context: Context) {
             ccMixter = ccMixter,
             internetArchive = internetArchive,
             jamendo = jamendo,
+            openverse = openverse,
             context = context,
             history = history,
             importer = mediaStoreImporter,

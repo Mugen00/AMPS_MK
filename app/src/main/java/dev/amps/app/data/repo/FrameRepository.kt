@@ -18,6 +18,7 @@ import dev.amps.app.data.model.SourceRef
 import dev.amps.app.data.ranking.RankingEngine
 import dev.amps.app.data.remote.AniListClient
 import dev.amps.app.data.remote.AppearanceSearchClient
+import dev.amps.app.data.remote.DanbooruClient
 import dev.amps.app.data.remote.IqdbClient
 import dev.amps.app.data.remote.TraceMoeClient
 import dev.amps.app.data.remote.WikiClient
@@ -71,6 +72,14 @@ class FrameRepository(
     private val traceMoe: TraceMoeClient? = null,
     /** 1.0.6b: собирает поисковый запрос по описанию внешности. */
     private val appearanceSearch: AppearanceSearchClient? = null,
+    /**
+     * 1.1.1: полные теги персонажей поста Danbooru.
+     *
+     * `alt` превью на странице IQDB обрезан, а JSON поста отдаёт
+     * `tag_string_character` целиком. `null` возвращает цепочку к прежнему
+     * поведению — именам только из `alt`.
+     */
+    private val danbooru: DanbooruClient? = null,
 ) {
 
     suspend fun identify(
@@ -388,7 +397,12 @@ class FrameRepository(
 
         // Теги берём со всех совпадений, а не только с лучшего: у лучшего
         // источника теги иногда обрезаны, а у второго-третьего они есть.
-        val characterTags = tagsOf(hits) { it.characterTags }
+        //
+        // 1.1.1: у Danbooru-поста теги спрашиваются ещё и напрямую — `alt`
+        // на странице IQDB обрезан, а JSON поста отдаёт `tag_string_character`
+        // целиком. Эти имена идут первыми: они описывают найденный пост,
+        // а не догадку о нём, и один разрешившийся тег называет персонажа.
+        val characterTags = (danbooruNames(hits) + tagsOf(hits) { it.characterTags }).distinct()
         val seriesTags = tagsOf(hits) { it.seriesTags }
 
         for (tag in characterTags) {
@@ -576,6 +590,22 @@ class FrameRepository(
             .filter { it.length >= MIN_TAG_LENGTH }
             .distinct()
             .take(TAG_LIMIT)
+
+    /**
+     * 1.1.1: имена персонажей с поста Danbooru, если IQDB назвал его.
+     *
+     * Один вызов на поиск: анонимный API Danbooru ограничен по частоте, а
+     * пост уже назван — опрашивать его ради каждого совпадения нет смысла.
+     * Любая поломка (нет сети, закрытый пост, чужой формат ответа) честно
+     * оставляет цепочку на `alt`-тегах IQDB: это запасной путь, а не замена.
+     */
+    private suspend fun danbooruNames(hits: List<IqdbClient.Hit>): List<String> {
+        val db = danbooru ?: return emptyList()
+        val postUrl = hits.firstOrNull { hit ->
+            hit.source.contains("danbooru", ignoreCase = true) && !hit.url.isNullOrBlank()
+        }?.url ?: return emptyList()
+        return runCatching { db.characterNames(postUrl) }.getOrNull().orEmpty()
+    }
 
     private fun IqdbClient.Hit.toRankingHit() = RankingEngine.IqdbHit(
         source = source,
