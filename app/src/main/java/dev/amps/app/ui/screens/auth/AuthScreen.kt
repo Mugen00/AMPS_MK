@@ -49,17 +49,11 @@ import androidx.compose.ui.unit.dp
 import dev.amps.app.security.Totp
 
 /**
- * 1.0.9: вход, регистрация, двухфакторная защита.
+ * 1.1.0: вход, регистрация, двухфакторная защита, синхронізація з бекендом.
  *
- * **Почему гостевой вход равноправен, а не «второй сорт».** Гость ищет по
- * кадру и по музыке ровно тем же кодом, что и пользователь аккаунта.
- * Разница одна — история поиска не пишется. Экран не пугает перед входом
- * и не делает гостя объектом вроде «вы почти не узнаете».
- *
- * **Честность про ограничения.** Подтверждение почты и номера в
- * приложении не настоящее: без сервера письмо и SMS отправить некуда.
- * Писать «подтверждён» было бы враньём, поэтому формулировка честная —
- * что именно гарантируется, а что нет.
+ * Підтримує два режими:
+ * - Локальний (офлайн): PBKDF2 + SQLite, працює без інтернету
+ * - Бекенд (Railway): JWT + email/SMS верифікація, password reset, sync
  */
 @Composable
 fun AuthScreen(viewModel: AuthViewModel, onBack: () -> Unit) {
@@ -73,9 +67,9 @@ fun AuthScreen(viewModel: AuthViewModel, onBack: () -> Unit) {
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // 1.0.9: назад уводит в приложение, а не закрывает его. Вход
-            // не обязателен — гостю доступно всё то же самое, поэтому
-            // кнопка «назад» здесь равна гостевому входу.
+            // 1.0.9: назад уводить в додаток, а не закриває його. Вхід
+            // не обов'язковий — гостю доступне все те ж саме, тому
+            // кнопка «назад» тут дорівнює гостовому входу.
             Box(Modifier.fillMaxWidth()) {
                 TextButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "Назад")
@@ -89,9 +83,13 @@ fun AuthScreen(viewModel: AuthViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
 
             when {
-                state.awaitingCode -> CodeStep(state, viewModel)
+                // Local 2FA code
+                state.awaitingLocalCode -> CodeStep(state, viewModel, isBackend = false)
+                // Backend verification code (email/phone/password reset/2FA)
+                state.awaitingBackendCode -> CodeStep(state, viewModel, isBackend = true)
                 state.mode == AuthState.Mode.LOGIN -> LoginStep(state, viewModel)
                 state.mode == AuthState.Mode.REGISTER -> RegisterStep(state, viewModel)
+                state.mode == AuthState.Mode.PASSWORD_RESET -> PasswordResetStep(state, viewModel)
                 else -> SecurityStep(state, viewModel)
             }
         }
@@ -110,7 +108,7 @@ private fun AuthHeader() {
         Spacer(Modifier.height(8.dp))
         Text("AMPS", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Поиск персонажа и музыки",
+            "Пошук персонажа і музики",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -121,12 +119,37 @@ private fun AuthHeader() {
 private fun LoginStep(state: AuthState, viewModel: AuthViewModel) {
     var login by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var isBackendMode by remember { mutableStateOf(state.isBackendMode) }
 
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Mode toggle
+        if (state.backendUser == null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { isBackendMode = false; viewModel.setMode(AuthState.Mode.LOGIN) },
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (!isBackendMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                ) { Text("Локальний") }
+                OutlinedButton(
+                    onClick = { isBackendMode = true; viewModel.setMode(AuthState.Mode.LOGIN) },
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (isBackendMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                ) { Text("Через сервер") }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
         OutlinedTextField(
             value = login,
             onValueChange = { login = it; viewModel.clearError() },
-            label = { Text("Логин") },
+            label = { Text("Логін або email") },
             singleLine = true,
             leadingIcon = { Icon(Icons.Default.Person, null) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -137,24 +160,38 @@ private fun LoginStep(state: AuthState, viewModel: AuthViewModel) {
             value = password,
             onValueChange = { password = it; viewModel.clearError() },
             label = "Пароль",
-            onDone = { if (login.isNotBlank() && password.isNotBlank()) viewModel.login(login, password) },
+            onDone = {
+                if (login.isNotBlank() && password.isNotBlank()) {
+                    if (isBackendMode) viewModel.loginBackend(login, password) else viewModel.loginLocal(login, password)
+                }
+            },
         )
 
         StateMessage(state)
 
         Spacer(Modifier.height(12.dp))
         SubmitButton(
-            text = "Войти",
+            text = if (isBackendMode) "Увійти через сервер" else "Увійти локально",
             busy = state.busy,
             enabled = login.isNotBlank() && password.isNotBlank(),
-            onClick = { viewModel.login(login, password) },
+            onClick = {
+                if (isBackendMode) viewModel.loginBackend(login, password) else viewModel.loginLocal(login, password)
+            },
         )
 
-        TextButton(onClick = { viewModel.setMode(AuthState.Mode.REGISTER) }) {
-            Text("Создать аккаунт")
-        }
-        TextButton(onClick = { viewModel.continueAsGuest() }) {
-            Text("Продолжить как гость")
+        if (!isBackendMode) {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { viewModel.setMode(AuthState.Mode.REGISTER) }) {
+                Text("Створити локальний акаунт")
+            }
+            TextButton(onClick = { viewModel.continueAsGuest() }) {
+                Text("Продолжити як гість")
+            }
+        } else {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { viewModel.setMode(AuthState.Mode.PASSWORD_RESET) }) {
+                Text("Забули пароль?")
+            }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -165,48 +202,119 @@ private fun LoginStep(state: AuthState, viewModel: AuthViewModel) {
 @Composable
 private fun RegisterStep(state: AuthState, viewModel: AuthViewModel) {
     var login by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var isBackendMode by remember { mutableStateOf(state.isBackendMode) }
 
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Mode toggle
+        if (state.backendUser == null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { isBackendMode = false; viewModel.setMode(AuthState.Mode.REGISTER) },
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (!isBackendMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                ) { Text("Локальний") }
+                OutlinedButton(
+                    onClick = { isBackendMode = true; viewModel.setMode(AuthState.Mode.REGISTER) },
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (isBackendMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                ) { Text("Через сервер") }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
         OutlinedTextField(
             value = login,
             onValueChange = { login = it; viewModel.clearError() },
-            label = { Text("Логин") },
+            label = { Text("Логін") },
             singleLine = true,
-            supportingText = { Text("от 3 символов, без пробелов") },
+            supportingText = { Text("від 3 символів, без пробілів") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(10.dp))
+        if (isBackendMode) {
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it; viewModel.clearError() },
+                label = { Text("Email") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Email,
+                    imeAction = ImeAction.Next,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = phone,
+                onValueChange = { phone = it; viewModel.clearError() },
+                label = { Text("Телефон (опціонально)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Phone,
+                    imeAction = ImeAction.Next,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(10.dp))
+        }
         PasswordField(
             value = password,
             onValueChange = { password = it; viewModel.clearError() },
             label = "Пароль",
+            onDone = { /* handled by confirm field */ },
         )
         Spacer(Modifier.height(10.dp))
         PasswordField(
             value = confirm,
             onValueChange = { confirm = it; viewModel.clearError() },
-            label = "Пароль ещё раз",
-            onDone = { if (login.isNotBlank() && password.isNotBlank()) viewModel.register(login, password, confirm) },
+            label = "Підтвердження пароля",
+            onDone = {
+                if (login.isNotBlank() && password.isNotBlank() && confirm.isNotBlank()) {
+                    if (isBackendMode) {
+                        viewModel.registerBackend(login, email, password, phone.takeIf { it.isNotBlank() })
+                    } else {
+                        viewModel.registerLocal(login, password, confirm)
+                    }
+                }
+            },
         )
 
         StateMessage(state)
 
         Spacer(Modifier.height(12.dp))
         SubmitButton(
-            text = "Создать аккаунт",
+            text = if (isBackendMode) "Зареєструватися на сервері" else "Створити локальний акаунт",
             busy = state.busy,
             enabled = login.isNotBlank() && password.isNotBlank() && confirm.isNotBlank(),
-            onClick = { viewModel.register(login, password, confirm) },
+            onClick = {
+                if (isBackendMode) {
+                    viewModel.registerBackend(login, email, password, phone.takeIf { it.isNotBlank() })
+                } else {
+                    viewModel.registerLocal(login, password, confirm)
+                }
+            },
         )
 
-        TextButton(onClick = { viewModel.setMode(AuthState.Mode.LOGIN) }) {
-            Text("Уже есть аккаунт")
-        }
-        TextButton(onClick = { viewModel.continueAsGuest() }) {
-            Text("Продолжить как гость")
+        if (!isBackendMode) {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { viewModel.setMode(AuthState.Mode.LOGIN) }) {
+                Text("Вже є акаунт")
+            }
+            TextButton(onClick = { viewModel.continueAsGuest() }) {
+                Text("Продолжити як гість")
+            }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -215,34 +323,187 @@ private fun RegisterStep(state: AuthState, viewModel: AuthViewModel) {
 }
 
 @Composable
-private fun CodeStep(state: AuthState, viewModel: AuthViewModel) {
+private fun PasswordResetStep(state: AuthState, viewModel: AuthViewModel) {
+    var email by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var newPassword by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var step by remember { mutableStateOf(0) } // 0 = email, 1 = code, 2 = new password
+
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            "Скидання пароля",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(16.dp))
+
+        when (step) {
+            0 -> {
+                Text(
+                    "Введіть email, на який прийде код для скидання пароля.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it; viewModel.clearError() },
+                    label = { Text("Email") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { if (email.isNotBlank()) viewModel.requestPasswordReset(email) }
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                SubmitButton(
+                    text = "Надіслати код",
+                    busy = state.busy,
+                    enabled = email.isNotBlank(),
+                    onClick = {
+                        if (email.isNotBlank()) {
+                            viewModel.requestPasswordReset(email)
+                            if (!state.busy) step = 1
+                        }
+                    },
+                )
+            }
+            1 -> {
+                Text(
+                    "Код надіслано на $email. Введіть його для підтвердження.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it.filter { it.isDigit() }.take(6); viewModel.clearError() },
+                    label = { Text("Шестизначний код") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.NumberPassword,
+                        imeAction = ImeAction.Next,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { if (code.length == 6) step = 2 }
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                SubmitButton(
+                    text = "Підтвердити код",
+                    busy = state.busy,
+                    enabled = code.length == 6,
+                    onClick = { if (code.length == 6) step = 2 },
+                )
+                TextButton(onClick = { viewModel.cancelCode(); step = 0 }) { Text("Назад") }
+            }
+            2 -> {
+                Text(
+                    "Введіть новий пароль.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(16.dp))
+                PasswordField(
+                    value = newPassword,
+                    onValueChange = { newPassword = it; viewModel.clearError() },
+                    label = "Новий пароль",
+                )
+                Spacer(Modifier.height(10.dp))
+                PasswordField(
+                    value = confirmPassword,
+                    onValueChange = { confirmPassword = it; viewModel.clearError() },
+                    label = "Підтвердження пароля",
+                    onDone = {
+                        if (newPassword.isNotBlank() && confirmPassword.isNotBlank()) {
+                            viewModel.confirmPasswordReset(email, code, newPassword)
+                        }
+                    },
+                )
+                Spacer(Modifier.height(12.dp))
+                SubmitButton(
+                    text = "Скинути пароль",
+                    busy = state.busy,
+                    enabled = newPassword.isNotBlank() && confirmPassword.isNotBlank(),
+                    onClick = {
+                        if (newPassword.isNotBlank() && confirmPassword.isNotBlank()) {
+                            viewModel.confirmPasswordReset(email, code, newPassword)
+                        }
+                    },
+                )
+                TextButton(onClick = { step = 1 }) { Text("Назад до коду") }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        TextButton(onClick = { viewModel.setMode(AuthState.Mode.LOGIN) }) {
+            Text("Назад до входу")
+        }
+    }
+}
+
+@Composable
+private fun CodeStep(state: AuthState, viewModel: AuthViewModel, isBackend: Boolean) {
     var code by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(Icons.Default.Key, null, tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Второй фактор",
+            if (isBackend) {
+                when (state.pendingBackendType) {
+                    "EMAIL_VERIFY" -> "Верифікація email"
+                    "PHONE_VERIFY" -> "Верифікація телефону"
+                    "PASSWORD_RESET" -> "Скидання пароля"
+                    "2FA_SETUP" -> "Налаштування 2FA"
+                    else -> "Підтвердження"
+                }
+            } else {
+                "Двохфакторна авторизація"
+            },
             style = MaterialTheme.typography.titleMedium,
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            "Пароль верный. Введите код из приложения-аутентификатора для «${state.pendingLogin}».",
+            if (isBackend) {
+                when (state.pendingBackendType) {
+                    "EMAIL_VERIFY" -> "Введіть код, надісланий на email."
+                    "PHONE_VERIFY" -> "Введіть код з SMS."
+                    "PASSWORD_RESET" -> "Введіть код для скидання пароля."
+                    "2FA_SETUP" -> "Введіть код з Google Authenticator."
+                    else -> "Введіть код для підтвердження."
+                }
+            } else {
+                "Пароль верний. Введіть код з додатку-аутентифікатора для «${state.pendingLocalLogin}»."
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(16.dp))
         OutlinedTextField(
             value = code,
             onValueChange = { code = code.filter { it.isDigit() }.take(Totp.DIGITS); viewModel.clearError() },
-            label = { Text("Шестизначный код") },
+            label = { Text("Шестизначний код") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.NumberPassword,
                 imeAction = ImeAction.Done,
             ),
             keyboardActions = KeyboardActions(
-                onDone = { if (code.length == Totp.DIGITS) viewModel.confirmCode(code) },
+                onDone = { if (code.length == Totp.DIGITS) {
+                    if (isBackend) viewModel.verifyBackendCode(code) else viewModel.confirmLocalCode(code)
+                }},
             ),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -251,10 +512,14 @@ private fun CodeStep(state: AuthState, viewModel: AuthViewModel) {
 
         Spacer(Modifier.height(12.dp))
         SubmitButton(
-            text = "Подтвердить",
+            text = "Підтвердити",
             busy = state.busy,
             enabled = code.length == Totp.DIGITS,
-            onClick = { viewModel.confirmCode(code) },
+            onClick = {
+                if (code.length == Totp.DIGITS) {
+                    if (isBackend) viewModel.verifyBackendCode(code) else viewModel.confirmLocalCode(code)
+                }
+            },
         )
         TextButton(onClick = { viewModel.cancelCode() }) { Text("Назад") }
     }
@@ -263,54 +528,122 @@ private fun CodeStep(state: AuthState, viewModel: AuthViewModel) {
 @Composable
 private fun SecurityStep(state: AuthState, viewModel: AuthViewModel) {
     val account = state.account
+    val backendUser = state.backendUser
 
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         val secret = state.totpSecret
         if (secret != null) {
-            TotpSetup(secret, account?.login.orEmpty(), state, viewModel)
+            TotpSetup(secret, account?.login.orEmpty() ?: backendUser?.userInfo?.login.orEmpty() ?: "", state, viewModel)
         } else {
             if (account != null) {
                 Text(
-                    "Аккаунт: ${account.login}",
+                    "Локальний акаунт: ${account.login}",
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
                     if (account.twoFactorEnabled) {
-                        "Двухфакторная защита включена"
+                        "Двохфакторна захист увімкнено"
                     } else {
-                        "Двухфакторная защита выключена"
+                        "Двохфакторна захист вимкнено"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.fillMaxWidth(),
                 )
+            } else if (backendUser != null) {
+                Text(
+                    "Обліковий запис: ${backendUser.userInfo.login}",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(4.dp))
+                Column(Modifier.fillMaxWidth()) {
+                    Text(
+                        if (backendUser.userInfo.emailVerified) "Email: ✓ верифіковано" else "Email: ✗ не верифіковано",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (backendUser.userInfo.phone != null) {
+                        Text(
+                            if (backendUser.userInfo.phoneVerified) "Телефон: ✓ верифіковано" else "Телефон: ✗ не верифіковано",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        if (backendUser.userInfo.twoFactorEnabled) "2FA: ✓ увімкнено" else "2FA: ✗ вимкнено",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             StateMessage(state)
             Spacer(Modifier.height(12.dp))
 
-            OutlinedButton(
-                onClick = {
-                    if (account?.twoFactorEnabled == true) {
-                        viewModel.disableTwoFactor()
-                    } else {
-                        viewModel.beginTwoFactor()
-                    }
-                },
-                enabled = !state.busy,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (account?.twoFactorEnabled == true) "Выключить 2FA" else "Включить 2FA")
+            // Local 2FA
+            if (account != null) {
+                OutlinedButton(
+                    onClick = {
+                        if (account.twoFactorEnabled) {
+                            viewModel.disableTwoFactor()
+                        } else {
+                            viewModel.beginTwoFactor()
+                        }
+                    },
+                    enabled = !state.busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (account.twoFactorEnabled) "Вимкнути 2FA" else "Увімкнути 2FA")
+                }
+
+                Spacer(Modifier.height(10.dp))
+                PasswordChangeBlock(state, viewModel)
+                Spacer(Modifier.height(10.dp))
+                ContactsBlock(state, viewModel)
             }
 
-            Spacer(Modifier.height(10.dp))
-            PasswordChangeBlock(state, viewModel)
-            Spacer(Modifier.height(10.dp))
-            ContactsBlock(state, viewModel)
+            // Backend 2FA
+            if (backendUser != null) {
+                OutlinedButton(
+                    onClick = {
+                        if (backendUser.userInfo.twoFactorEnabled) {
+                            viewModel.disableBackendTwoFactor()
+                        } else {
+                            viewModel.setupBackendTwoFactor()
+                        }
+                    },
+                    enabled = !state.busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (backendUser.userInfo.twoFactorEnabled) "Вимкнути 2FA (сервер)" else "Увімкнути 2FA (сервер)")
+                }
+
+                Spacer(Modifier.height(10.dp))
+                // Підтвердження email: окремого ендпоінту «надіслати ще раз»
+                // у 1.1.0 немає — свіжий код сервер надсилає при повторному
+                // вході, і ми кажемо про це прямо, без фальшивої кнопки.
+                if (!backendUser.userInfo.emailVerified) {
+                    Text(
+                        "Не отримали листа? Вийдіть і увійдіть знову — " +
+                            "ми надішлемо новий код підтвердження.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (backendUser.userInfo.phone != null && !backendUser.userInfo.phoneVerified) {
+                    Text(
+                        "Код для телефону надсилається при реєстрації; " +
+                            "повторне надсилання — у наступній версії.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
 
             Spacer(Modifier.height(16.dp))
-            TextButton(onClick = { viewModel.signOut() }) { Text("Выйти из аккаунта") }
+            TextButton(onClick = { viewModel.signOut() }) { Text("Вийти з акаунта") }
         }
     }
 }
@@ -325,14 +658,14 @@ private fun TotpSetup(
     var code by remember { mutableStateOf("") }
 
     Text(
-        "Добавьте этот ключ в Google Authenticator",
+        "Додайте цей ключ у Google Authenticator",
         style = MaterialTheme.typography.titleMedium,
         modifier = Modifier.fillMaxWidth(),
     )
     Spacer(Modifier.height(4.dp))
     Text(
-        "Ключ показывается один раз. Если потеряете телефон с аутентификатором, " +
-            "зайти можно будет только удалением данных приложения — аккаунт вместе с ними.",
+        "Ключ показується один раз. Якщо втратите телефон з аутентифікатором, " +
+            "зайти можна буде лише видаленням даних додатку — акаунт разом з ними.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.fillMaxWidth(),
@@ -352,7 +685,7 @@ private fun TotpSetup(
     }
     Spacer(Modifier.height(6.dp))
     Text(
-        "Имя аккаунта: AMPS ($login)",
+        "Назва акаунту: AMPS ($login)",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.fillMaxWidth(),
@@ -362,7 +695,7 @@ private fun TotpSetup(
     OutlinedTextField(
         value = code,
         onValueChange = { code = code.filter { it.isDigit() }.take(Totp.DIGITS); viewModel.clearError() },
-        label = { Text("Код из приложения") },
+        label = { Text("Код з додатку") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.NumberPassword,
@@ -378,12 +711,12 @@ private fun TotpSetup(
 
     Spacer(Modifier.height(12.dp))
     SubmitButton(
-        text = "Включить",
+        text = if (state.isBackendMode) "Увімкнути 2FA (сервер)" else "Увімкнути",
         busy = state.busy,
         enabled = code.length == Totp.DIGITS,
-        onClick = { viewModel.confirmTwoFactor(code) },
+        onClick = { if (code.length == Totp.DIGITS) viewModel.confirmTwoFactor(code) },
     )
-    TextButton(onClick = { viewModel.cancelTwoFactor() }) { Text("Отмена") }
+    TextButton(onClick = { viewModel.cancelTwoFactor() }) { Text("Скасувати") }
 }
 
 @Composable
@@ -392,17 +725,17 @@ private fun PasswordChangeBlock(state: AuthState, viewModel: AuthViewModel) {
     var fresh by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxWidth()) {
-        Text("Смена пароля", style = MaterialTheme.typography.titleSmall)
+        Text("Зміна пароля", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(8.dp))
-        PasswordField(old, { old = it; viewModel.clearError() }, "Текущий пароль")
+        PasswordField(old, { old = it; viewModel.clearError() }, "Поточний пароль")
         Spacer(Modifier.height(8.dp))
-        PasswordField(fresh, { fresh = it; viewModel.clearError() }, "Новый пароль")
+        PasswordField(fresh, { fresh = it; viewModel.clearError() }, "Новий пароль")
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
-            onClick = { viewModel.changePassword(old, fresh); old = ""; fresh = "" },
+            onClick = { viewModel.changePasswordLocal(old, fresh); old = ""; fresh = "" },
             enabled = !state.busy && old.isNotBlank() && fresh.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Изменить пароль") }
+        ) { Text("Змінити пароль") }
     }
 }
 
@@ -412,12 +745,12 @@ private fun ContactsBlock(state: AuthState, viewModel: AuthViewModel) {
     var phone by remember(state.account?.phone) { mutableStateOf(state.account?.phone.orEmpty()) }
 
     Column(Modifier.fillMaxWidth()) {
-        Text("Почта и телефон", style = MaterialTheme.typography.titleSmall)
+        Text("Пошта і телефон", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(4.dp))
         Text(
-            "Сохраняются только на этом устройстве и никуда не отправляются. " +
-                "Настоящее подтверждение не работает: чтобы отправить письмо или SMS, " +
-                "нужен сервер и платный сервис.",
+            "Зберігаються лише на цьому пристрої і нікуди не надсилаються. " +
+                "Насправді підтвердження не працює: щоб надіслати лист або SMS, " +
+                "потрібен сервер і платний сервіс.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -425,7 +758,7 @@ private fun ContactsBlock(state: AuthState, viewModel: AuthViewModel) {
         OutlinedTextField(
             value = email,
             onValueChange = { email = it },
-            label = { Text("Почта") },
+            label = { Text("Пошта") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth(),
@@ -435,7 +768,7 @@ private fun ContactsBlock(state: AuthState, viewModel: AuthViewModel) {
             onClick = { viewModel.setEmail(email) },
             enabled = email.isNotBlank() && state.account?.email != email.trim(),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Сохранить почту") }
+        ) { Text("Зберегти пошту") }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = phone,
@@ -450,7 +783,7 @@ private fun ContactsBlock(state: AuthState, viewModel: AuthViewModel) {
             onClick = { viewModel.setPhone(phone) },
             enabled = phone.isNotBlank() && state.account?.phone != phone.trim(),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Сохранить номер") }
+        ) { Text("Зберегти номер") }
     }
 }
 
@@ -483,7 +816,7 @@ private fun PasswordField(
             IconButton(onClick = { visible = !visible }) {
                 Icon(
                     if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                    contentDescription = if (visible) "Скрыть пароль" else "Показать пароль",
+                    contentDescription = if (visible) "Приховати пароль" else "Показати пароль",
                 )
             }
         },
@@ -498,70 +831,68 @@ private fun SubmitButton(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    Button(
+    androidx.compose.material3.Button(
         onClick = onClick,
         enabled = enabled && !busy,
         modifier = Modifier.fillMaxWidth(),
     ) {
         if (busy) {
             CircularProgressIndicator(
-                Modifier.size(18.dp),
+                modifier = Modifier.size(20.dp),
                 strokeWidth = 2.dp,
                 color = MaterialTheme.colorScheme.onPrimary,
             )
-            Spacer(Modifier.width(10.dp))
+        } else {
+            Text(text)
         }
-        Text(text)
     }
 }
 
 @Composable
 private fun StateMessage(state: AuthState) {
-    val message = state.error ?: state.notice
-    if (message == null) return
-    Spacer(Modifier.height(10.dp))
-    Text(
-        message,
-        style = MaterialTheme.typography.bodySmall,
-        color = if (state.error != null) {
-            MaterialTheme.colorScheme.error
-        } else {
-            MaterialTheme.colorScheme.primary
-        },
-        modifier = Modifier.fillMaxWidth(),
-    )
+    if (state.error != null) {
+        Text(
+            state.error!!,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            
+        )
+    }
+    if (state.notice != null) {
+        Text(
+            state.notice!!,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            
+        )
+    }
 }
 
 @Composable
 private fun GuestNote() {
-    Note(
-        "Гостевой режим — это полноценный доступ: поиск по кадру и по музыке " +
-            "работает так же. Не сохраняется только история поиска: " +
-            "гостю нечего предложить потерять, а пустой список выглядел бы " +
-            "потерей данных, которой не было."
+    Text(
+        "Гість має повний функціонал пошуку, але історія не зберігається.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        
+        modifier = Modifier.fillMaxWidth(),
     )
 }
 
 @Composable
 private fun StorageNote() {
-    Note(
-        "Аккаунт хранится только на этом устройстве. Данные не уходят на сервер: " +
-            "истории Git безвозвратны, и хеш пароля или секрет 2FA, однажды " +
-            "попавшие в коммит, остаются там навсегда."
-    )
-}
-
-@Composable
-private fun Note(text: String) {
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceVariant,
+    Text(
+        "Локальні акаунти зберігаються тільки на цьому пристрої. " +
+            "Пароль хешується PBKDF2 (200 000 ітерацій), секрет 2FA — AES-256.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        
         modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(12.dp),
-        )
-    }
+    )
 }

@@ -14,6 +14,8 @@ import dev.amps.app.data.remote.ItunesClient
 import dev.amps.app.data.remote.JamendoClient
 import dev.amps.app.data.remote.MusicBrainzClient
 import dev.amps.app.data.remote.WikiClient
+import dev.amps.app.data.remote.backend.BackendApi
+import dev.amps.app.data.remote.backend.SyncManager
 import dev.amps.app.data.repo.FrameRepository
 import dev.amps.app.data.repo.MusicRepository
 import dev.amps.app.imaging.AnimeTagger
@@ -24,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -116,6 +119,22 @@ class AppContainer(private val context: Context) {
     }
 
     val mediaStoreImporter: MediaStoreImporter by lazy { MediaStoreImporter(context) }
+
+    /**
+     * 1.1.0: бекенд API та синхронізація.
+     *
+     * Базовий URL бекенду береться з налаштувань (backendBaseUrl).
+     * Якщо не задано — використовується дефолтний Railway URL.
+     * Використовуємо runBlocking тут, бо lazy-блок не є suspend-функцією.
+     */
+    val backendApi: BackendApi by lazy {
+        val baseUrl = runBlocking { settings.settings.first().backendBaseUrl }
+        BackendApi.getOrCreate(baseUrl, httpClient)
+    }
+
+    val syncManager: SyncManager by lazy {
+        SyncManager(context, backendApi, session, accounts, history)
+    }
 
     /**
      * 1.0.6: аниме-тегер вместо ML Kit.

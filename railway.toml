@@ -1,0 +1,24 @@
+# Railway configuration for AMPS.
+# Railway reads this file from the repository root; the Dockerfile itself
+# lives in backend/ and expects the repo root as build context.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "backend/Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 10
+
+# Environment variables (set in Railway dashboard or via CLI).
+# Required:
+#   DATABASE_URL        - auto-provided by the Railway PostgreSQL service
+#   JWT_SECRET          - base64-encoded 256-bit key (openssl rand -base64 32)
+#   RESEND_API_KEY      - from resend.com (email verification / password reset)
+#   EMAIL_FROM          - e.g. "AMPS <noreply@yourdomain.com>"
+#   TWILIO_ACCOUNT_SID  - from twilio.com (SMS verification; optional)
+#   TWILIO_AUTH_TOKEN   - from twilio.com
+#   TWILIO_FROM_NUMBER  - verified Twilio phone number
+#   PORT                - auto-provided by Railway (server binds to it)

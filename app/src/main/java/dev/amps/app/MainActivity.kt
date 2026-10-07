@@ -137,7 +137,12 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
         factory = SettingsViewModel.Factory(container.settings)
     )
     val authViewModel: AuthViewModel = viewModel(
-        factory = AuthViewModel.Factory(container.accounts, container.session)
+        factory = AuthViewModel.Factory(
+            container.accounts,
+            container.session,
+            container.backendApi,
+            container.settings
+        )
     )
 
     val frameState by frameViewModel.state.collectAsStateWithLifecycle()

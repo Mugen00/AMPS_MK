@@ -7,6 +7,9 @@ import dev.amps.app.data.local.Account
 import dev.amps.app.data.local.AccountStore
 import dev.amps.app.core.Session
 import dev.amps.app.core.SessionStore
+import dev.amps.app.data.remote.backend.ApiResult
+import dev.amps.app.data.remote.backend.BackendApi
+import dev.amps.app.data.remote.backend.dto.*
 import dev.amps.app.security.Totp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,45 +19,54 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 1.0.9: вход, регистрация и настройка защиты аккаунта.
+ * 1.1.0: вхід, реєстрація, 2FA, синхронізація з бекендом.
  *
- * **Почему хеширование и проверка идут через [Dispatchers.Default].**
- * PBKDF2 на 210 000 итераций — это работа на десятки миллисекунд, и на
- * главном потоке она превратит нажатие кнопки в подвисание. Проверка пароля
- * обязана быть постоянной по времени, а без этого она ещё и выдаст себя
- * длительностью отклика.
+ * Підтримує два режими:
+ * - Локальний (офлайн): PBKDF2 + SQLite, працює без інтернету
+ * - Бекенд (Railway): JWT + email/SMS верифікація, password reset, sync
  *
- * **Что означает [AuthState.AwaitingCode].** Пароль принят, но у аккаунта
- * включён код из приложения-аутентификатора. Это не ошибка и не отказ:
- * вход не завершён, но и не отклонён. Отдельное состояние нужно, чтобы
- * интерфейс не показывал «неверный пароль» человеку с верным паролем.
+ * Якщо налаштований backendBaseUrl — реєстрація/вхід йдуть через бекенд.
+ * Локальні акаунти залишаються для офлайн-режиму та як fallback.
  */
 data class AuthState(
     val mode: Mode = Mode.LOGIN,
     val busy: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
-    /** Пароль принят, ждём код из аутентификатора. */
-    val awaitingCode: Boolean = false,
-    val pendingLogin: String = "",
-    /** Готовый секрет для включения 2FA; показывается один раз. */
+    /** Пароль прийнято, чекаємо код з аутентифікатора (локальний 2FA). */
+    val awaitingLocalCode: Boolean = false,
+    val pendingLocalLogin: String = "",
+    /** Чекаємо код від бекенду (email/SMS верифікація). */
+    val awaitingBackendCode: Boolean = false,
+    val pendingBackendType: String = "", // "EMAIL_VERIFY" | "PHONE_VERIFY" | "PASSWORD_RESET" | "2FA_SETUP"
+    /** Секрет для налаштування 2FA (показується один раз). */
     val totpSecret: String? = null,
     val account: Account? = null,
+    val backendUser: BackendUser? = null,
 ) {
-    enum class Mode { LOGIN, REGISTER, SECURITY }
+    enum class Mode { LOGIN, REGISTER, SECURITY, PASSWORD_RESET }
 
-    val canSubmit: Boolean get() = !busy && !awaitingCode
+    val canSubmit: Boolean get() = !busy && !awaitingLocalCode && !awaitingBackendCode
+    val isBackendMode: Boolean get() = backendUser != null
 }
 
-/** Состояние приложения с точки зрения входа. */
+data class BackendUser(
+    val accessToken: String,
+    val refreshToken: String,
+    val userInfo: UserInfo
+)
+
+/** Стан додатку з точки зору входу. */
 sealed interface SessionUi {
     data object Loading : SessionUi
-    data class Signed(val session: Session, val account: Account?) : SessionUi
+    data class Signed(val session: Session, val account: Account?, val backendUser: BackendUser?) : SessionUi
 }
 
 class AuthViewModel(
     private val accounts: AccountStore,
     private val sessionStore: SessionStore,
+    private val backendApi: BackendApi,
+    private val settingsStore: dev.amps.app.core.SettingsStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AuthState())
@@ -71,7 +83,7 @@ class AuthViewModel(
                 } else {
                     null
                 }
-                _session.value = SessionUi.Signed(current, account)
+                _session.value = SessionUi.Signed(current, account, null)
             }
         }
     }
@@ -84,44 +96,170 @@ class AuthViewModel(
         _state.value = _state.value.copy(error = null, notice = null)
     }
 
-    fun register(login: String, password: String, confirm: String) {
+    // ===== Backend registration =====
+    fun registerBackend(login: String, email: String, password: String, phone: String?) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true, error = null)
         viewModelScope.launch {
-            val result = withContext(Dispatchers.Default) { accounts.register(login, password, confirm) }
-            handle(result) { account ->
-                sessionStore.signIn(account)
+            val request = RegisterRequest(login, email, password, phone)
+            val result = backendApi.register(request)
+            handleBackendResult(result) { tokens, userInfo ->
                 _state.value = AuthState(
                     mode = AuthState.Mode.SECURITY,
-                    account = account,
-                    notice = "Аккаунт создан. Теперь можно включить двухфакторную защиту.",
+                    backendUser = BackendUser(tokens.accessToken, tokens.refreshToken, userInfo),
+                    notice = "Реєстрація успішна. Перевірте email для підтвердження.",
+                    awaitingBackendCode = true,
+                    pendingBackendType = "EMAIL_VERIFY"
                 )
             }
         }
     }
 
-    fun login(login: String, password: String) {
+    // ===== Backend login =====
+    fun loginBackend(login: String, password: String) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            val request = LoginRequest(login, password)
+            val result = backendApi.login(request)
+            handleBackendResult(result) { tokens, userInfo ->
+                _state.value = AuthState(
+                    mode = AuthState.Mode.SECURITY,
+                    backendUser = BackendUser(tokens.accessToken, tokens.refreshToken, userInfo),
+                    notice = if (!userInfo.emailVerified) {
+                        "Вхід успішний. Перевірте email для підтвердження."
+                    } else if (!userInfo.phoneVerified && userInfo.phone != null) {
+                        "Вхід успішний. Можна підтвердити телефон."
+                    } else {
+                        "Вхід успішний."
+                    },
+                    awaitingBackendCode = !userInfo.emailVerified,
+                    pendingBackendType = if (!userInfo.emailVerified) "EMAIL_VERIFY" else ""
+                )
+            }
+        }
+    }
+
+    private fun handleBackendResult(
+        result: ApiResult,
+        onSuccess: (TokenResponse, UserInfo) -> Unit
+    ) {
+        when (result) {
+            is ApiResult.Success -> {
+                val tokens = result.data as TokenResponse
+                val userInfo = tokens.user
+                onSuccess(tokens, userInfo)
+            }
+            is ApiResult.Failure -> _state.value = _state.value.copy(busy = false, error = result.error)
+            is ApiResult.NetworkError -> _state.value = _state.value.copy(busy = false, error = result.message)
+        }
+    }
+
+    // ===== Backend code verification (email/phone/password reset) =====
+    fun verifyBackendCode(code: String) {
+        val current = _state.value
+        if (current.busy || !current.awaitingBackendCode) return
+        // Код 2FA перевіряється окремим захищеним ендпоінтом, а не /auth/verify:
+        // сервер розпізнає лише EMAIL_VERIFY і PHONE_VERIFY.
+        if (current.pendingBackendType == "2FA_SETUP") {
+            verifyBackendTwoFactor(code)
+            return
+        }
+        _state.value = current.copy(busy = true, error = null)
+        viewModelScope.launch {
+            val login = current.backendUser?.userInfo?.login ?: current.pendingLocalLogin
+            val request = VerifyCodeRequest(login, code, current.pendingBackendType)
+            val result = backendApi.verifyCode(request)
+            handleBackendResult(result) { tokens, userInfo ->
+                _state.value = AuthState(
+                    mode = AuthState.Mode.SECURITY,
+                    backendUser = BackendUser(tokens.accessToken, tokens.refreshToken, userInfo),
+                    notice = when (current.pendingBackendType) {
+                        "EMAIL_VERIFY" -> "Email підтверджено!"
+                        "PHONE_VERIFY" -> "Телефон підтверджено!"
+                        "PASSWORD_RESET" -> "Пароль скинуто!"
+                        else -> "Підтверджено!"
+                    },
+                    awaitingBackendCode = false,
+                    pendingBackendType = ""
+                )
+            }
+        }
+    }
+
+    // ===== Local registration (offline) =====
+    fun registerLocal(login: String, password: String, confirm: String) {
+        if (_state.value.busy) return
+        _state.value = _state.value.copy(busy = true, error = null)
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) { accounts.register(login, password, confirm) }
+            handleLocalResult(result) { account ->
+                sessionStore.signIn(account)
+                _state.value = AuthState(
+                    mode = AuthState.Mode.SECURITY,
+                    account = account,
+                    notice = "Локальний акаунт створено. Можна увімкнути 2FA."
+                )
+            }
+        }
+    }
+
+    // ===== Local login (offline) =====
+    fun loginLocal(login: String, password: String) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true, error = null)
         viewModelScope.launch {
             val result = withContext(Dispatchers.Default) { accounts.login(login, password) }
-            handle(result) { account ->
+            handleLocalResult(result) { account ->
                 sessionStore.signIn(account)
                 _state.value = AuthState(mode = AuthState.Mode.SECURITY, account = account)
             }
         }
     }
 
-    /** Вторая половина входа для аккаунта с включённым 2FA. */
-    fun confirmCode(code: String) {
+    private suspend fun handleLocalResult(
+        result: AccountStore.Result,
+        onSuccess: suspend (Account) -> Unit
+    ) {
+        when (result) {
+            is AccountStore.Result.Ok -> onSuccess(result.account)
+
+            is AccountStore.Result.NeedSecondFactor -> _state.value = _state.value.copy(
+                busy = false,
+                awaitingLocalCode = true,
+                pendingLocalLogin = result.account.login,
+                error = null,
+            )
+
+            is AccountStore.Result.Taken -> _state.value = _state.value.copy(
+                busy = false, error = "логін «${result.login}» вже зайнятий"
+            )
+
+            is AccountStore.Result.WrongPassword,
+            is AccountStore.Result.NoSuchAccount -> _state.value = _state.value.copy(
+                busy = false, error = "невірний логін або пароль"
+            )
+
+            is AccountStore.Result.WeakPassword -> _state.value = _state.value.copy(
+                busy = false, error = result.reason
+            )
+
+            is AccountStore.Result.Failed -> _state.value = _state.value.copy(
+                busy = false, error = result.reason
+            )
+        }
+    }
+
+    // ===== Local 2FA code confirmation =====
+    fun confirmLocalCode(code: String) {
         val current = _state.value
-        if (current.busy || !current.awaitingCode) return
+        if (current.busy || !current.awaitingLocalCode) return
         _state.value = current.copy(busy = true, error = null)
         viewModelScope.launch {
             val result = withContext(Dispatchers.Default) {
-                accounts.confirmSecondFactor(current.pendingLogin, code)
+                accounts.confirmSecondFactor(current.pendingLocalLogin, code)
             }
-            handle(result) { account ->
+            handleLocalResult(result) { account ->
                 sessionStore.signIn(account)
                 _state.value = AuthState(mode = AuthState.Mode.SECURITY, account = account)
             }
@@ -129,7 +267,13 @@ class AuthViewModel(
     }
 
     fun cancelCode() {
-        _state.value = _state.value.copy(awaitingCode = false, pendingLogin = "", error = null)
+        _state.value = _state.value.copy(
+            awaitingLocalCode = false,
+            awaitingBackendCode = false,
+            pendingLocalLogin = "",
+            pendingBackendType = "",
+            error = null
+        )
     }
 
     fun continueAsGuest() {
@@ -146,13 +290,7 @@ class AuthViewModel(
         }
     }
 
-    /**
-     * Включение 2FA: секрет показывается один раз.
-     *
-     * Дальше его негде посмотреть — хранится он в базе, а не на экране.
-     * Поэтому если человек потерял телефон с аутентификатором, зайти можно
-     * только удалив данные приложения, и об этом сказано заранее.
-     */
+    // ===== 2FA (local) =====
     fun beginTwoFactor() {
         val account = _state.value.account ?: return
         val secret = Totp.newSecret()
@@ -171,17 +309,17 @@ class AuthViewModel(
         _state.value = current.copy(busy = true, error = null)
         viewModelScope.launch {
             if (!Totp.verify(secret, code)) {
-                _state.value = current.copy(busy = false, error = "неверный код — проверь время на телефоне")
+                _state.value = current.copy(busy = false, error = "невірний код — перевір час на телефоні")
                 return@launch
             }
             val result = withContext(Dispatchers.Default) {
                 accounts.setTwoFactor(account, secret)
             }
-            handle(result) { updated ->
+            handleLocalResult(result) { updated ->
                 _state.value = AuthState(
                     mode = AuthState.Mode.SECURITY,
                     account = updated,
-                    notice = "Двухфакторная защита включена.",
+                    notice = "Двохфакторна захист увімкнено."
                 )
             }
         }
@@ -192,17 +330,91 @@ class AuthViewModel(
         _state.value = _state.value.copy(busy = true, error = null)
         viewModelScope.launch {
             val result = withContext(Dispatchers.Default) { accounts.setTwoFactor(account, null) }
-            handle(result) { updated ->
+            handleLocalResult(result) { updated ->
                 _state.value = AuthState(
                     mode = AuthState.Mode.SECURITY,
                     account = updated,
-                    notice = "Двухфакторная защита выключена.",
+                    notice = "Двохфакторна захист вимкнено."
                 )
             }
         }
     }
 
-    fun changePassword(oldPassword: String, newPassword: String) {
+    // ===== Backend 2FA =====
+    fun setupBackendTwoFactor() {
+        val current = _state.value
+        val accessToken = current.backendUser?.accessToken ?: return
+        if (current.busy) return
+        _state.value = current.copy(busy = true, error = null)
+        viewModelScope.launch {
+            val result = backendApi.setupTwoFactor("Bearer $accessToken")
+            when (result) {
+                is ApiResult.Success -> {
+                    val setup = result.data as TwoFactorSetupResponse
+                    _state.value = current.copy(
+                        busy = false,
+                        totpSecret = setup.secret,
+                        notice = "Відскануйте QR-код у Google Authenticator",
+                        awaitingBackendCode = true,
+                        pendingBackendType = "2FA_SETUP"
+                    )
+                }
+                is ApiResult.Failure -> _state.value = current.copy(busy = false, error = result.error)
+                is ApiResult.NetworkError -> _state.value = current.copy(busy = false, error = result.message)
+            }
+        }
+    }
+
+    fun verifyBackendTwoFactor(code: String) {
+        val current = _state.value
+        val accessToken = current.backendUser?.accessToken ?: return
+        if (current.busy || !current.awaitingBackendCode || current.pendingBackendType != "2FA_SETUP") return
+        _state.value = current.copy(busy = true, error = null)
+        viewModelScope.launch {
+            val request = TwoFactorVerifyRequest(code)
+            val result = backendApi.verifyTwoFactor("Bearer $accessToken", request)
+            when (result) {
+                is ApiResult.Success -> {
+                    _state.value = current.copy(
+                        busy = false,
+                        awaitingBackendCode = false,
+                        pendingBackendType = "",
+                        notice = "2FA увімкнено",
+                        backendUser = current.backendUser?.copy(
+                            userInfo = current.backendUser!!.userInfo.copy(twoFactorEnabled = true)
+                        )
+                    )
+                }
+                is ApiResult.Failure -> _state.value = current.copy(busy = false, error = result.error)
+                is ApiResult.NetworkError -> _state.value = current.copy(busy = false, error = result.message)
+            }
+        }
+    }
+
+    fun disableBackendTwoFactor() {
+        val current = _state.value
+        val accessToken = current.backendUser?.accessToken ?: return
+        _state.value = current.copy(busy = true, error = null)
+        viewModelScope.launch {
+            val result = backendApi.disableTwoFactor("Bearer $accessToken")
+            when (result) {
+                is ApiResult.Success -> {
+                    _state.value = current.copy(
+                        busy = false,
+                        notice = "2FA вимкнено",
+                        backendUser = current.backendUser?.copy(
+                            userInfo = current.backendUser!!.userInfo.copy(twoFactorEnabled = false)
+                        )
+                    )
+                }
+                is ApiResult.Failure -> _state.value = current.copy(busy = false, error = result.error)
+                is ApiResult.NetworkError -> _state.value = current.copy(busy = false, error = result.message)
+            }
+        }
+    }
+
+    // ===== Password change (local) =====
+    fun changePasswordLocal(oldPassword: String, newPassword: String) {
         val account = _state.value.account ?: return
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true, error = null)
@@ -210,20 +422,59 @@ class AuthViewModel(
             val result = withContext(Dispatchers.Default) {
                 accounts.changePassword(account, oldPassword, newPassword)
             }
-            handle(result) { updated ->
+            handleLocalResult(result) { updated ->
                 _state.value = _state.value.copy(
-                    busy = false, account = updated, notice = "Пароль изменён.",
+                    busy = false, account = updated, notice = "Пароль змінено."
                 )
             }
         }
     }
 
+    // ===== Backend password reset =====
+    fun requestPasswordReset(email: String) {
+        _state.value = _state.value.copy(mode = AuthState.Mode.PASSWORD_RESET, busy = true, error = null)
+        viewModelScope.launch {
+            val request = PasswordResetRequest(email)
+            val result = backendApi.requestPasswordReset(request)
+            when (result) {
+                is ApiResult.Success -> {
+                    _state.value = _state.value.copy(
+                        busy = false,
+                        awaitingBackendCode = true,
+                        pendingBackendType = "PASSWORD_RESET",
+                        notice = "Код відправлено на email. Введіть його для скидання пароля."
+                    )
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(busy = false, error = result.error)
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(busy = false, error = result.message)
+            }
+        }
+    }
+
+    fun confirmPasswordReset(email: String, code: String, newPassword: String) {
+        val current = _state.value
+        if (current.busy || !current.awaitingBackendCode || current.pendingBackendType != "PASSWORD_RESET") return
+        _state.value = current.copy(busy = true, error = null)
+        viewModelScope.launch {
+            val request = PasswordResetConfirmRequest(email, code, newPassword)
+            val result = backendApi.confirmPasswordReset(request)
+            handleBackendResult(result) { tokens, userInfo ->
+                _state.value = AuthState(
+                    mode = AuthState.Mode.SECURITY,
+                    backendUser = BackendUser(tokens.accessToken, tokens.refreshToken, userInfo),
+                    notice = "Пароль успішно скинуто."
+                )
+            }
+        }
+    }
+
+    // ===== Email/Phone setters (local only for now) =====
     fun setEmail(email: String) {
         val account = _state.value.account ?: return
         viewModelScope.launch {
             val result = withContext(Dispatchers.Default) { accounts.setEmail(account, email) }
-            handle(result) { updated ->
-                _state.value = _state.value.copy(account = updated, notice = "Почта сохранена.")
+            handleLocalResult(result) { updated ->
+                _state.value = _state.value.copy(account = updated, notice = "Email збережено.")
             }
         }
     }
@@ -232,64 +483,20 @@ class AuthViewModel(
         val account = _state.value.account ?: return
         viewModelScope.launch {
             val result = withContext(Dispatchers.Default) { accounts.setPhone(account, phone) }
-            handle(result) { updated ->
-                _state.value = _state.value.copy(account = updated, notice = "Номер сохранён.")
+            handleLocalResult(result) { updated ->
+                _state.value = _state.value.copy(account = updated, notice = "Номер збережено.")
             }
-        }
-    }
-
-    /**
-     * Единая разборка результата.
-     *
-     * Принимает `suspend`-лямбду, потому что успешный путь обязан записать
-     * сессию — это запись в DataStore, то есть вызов из корутины. Обычная
-     * лямбда компилировалась бы, но упала бы на месте.
-     */
-    private suspend fun handle(
-        result: AccountStore.Result,
-        onSuccess: suspend (Account) -> Unit,
-    ) {
-        when (result) {
-            is AccountStore.Result.Ok -> onSuccess(result.account)
-
-            is AccountStore.Result.NeedSecondFactor -> _state.value = _state.value.copy(
-                busy = false,
-                awaitingCode = true,
-                pendingLogin = result.account.login,
-                error = null,
-            )
-
-            is AccountStore.Result.Taken -> _state.value = _state.value.copy(
-                busy = false, error = "логин «${result.login}» уже занят",
-            )
-
-            is AccountStore.Result.WrongPassword -> _state.value = _state.value.copy(
-                busy = false,
-                // Не говорим, чего именно не хватило: «нет такого пользователя»
-                // и «неверный пароль» — разные подсказки для перебора.
-                error = "неверный логин или пароль",
-            )
-
-            is AccountStore.Result.NoSuchAccount -> _state.value = _state.value.copy(
-                busy = false, error = "неверный логин или пароль",
-            )
-
-            is AccountStore.Result.WeakPassword -> _state.value = _state.value.copy(
-                busy = false, error = result.reason,
-            )
-
-            is AccountStore.Result.Failed -> _state.value = _state.value.copy(
-                busy = false, error = result.reason,
-            )
         }
     }
 
     class Factory(
         private val accounts: AccountStore,
         private val sessionStore: SessionStore,
+        private val backendApi: BackendApi,
+        private val settingsStore: dev.amps.app.core.SettingsStore,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            AuthViewModel(accounts, sessionStore) as T
+            AuthViewModel(accounts, sessionStore, backendApi, settingsStore) as T
     }
 }

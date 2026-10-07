@@ -22,6 +22,8 @@ data class AppSettings(
     val importToMediaStore: Boolean = true,
     val keepSearchHistory: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.DARK,
+    /** 1.1.0: базовий URL бекенду (Railway). Якщо порожній — використовується дефолтний. */
+    val backendBaseUrl: String = "",
 ) {
     companion object {
         /**
@@ -55,6 +57,7 @@ class SettingsStore(private val context: Context) {
         val importToMediaStore = booleanPreferencesKey("import_to_media_store")
         val keepHistory = booleanPreferencesKey("keep_history")
         val themeMode = stringPreferencesKey("theme_mode")
+        val backendBaseUrl = stringPreferencesKey("backend_base_url")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -66,6 +69,7 @@ class SettingsStore(private val context: Context) {
             themeMode = prefs[Keys.themeMode]
                 ?.let { name -> ThemeMode.entries.firstOrNull { it.name == name } }
                 ?: ThemeMode.DARK,
+            backendBaseUrl = prefs[Keys.backendBaseUrl]?.takeIf { it.isNotBlank() } ?: "",
         )
     }
 
@@ -76,6 +80,9 @@ class SettingsStore(private val context: Context) {
     suspend fun setKeepHistory(value: Boolean) = put(Keys.keepHistory, value)
 
     suspend fun setThemeMode(mode: ThemeMode) = put(Keys.themeMode, mode.name)
+
+    /** 1.1.0: базовий URL бекенду для синхронізації та авторизації. */
+    suspend fun setBackendBaseUrl(url: String) = put(Keys.backendBaseUrl, url.trim())
 
     private suspend fun <T> put(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) {
         context.dataStore.edit { it[key] = value }
