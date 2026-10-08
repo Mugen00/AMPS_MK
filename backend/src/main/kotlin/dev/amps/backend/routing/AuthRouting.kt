@@ -30,7 +30,7 @@ import io.ktor.server.routing.routing
 fun Application.authRoutes(auth: AuthService, twoFactor: TwoFactorService, sync: SyncService) {
     routing {
         get("/health") {
-            call.respond(mapOf("status" to "ok", "version" to "1.1.2"))
+            call.respond(mapOf("status" to "ok", "version" to "1.1.3"))
         }
 
         route("/auth") {
