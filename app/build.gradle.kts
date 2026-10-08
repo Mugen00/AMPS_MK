@@ -78,8 +78,8 @@ android {
 // всё приложение. Теперь Android убьёт только процесс `:tagger`.
 // Также largeHeap, проверка свободной памяти до загрузки модели и
 // Throwable вместо Exception в разборе кадра.
-        versionCode = 16
-        versionName = "1.1.2"
+        versionCode = 17
+        versionName = "1.1.3"
         resourceConfigurations += listOf("ru", "en")
 
         ndk {
@@ -173,6 +173,10 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
+
+    // 1.1.3: Markdown-відповідь Gemini (заголовки, списки, клікабельні
+    // посилання) рендериться в TextView через Markwon.
+    implementation("io.noties.markwon:core:4.6.2")
 
     // 1.0.6: аниме-тегер вместо ML Kit. ML Kit отдавал общие словари
     // («человек», «волосы») и занимал 20 МБ APK — 81% размера. Тегер

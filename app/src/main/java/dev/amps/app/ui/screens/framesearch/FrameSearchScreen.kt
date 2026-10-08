@@ -1,5 +1,7 @@
 package dev.amps.app.ui.screens.framesearch
 
+import android.text.method.LinkMovementMethod
+import android.widget.TextView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,6 +14,9 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.viewinterop.AndroidView
+import io.noties.markwon.Markwon
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -22,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.ImageSearch
@@ -32,6 +38,7 @@ import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -43,6 +50,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -77,6 +85,8 @@ fun FrameSearchScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val navigation by viewModel.navigation.collectAsStateWithLifecycle()
+    // 1.1.3: стан AI-аналізу Gemini — окремий потік.
+    val gemini by viewModel.gemini.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
 
@@ -206,6 +216,16 @@ fun FrameSearchScreen(
                         AppearanceSearchHint(hint) { url -> openUrl(context, url) }
                     }
             }
+
+            // 1.1.3: AI-аналіз фото через Gemini — структурована відповідь
+            // з Markdown і клікабельними посиланнями. Працює навіть тоді,
+            // коли точний пошук по базах дав промах.
+            GeminiCard(
+                gemini = gemini,
+                enabled = state.hasImage,
+                onAnalyze = viewModel::analyzeWithGemini,
+                onDismiss = viewModel::clearGemini,
+            )
 
             PipelineCard()
 
@@ -548,4 +568,86 @@ private fun PipelineStep(number: String, name: String, description: String) {
             )
         }
     }
+}
+
+/**
+ * 1.1.3: карточка AI-аналізу фото (Gemini). Відповідь моделі — Markdown:
+ * заголовки, списки і клікабельні посилання рендерить Markwon.
+ *
+ * Чесно: Gemini розуміє ЗОБРАЖЕННЯ, а не шукає збіг у базі — для точного
+ * «звідки цей кадр» надійніший пошук вище. Ключ задається в Налаштуваннях;
+ * без нього кнопка веде в Налаштування.
+ */
+@Composable
+private fun GeminiCard(
+    gemini: GeminiState,
+    enabled: Boolean,
+    onAnalyze: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(10.dp))
+                Text("AI-аналіз фото", style = MaterialTheme.typography.titleMedium)
+            }
+            Text(
+                "Gemini розпізнає персонажа чи об'єкт, описує контекст і дає посилання. " +
+                    "Для точного збігу кадру надійніший пошук по базах вище.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            when {
+                gemini.busy -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Gemini аналізує фото…", style = MaterialTheme.typography.bodyMedium)
+                }
+                gemini.result != null -> {
+                    MarkdownText(gemini.result.orEmpty())
+                    TextButton(onClick = onDismiss) { Text("Сховати відповідь") }
+                }
+                else -> {
+                    gemini.error?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Button(onClick = onAnalyze, enabled = enabled) {
+                        Text(if (enabled) "Проаналізувати через AI" else "Спочатку виберіть фото")
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Markdown → TextView через Markwon; посилання клікабельні. */
+@Composable
+private fun MarkdownText(markdown: String) {
+    val context = LocalContext.current
+    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+    val markwon = remember { Markwon.create(context) }
+    AndroidView(
+        factory = { ctx ->
+            TextView(ctx).apply {
+                movementMethod = LinkMovementMethod.getInstance()
+                setTextColor(textColor)
+                textSize = 15f
+            }
+        },
+        update = { view -> markwon.setMarkdown(view, markdown) },
+        modifier = Modifier.fillMaxWidth(),
+    )
 }

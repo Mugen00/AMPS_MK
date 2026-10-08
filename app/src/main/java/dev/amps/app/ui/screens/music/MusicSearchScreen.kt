@@ -30,9 +30,11 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -49,11 +51,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -104,6 +109,9 @@ fun MusicSearchScreen(
         uri?.let(viewModel::importAudio)
     }
 
+    // 1.1.3: діалог імпорту за прямою URL-адресою файлу.
+    var showUrlImport by remember { mutableStateOf(false) }
+
     LaunchedEffect(state.message) {
         val message = state.message ?: return@LaunchedEffect
         snackbar.showSnackbar(message)
@@ -120,6 +128,9 @@ fun MusicSearchScreen(
                     IconButton(onClick = { picker.launch(arrayOf("audio/*")) }) {
                         Icon(Icons.Default.FolderOpen, contentDescription = "Импортировать свой файл")
                     }
+                    IconButton(onClick = { showUrlImport = true }) {
+                        Icon(Icons.Default.Link, contentDescription = "Імпорт за посиланням")
+                    }
                 },
             )
         },
@@ -130,6 +141,16 @@ fun MusicSearchScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            if (showUrlImport) {
+                UrlImportDialog(
+                    busy = state.importsInProgress,
+                    onImport = { url ->
+                        showUrlImport = false
+                        viewModel.importFromUrl(url)
+                    },
+                    onDismiss = { showUrlImport = false },
+                )
+            }
             OutlinedTextField(
                 value = state.query,
                 onValueChange = viewModel::onQueryChange,
@@ -850,4 +871,61 @@ fun rememberMusicRepository(): MusicRepository {
     return remember(context) {
         (context.applicationContext as AmpsApp).container.musicRepository
     }
+}
+
+/**
+ * 1.1.3: діалог імпорту за прямою URL-адресою. Чесно каже, що застосунок
+ * не шукає по сайтах — він завантажує лише файл, адресу якого користувач
+ * дав сам, і перевіряє, що це справді аудіо, а не сторінка помилки.
+ */
+@Composable
+private fun UrlImportDialog(
+    busy: Boolean,
+    onImport: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var url by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Імпорт за посиланням") },
+        text = {
+            Column {
+                if (busy) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Завантаження…")
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("Пряме посилання на аудіофайл") },
+                        placeholder = { Text("https://…/track.mp3") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Працює з прямими посиланнями на mp3/wav — наприклад, з відкритих " +
+                            "архівів чи власного хостингу. AMPS не збирає музику з піратських " +
+                            "сайтів: файл має бути тим, на який у вас є право.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onImport(url) },
+                enabled = !busy && url.trim().startsWith("http"),
+            ) {
+                Text("Імпортувати")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Скасувати") }
+        },
+    )
 }

@@ -769,6 +769,36 @@ class MusicRepository(
      * file has whatever licence its owner has, and the user fills that in through
      * [setAttribution].
      */
+    /**
+     * 1.1.3: імпорт трека за прямою URL-адресою файлу, яку користувач вставив
+     * сам. Це НЕ скрейпінг сайтів і не пошук: застосунок завантажує лише той
+     * файл, адресу якого користувач дав, і чесно перевіряє, що це аудіо.
+     * Ліцензію застосунок не знає — в атрибуції стоїть сам URL, і
+     * відповідальність за права на файл на тому, хто його вставив.
+     */
+    suspend fun importFromUrl(rawUrl: String): AudioLibraryEntry {
+        val url = rawUrl.trim()
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            throw IOException("Потрібне пряме посилання на файл (http/https)")
+        }
+        val rawName = url.substringAfterLast('/').substringBefore('?').ifBlank { "track" }
+        val title = runCatching { java.net.URLDecoder.decode(rawName, "UTF-8") }
+            .getOrDefault(rawName)
+            .substringBeforeLast('.')
+            .take(80)
+            .ifBlank { "Імпорт" }
+        val track = FreeTrack(
+            source = MusicSource.URL_IMPORT,
+            sourceId = "url-${url.hashCode().toUInt().toString(16)}",
+            title = title,
+            artistName = null,
+            license = MusicLicense(name = "Файл користувача за посиланням", url = url),
+            audioUrl = url,
+            pageUrl = url,
+        )
+        return download(track)
+    }
+
     suspend fun importAudio(uri: Uri): AudioLibraryEntry = withContext(Dispatchers.IO) {
         val resolver = appContext.contentResolver
         val mime = resolver.getType(uri)

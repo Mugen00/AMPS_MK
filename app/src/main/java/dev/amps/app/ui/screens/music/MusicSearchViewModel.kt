@@ -287,6 +287,34 @@ class MusicSearchViewModel(
         }
     }
 
+    /**
+     * 1.1.3: імпорт за прямою URL-адресою файлу, яку користувач вставив сам.
+     * Застосунок не шукає по сайтах — лише завантажує вказаний файл,
+     * перевіряє, що це аудіо, і кладе в бібліотеку з атрибуцією-URL.
+     */
+    fun importFromUrl(url: String) {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            _state.update { it.copy(importsInProgress = true) }
+            runCatching { repository.importFromUrl(trimmed) }
+                .onSuccess { entry ->
+                    _state.update {
+                        it.copy(importsInProgress = false, message = "Імпортовано: ${entry.fileName}")
+                    }
+                    refreshLibrary()
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            importsInProgress = false,
+                            message = "Не вдалося імпортувати: ${error.readableMessage()}",
+                        )
+                    }
+                }
+        }
+    }
+
     fun deleteEntry(id: String) {
         viewModelScope.launch {
             runCatching { repository.deleteEntry(id) }

@@ -24,6 +24,11 @@ data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.DARK,
     /** 1.1.0: базовий URL бекенду (Railway). Якщо порожній — використовується дефолтний. */
     val backendBaseUrl: String = "",
+    /**
+     * 1.1.3: ключ Google AI Studio для AI-аналізу фото (Gemini). Порожній —
+     * функція недоступна. Навмисно без дефолта в коді: публічний репозиторій.
+     */
+    val geminiApiKey: String = "",
 ) {
     companion object {
         /**
@@ -58,6 +63,7 @@ class SettingsStore(private val context: Context) {
         val keepHistory = booleanPreferencesKey("keep_history")
         val themeMode = stringPreferencesKey("theme_mode")
         val backendBaseUrl = stringPreferencesKey("backend_base_url")
+        val geminiApiKey = stringPreferencesKey("gemini_api_key")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -70,6 +76,7 @@ class SettingsStore(private val context: Context) {
                 ?.let { name -> ThemeMode.entries.firstOrNull { it.name == name } }
                 ?: ThemeMode.DARK,
             backendBaseUrl = prefs[Keys.backendBaseUrl]?.takeIf { it.isNotBlank() } ?: "",
+            geminiApiKey = prefs[Keys.geminiApiKey]?.takeIf { it.isNotBlank() } ?: "",
         )
     }
 
@@ -83,6 +90,9 @@ class SettingsStore(private val context: Context) {
 
     /** 1.1.0: базовий URL бекенду для синхронізації та авторизації. */
     suspend fun setBackendBaseUrl(url: String) = put(Keys.backendBaseUrl, url.trim())
+
+    /** 1.1.3: ключ Gemini для AI-аналізу фото; зберігається лише на пристрої. */
+    suspend fun setGeminiApiKey(key: String) = put(Keys.geminiApiKey, key.trim())
 
     private suspend fun <T> put(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) {
         context.dataStore.edit { it[key] = value }

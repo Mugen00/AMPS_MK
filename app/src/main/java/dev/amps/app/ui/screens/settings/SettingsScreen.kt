@@ -30,6 +30,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -106,12 +107,34 @@ fun SettingsScreen(
 
             SectionCard(title = "Ключи API", icon = Icons.Default.VpnKey) {
                 Text(
-                    "Ключей в приложении больше нет. Поиск по картинке идёт через IQDB — он работает без ключа " +
-                        "и без регистрации, поэтому вводить нечего. Jamendo тоже подключён сразу.",
+                    "Пошук по картинке идёт через IQDB — без ключа и регистрации. " +
+                        "Jamendo тоже подключён сразу. Ключ нужен только для AI-анализа фото (Gemini).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = state.geminiApiKey,
+                    onValueChange = viewModel::onGeminiKey,
+                    label = { Text("Ключ Google AI Studio (Gemini)") },
+                    placeholder = { Text("AIza…") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    // 1.1.3: чесно — де взяти ключ і чому він не вшитий у застосунок.
+                    "Безкоштовний ключ видає Google AI Studio (aistudio.google.com/apikey). " +
+                        "Зберігається лише на пристрої: вшивати ключ у публічний APK — подарувати " +
+                        "його чужим ботам, які спалять безкоштовний ліміт.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = viewModel::save,
+                    enabled = state.dirty,
+                ) { Text("Зберегти ключі") }
+                Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Default.CheckCircle,

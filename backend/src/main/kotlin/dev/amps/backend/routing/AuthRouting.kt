@@ -71,6 +71,14 @@ internal suspend fun ApplicationCall.requireUid(): Int? {
 }
 
 /**
+ * 1.1.3: ідентифікатор з JWT без 401 — для публічних маршрутів читання
+ * (гостева стрічка). Немає токена або він невалідний — null, відповідь
+ * формує сам маршрут.
+ */
+internal suspend fun ApplicationCall.optionalUid(): Int? =
+    principal<JWTPrincipal>()?.payload?.getClaim("uid")?.asInt()?.takeIf { it > 0 }
+
+/**
  * Успіх — 200 із повним конвертом; невдача — 400 (409 для конфлікту
  * версій синхронізації). Клієнт читає errorCode у обох випадках.
  * Спільний для auth- і feed-роутингу.

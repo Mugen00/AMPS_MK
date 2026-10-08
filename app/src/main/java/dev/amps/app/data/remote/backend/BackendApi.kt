@@ -195,6 +195,15 @@ class BackendApi private constructor(
         }
 
     /**
+     * 1.1.3: гостева стрічка — та сама адреса, але без токена. Сервер
+     * віддає пости з чистими лічильниками («лайкнуто мною» = false).
+     */
+    suspend fun getFeedPublic(limit: Int = 20, offset: Long = 0): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "feed?limit=$limit&offset=$offset", null, FeedResponse.serializer(), null)
+        }
+
+    /**
      * Публікація поста: текст і вкладення multipart'ом. Вкладення —
      * частини з іменами "photo" (jpg/png/webp/gif, ≤10 МБ) або "video"
      * (mp4/webm/mov, ≤50 МБ); сервер береже розмір ще при читанні.

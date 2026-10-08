@@ -73,14 +73,7 @@ fun Application.feedRoutes(
                 call.respondApi(profileService.setAvatar(uid, upload.bytes))
             }
 
-            // --- стрічка ---
-            get("/feed") {
-                val limit = (call.request.queryParameters["limit"]?.toIntOrNull() ?: 20)
-                    .coerceIn(1, 50)
-                val offset = (call.request.queryParameters["offset"]?.toLongOrNull() ?: 0L)
-                    .coerceAtLeast(0)
-                call.requireUid()?.let { uid -> call.respondApi(feedService.feed(uid, limit, offset)) }
-            }
+            // --- стрічка: створення — лише з токеном ---
             post("/feed") {
                 val uid = call.requireUid() ?: return@post
                 val upload = call.receivePost(media) ?: return@post
@@ -111,6 +104,20 @@ fun Application.feedRoutes(
                         call.respondApi(feedService.toggleRepost(uid, id))
                     }
                 }
+            }
+        }
+
+        // 1.1.3: гостевий режим — читання стрічки публічне. З валідним
+        // токеном сервер іще й повертає «лайкнуто мною»/«репостнув мною»,
+        // без токена — гість бачить чисті лічильники (viewerId = 0).
+        // Лайк, репост і публікація лишаються лише для аутентифікованих.
+        authenticate("auth-jwt", optional = true) {
+            get("/feed") {
+                val limit = (call.request.queryParameters["limit"]?.toIntOrNull() ?: 20)
+                    .coerceIn(1, 50)
+                val offset = (call.request.queryParameters["offset"]?.toLongOrNull() ?: 0L)
+                    .coerceAtLeast(0)
+                call.respondApi(feedService.feed(call.optionalUid() ?: 0, limit, offset))
             }
         }
     }

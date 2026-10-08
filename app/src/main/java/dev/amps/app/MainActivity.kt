@@ -131,6 +131,7 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
         factory = FrameSearchViewModel.Factory(
             repository = container.frameRepository,
             appContext = context.applicationContext,
+            settings = container.settings,
         )
     )
     val wikiViewModel: WikiViewModel = viewModel(factory = WikiViewModel.Factory(container.frameRepository))

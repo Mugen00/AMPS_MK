@@ -16,15 +16,16 @@ data class SettingsUiState(
     val themeMode: ThemeMode = ThemeMode.DARK,
     val importToMediaStore: Boolean = true,
     val keepHistory: Boolean = true,
+    /** 1.1.3: ключ Gemini; порожній — AI-аналіз фото недоступний. */
+    val geminiApiKey: String = "",
     val dirty: Boolean = false,
 )
 
 /**
- * 1.0.5: ключа SauceNAO в настройках больше нет.
- *
- * Раньше он спрашивался сознательно: вшить его в APK — значит отдать кому-то
- * чужую квоту. Теперь вопрос снят целиком — поиском по картинке занимается
- * IQDB, ключ ему не нужен, и вводить пользователю нечего.
+ * 1.0.5: ключа SauceNAO в настройках больше нет — вшивати ключ у APK
+ * означає віддати комусь чужу квоту. 1.1.3 повертає поле ключа навмисно:
+ * Gemini API потребує свого ключа, і він вводиться користувачем у
+ * Налаштуваннях, зберігаючись лише на пристрої (DataStore).
  */
 class SettingsViewModel(
     private val settings: SettingsStore,
@@ -41,6 +42,7 @@ class SettingsViewModel(
                 themeMode = current.themeMode,
                 importToMediaStore = current.importToMediaStore,
                 keepHistory = current.keepSearchHistory,
+                geminiApiKey = current.geminiApiKey,
             )
         }
     }
@@ -49,8 +51,14 @@ class SettingsViewModel(
         _state.value = _state.value.copy(jamendoClientId = value, dirty = true)
     }
 
+    /** 1.1.3: ключ Gemini редагується в тому ж блоці «Ключі API». */
+    fun onGeminiKey(value: String) {
+        _state.value = _state.value.copy(geminiApiKey = value, dirty = true)
+    }
+
     fun save() = viewModelScope.launch {
         settings.setJamendoClientId(_state.value.jamendoClientId)
+        settings.setGeminiApiKey(_state.value.geminiApiKey)
         _state.value = _state.value.copy(dirty = false)
     }
 

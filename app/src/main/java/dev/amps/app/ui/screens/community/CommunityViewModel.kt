@@ -48,12 +48,22 @@ class CommunityViewModel(
     private val _state = MutableStateFlow(CommunityUiState())
     val state: StateFlow<CommunityUiState> = _state.asStateFlow()
 
+    /** 1.1.3: попередній стан входу — щоб побачити перехід «гість → акаунт». */
+    private var lastAuthorized: Boolean? = null
+
     init {
         viewModelScope.launch {
             backendSession.stored.collect { stored ->
-                _state.value = _state.value.copy(authorized = stored != null)
-                if (stored != null && _state.value.items.isEmpty()) {
-                    load()
+                val authorized = stored != null
+                val previous = lastAuthorized
+                lastAuthorized = authorized
+                _state.value = _state.value.copy(authorized = authorized)
+                when {
+                    // Перше завантаження — публічне або з токеном.
+                    previous == null && _state.value.items.isEmpty() -> load()
+                    // Увійшли після гостевого читання — перезавантажуємо,
+                    // щоб сервер повернув «лайкнуто мною»/«репостнув мною».
+                    previous == false && authorized -> load()
                 }
             }
         }
@@ -79,11 +89,18 @@ class CommunityViewModel(
         _state.value = _state.value.copy(error = null, notice = null)
     }
 
-    /** Перше завантаження стрічки (або оновлення після публікації). */
+    /**
+     * Завантаження стрічки: акаунт — з токеном (сервер повертає і його
+     * лайки), гість — публічний запит із чистими лічильниками.
+     */
     fun load() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
-            val result = backendSession.authedCall { header -> backendApi.getFeed(header) }
+            val result = if (_state.value.authorized) {
+                backendSession.authedCall { header -> backendApi.getFeed(header) }
+            } else {
+                backendApi.getFeedPublic()
+            }
             when (result) {
                 is ApiResult.Success -> {
                     val feed = result.data as FeedResponse
@@ -105,8 +122,12 @@ class CommunityViewModel(
         if (current.loadingMore || current.endReached || current.items.isEmpty()) return
         viewModelScope.launch {
             _state.value = current.copy(loadingMore = true)
-            val result = backendSession.authedCall { header ->
-                backendApi.getFeed(header, limit = 20, offset = current.items.size.toLong())
+            val result = if (current.authorized) {
+                backendSession.authedCall { header ->
+                    backendApi.getFeed(header, limit = 20, offset = current.items.size.toLong())
+                }
+            } else {
+                backendApi.getFeedPublic(limit = 20, offset = current.items.size.toLong())
             }
             val feed = (result as? ApiResult.Success)?.data as? FeedResponse
             _state.value = if (feed != null && feed.items.isNotEmpty()) {

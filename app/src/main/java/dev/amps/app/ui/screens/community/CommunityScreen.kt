@@ -97,11 +97,6 @@ fun CommunityScreen(
         }
     }
 
-    if (!state.authorized) {
-        CommunityGate(onOpenAuth = onOpenAuth)
-        return
-    }
-
     // Вибір фото/відео: системні документи, обмеження розміру — при читанні.
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -139,8 +134,9 @@ fun CommunityScreen(
             IconButton(onClick = viewModel::load) {
                 Icon(Icons.Default.Refresh, contentDescription = "Оновити")
             }
-            IconButton(onClick = onOpenProfile) {
-                Icon(Icons.Default.Person, contentDescription = "Мій профіль")
+            // 1.1.3: для гостя кнопка профіля веде на вхід.
+            IconButton(onClick = if (state.authorized) onOpenProfile else onOpenAuth) {
+                Icon(Icons.Default.Person, contentDescription = if (state.authorized) "Мій профіль" else "Увійти")
             }
         }
 
@@ -170,16 +166,21 @@ fun CommunityScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
-                ComposeBar(
-                    state = state,
-                    onTextChange = viewModel::setComposeText,
-                    onPickPhoto = {
-                        photoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp", "image/gif"))
-                    },
-                    onPickVideo = { videoPicker.launch(arrayOf("video/mp4", "video/webm", "video/quicktime")) },
-                    onClearAttachments = viewModel::clearAttachments,
-                    onPublish = viewModel::publish,
-                )
+                if (state.authorized) {
+                    ComposeBar(
+                        state = state,
+                        onTextChange = viewModel::setComposeText,
+                        onPickPhoto = {
+                            photoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp", "image/gif"))
+                        },
+                        onPickVideo = { videoPicker.launch(arrayOf("video/mp4", "video/webm", "video/quicktime")) },
+                        onClearAttachments = viewModel::clearAttachments,
+                        onPublish = viewModel::publish,
+                    )
+                } else {
+                    // 1.1.3: гість читає стрічку без акаунта.
+                    GuestBanner(onOpenAuth = onOpenAuth)
+                }
             }
             if (state.loading && state.items.isEmpty()) {
                 item {
@@ -193,8 +194,13 @@ fun CommunityScreen(
                     item = item,
                     baseUrl = baseUrl,
                     busy = item.post.id in state.busyPostIds,
-                    onLike = { viewModel.toggleLike(item.post.id) },
-                    onRepost = { viewModel.toggleRepost(item.post.id) },
+                    // 1.1.3: гість, натиснувши лайк/репост, попадає на вхід.
+                    onLike = {
+                        if (state.authorized) viewModel.toggleLike(item.post.id) else onOpenAuth()
+                    },
+                    onRepost = {
+                        if (state.authorized) viewModel.toggleRepost(item.post.id) else onOpenAuth()
+                    },
                 )
             }
             if (state.items.isNotEmpty() && !state.endReached) {
@@ -212,36 +218,39 @@ fun CommunityScreen(
     }
 }
 
-/** Заглушка для гостя: Спільнота вимагає акаунта на сервері. */
+/**
+ * 1.1.3: банер гостя — стрічку читають усі, а постити, лайкати й
+ * репостнути можна після входу.
+ */
 @Composable
-private fun CommunityGate(onOpenAuth: () -> Unit) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
+private fun GuestBanner(onOpenAuth: () -> Unit) {
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        Icon(
-            Icons.Default.Groups,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(56.dp),
-        )
-        Spacer(Modifier.height(16.dp))
-        Text("Спільнота доступна після входу на сервер", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Стрічка, лайки, репости і пости з фото та відео — для зареєстрованих користувачів.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(20.dp))
-        Button(onClick = onOpenAuth) { Text("Увійти / Зареєструватися") }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Гостевий режим — читання",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Увійдіть, щоб постити, лайкати і робити репости.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Button(onClick = onOpenAuth) { Text("Увійти") }
+        }
     }
 }
 
-/** Бар складання поста: текст, вкладення, публікація. */
 @Composable
 private fun ComposeBar(
     state: CommunityUiState,

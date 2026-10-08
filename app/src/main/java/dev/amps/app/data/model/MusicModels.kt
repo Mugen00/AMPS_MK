@@ -25,6 +25,12 @@ enum class MusicSource(val label: String, val offersFile: Boolean) {
     OPENVERSE("Openverse", true),
     DEEZER("Deezer", false),
     LOCAL("Свой файл", true),
+    /**
+     * 1.1.3: імпорт за прямою URL-адресою файлу, яку користувач вставив сам.
+     * Це не джерело пошуку: застосунок нічого не шукає і не збирає — лише
+     * завантажує файл, на який користувач вказав сам.
+     */
+    URL_IMPORT("За посиланням", true),
 
     /** Not a source: the bucket for a failure raised by the app itself. */
     AMPS("AMPS", false),

@@ -497,7 +497,10 @@ private fun CodeStep(state: AuthState, viewModel: AuthViewModel, isBackend: Bool
         Spacer(Modifier.height(16.dp))
         OutlinedTextField(
             value = code,
-            onValueChange = { code = code.filter { it.isDigit() }.take(Totp.DIGITS); viewModel.clearError() },
+            // 1.1.3: раніше тут було `code = code.filter { it.isDigit() }` —
+            // внутрішній `it` фільтра затіняв введений рядок, поле мовчало,
+            // і ні email-код реєстрації, ні 2FA-код ввести не вдавалося.
+            onValueChange = { raw -> code = raw.filter { ch -> ch.isDigit() }.take(Totp.DIGITS); viewModel.clearError() },
             label = { Text("Шестизначний код") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(
@@ -526,6 +529,14 @@ private fun CodeStep(state: AuthState, viewModel: AuthViewModel, isBackend: Bool
             },
         )
         TextButton(onClick = { viewModel.cancelCode() }) { Text("Назад") }
+        // 1.1.3: реєстрація і вхід уже видають токени до моменту підтвердження.
+        // Якщо лист не дійшов (наприклад, Resend не налаштований на сервері),
+        // користувач може продовжити — сервер знову запропонує код при вході.
+        if (isBackend && state.pendingBackendType == "EMAIL_VERIFY" && state.backendUser != null) {
+            TextButton(onClick = { viewModel.cancelCode() }) {
+                Text("Продовжити без підтвердження")
+            }
+        }
     }
 }
 
@@ -725,7 +736,9 @@ private fun TotpSetup(
     Spacer(Modifier.height(14.dp))
     OutlinedTextField(
         value = code,
-        onValueChange = { code = code.filter { it.isDigit() }.take(Totp.DIGITS); viewModel.clearError() },
+        // 1.1.3: той самий дефект затінення `it` — код при увімкненні 2FA
+        // не вводився.
+        onValueChange = { raw -> code = raw.filter { ch -> ch.isDigit() }.take(Totp.DIGITS); viewModel.clearError() },
         label = { Text("Код з додатку") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(
