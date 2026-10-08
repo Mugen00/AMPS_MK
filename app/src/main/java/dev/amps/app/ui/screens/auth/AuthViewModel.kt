@@ -149,8 +149,14 @@ class AuthViewModel(
         }
     }
 
+    /**
+     * 1.2.0 fix: перемикання кроків БЕЗ затирання конфігурації. Попередня
+     * версія створювала новий AuthState — і googleConfigured/googleClientId
+     * скидувалися при кожному «Створити акаунт»/«Вже є акаунт», через що
+     * кнопка Google зникала одразу після першого перемикання.
+     */
     fun setMode(mode: AuthState.Mode) {
-        _state.value = AuthState(mode = mode)
+        _state.value = _state.value.copy(mode = mode, error = null, notice = null)
     }
 
     fun clearError() {

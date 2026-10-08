@@ -52,6 +52,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.amps.app.security.Totp
+import kotlinx.coroutines.flow.first
 
 /**
  * 1.1.0: вход, регистрация, двухфакторная защита, синхронізація з бекендом.
@@ -203,11 +204,22 @@ private fun LoginStep(state: AuthState, viewModel: AuthViewModel) {
     }
 }
 
-/** 1.2.0: кнопка входу через Google — лише коли є Client ID у Налаштуваннях. */
+/**
+ * 1.2.0 fix: кнопка Google, САМОДОСТАТНЯ — читає Client ID прямо з
+ * DataStore при вході в композицію. Жодної залежності від того, чи
+ * встигла ViewModel прочитати налаштування: раніше стан збирався
+ * один раз і кнопка зникала після перемикання кроків або взагалі
+ * не з'являлася до перезапуску.
+ */
 @Composable
 private fun GoogleSignInBlock(state: AuthState, viewModel: AuthViewModel) {
-    if (!state.googleConfigured) return
     val context = LocalContext.current
+    var clientId by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        clientId = dev.amps.app.core.SettingsStore(context).settings
+            .first().googleWebClientId
+    }
+    if (clientId.isBlank()) return
     var googlePending by remember { mutableStateOf(false) }
 
     // 1.2.0: тут — лише отримання ID-токена від Credential Manager
@@ -215,7 +227,6 @@ private fun GoogleSignInBlock(state: AuthState, viewModel: AuthViewModel) {
     LaunchedEffect(googlePending) {
         if (!googlePending) return@LaunchedEffect
         googlePending = false
-        val clientId = viewModel.state.value.googleClientId
         if (clientId.isBlank()) return@LaunchedEffect
         try {
             val manager = androidx.credentials.CredentialManager.create(context)
