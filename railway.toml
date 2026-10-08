@@ -3,7 +3,10 @@
 # lives in backend/ and expects the repo root as build context.
 
 [build]
-builder = "dockerfile"
+# 1.1.3: значення чутливе до регістру — "dockerfile" малим регістром Railway
+# відкинув і збирав RAILPACK-ом, який не розуміє монорепо (деплої 1.1.3 падали
+# саме через це).
+builder = "DOCKERFILE"
 dockerfilePath = "backend/Dockerfile"
 
 [deploy]
