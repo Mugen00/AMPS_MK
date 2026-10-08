@@ -133,6 +133,22 @@ class AuthViewModel(
         }
     }
 
+    /**
+     * 1.2.0: перечитує Google Client ID з Налаштувань. Викликається при
+     * КОЖНОМУ відкритті екрана входу: інакше кнопка «Увійти через Google»
+     * з'являлася лише після перезапуску застосунку, бо init читає
+     * налаштування один раз за життя ViewModel.
+     */
+    fun refreshGoogleConfig() {
+        viewModelScope.launch {
+            val settings = settingsStore.settings.first()
+            _state.value = _state.value.copy(
+                googleConfigured = settings.googleWebClientId.isNotBlank(),
+                googleClientId = settings.googleWebClientId,
+            )
+        }
+    }
+
     fun setMode(mode: AuthState.Mode) {
         _state.value = AuthState(mode = mode)
     }

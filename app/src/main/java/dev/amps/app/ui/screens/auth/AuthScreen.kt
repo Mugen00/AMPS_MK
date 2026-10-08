@@ -82,6 +82,10 @@ fun AuthScreen(
         }
     }
 
+    // 1.2.0: перечитуємо Google Client ID при кожному відкритті екрана —
+    // щоб кнопка Google з'являлася одразу після внесення ID у Налаштуваннях.
+    LaunchedEffect(Unit) { viewModel.refreshGoogleConfig() }
+
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             Modifier
