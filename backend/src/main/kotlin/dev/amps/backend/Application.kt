@@ -12,6 +12,7 @@ import dev.amps.backend.model.PostTable
 import dev.amps.backend.model.ProfileTable
 import dev.amps.backend.model.RefreshTokenTable
 import dev.amps.backend.model.RepostTable
+import dev.amps.backend.model.StoryTable
 import dev.amps.backend.model.SyncDataTable
 import dev.amps.backend.model.UserTable
 import dev.amps.backend.model.VerificationCodeTable
@@ -23,6 +24,7 @@ import dev.amps.backend.service.FeedService
 import dev.amps.backend.service.MediaStorage
 import dev.amps.backend.service.ProfileService
 import dev.amps.backend.service.SmsService
+import dev.amps.backend.service.StoryService
 import dev.amps.backend.service.SyncService
 import dev.amps.backend.service.TwoFactorService
 import io.ktor.http.HttpMethod
@@ -63,11 +65,13 @@ fun main() {
     val media = MediaStorage(config)
     val profileService = ProfileService(media)
     val feedService = FeedService(media, profileService)
+    // 1.2.0: сторіс — ті самі папки медіа і той самий профільний сервіс.
+    val storyService = StoryService(config, media, profileService)
 
     initDatabase(config)
 
     embeddedServer(Netty, port = config.port, host = "0.0.0.0") {
-        module(config, authService, twoFactorService, syncService, feedService, profileService, media)
+        module(config, authService, twoFactorService, syncService, feedService, profileService, media, storyService)
     }.start(wait = true)
 }
 
@@ -94,6 +98,7 @@ private fun initDatabase(config: AppConfig) {
             PostMediaTable,
             LikeTable,
             RepostTable,
+            StoryTable,
         )
     }
 }
@@ -106,6 +111,7 @@ fun Application.module(
     feedService: FeedService,
     profileService: ProfileService,
     media: MediaStorage,
+    storyService: StoryService,
 ) {
     install(ContentNegotiation) {
         json(kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
@@ -146,6 +152,6 @@ fun Application.module(
     }
 
     authRoutes(authService, twoFactorService, syncService)
-    // 1.1.2: спільнота, профіль і роздача медіа.
-    feedRoutes(config, feedService, profileService, media)
+    // 1.1.2: спільнота, профіль і роздача медіа; 1.2.0: сторіс у тому ж блоці.
+    feedRoutes(config, feedService, profileService, media, storyService)
 }

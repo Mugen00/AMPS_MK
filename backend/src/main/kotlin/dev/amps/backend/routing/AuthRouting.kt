@@ -30,12 +30,14 @@ import io.ktor.server.routing.routing
 fun Application.authRoutes(auth: AuthService, twoFactor: TwoFactorService, sync: SyncService) {
     routing {
         get("/health") {
-            call.respond(mapOf("status" to "ok", "version" to "1.1.3"))
+            call.respond(mapOf("status" to "ok", "version" to "1.2.0"))
         }
 
         route("/auth") {
             post("/register") { call.respondApi(auth.register(call.receive())) }
             post("/login") { call.respondApi(auth.login(call.receive())) }
+            // 1.2.0: вхід/реєстрація через Google — ID-токен Credential Manager.
+            post("/google") { call.respondApi(auth.googleLogin(call.receive())) }
             post("/verify") { call.respondApi(auth.verifyCode(call.receive())) }
             post("/password/reset") { call.respondApi(auth.requestPasswordReset(call.receive())) }
             post("/password/reset/confirm") { call.respondApi(auth.confirmPasswordReset(call.receive())) }

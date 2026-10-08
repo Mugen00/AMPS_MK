@@ -20,6 +20,7 @@ import dev.amps.backend.model.UserTable
 import dev.amps.backend.model.VerificationCodeEntity
 import dev.amps.backend.model.VerificationCodeTable
 import dev.amps.backend.model.info
+import kotlinx.serialization.json.jsonObject
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
@@ -197,6 +198,78 @@ class AuthService(
         ok(user.info())
     }
 
+    /**
+     * 1.2.0: вхід/реєстрація через Google. ID-токен від Credential Manager
+     * перевіряється через офіційний tokeninfo-ендпоінт Google — той
+     * валідує підпис JWK сам; залишається звірити "aud" (чиїй заявці
+     * довіряємо), email_verified і строк дії.
+     *
+     * Акаунт за Google-поштою знаходиться або створюється одразу
+     * підтвердженим: email вже підтвердив сам Google. Пароль такому
+     * акаунту не потрібен — у хеш записується випадкове значення,
+     * яке ніхто не знає; вхід можливий лише через Google або скидання
+     * пароля на цей email.
+     */
+    suspend fun googleLogin(request: dev.amps.backend.model.GoogleAuthRequest): ApiResponse<TokenResponse> {
+        if (config.googleClientIds.isEmpty()) {
+            return ApiResponse.fail<TokenResponse>(
+                "Вхід через Google не налаштований на сервері (GOOGLE_CLIENT_IDS)", "GOOGLE_NOT_CONFIGURED")
+        }
+        val payload = googleTokenInfo(request.idToken)
+            ?: return ApiResponse.fail<TokenResponse>("Токен Google недійсний", "BAD_GOOGLE_TOKEN")
+        val aud = payload["aud"] ?: return ApiResponse.fail<TokenResponse>(
+            "Токен без aud", "BAD_GOOGLE_TOKEN")
+        if (aud !in config.googleClientIds) {
+            return ApiResponse.fail<TokenResponse>(
+                "Токен видано для іншого застосунку", "BAD_AUDIENCE")
+        }
+        if (payload["email_verified"] != "true") {
+            return ApiResponse.fail<TokenResponse>(
+                "Email у Google не підтверджений", "EMAIL_NOT_VERIFIED")
+        }
+        val email = payload["email"] ?: return ApiResponse.fail<TokenResponse>(
+            "Токен без email", "NO_EMAIL")
+        val expSeconds = payload["exp"]?.toLongOrNull()
+            ?: return ApiResponse.fail<TokenResponse>("Токен без строку дії", "BAD_GOOGLE_TOKEN")
+        if (expSeconds * 1000 < System.currentTimeMillis()) {
+            return ApiResponse.fail<TokenResponse>("Токен прострочений", "EXPIRED_TOKEN")
+        }
+        val now = System.currentTimeMillis()
+        return newSuspendedTransaction {
+            val existing = UserEntity.find { UserTable.email eq email }.firstOrNull()
+            if (existing != null) {
+                if (!existing.emailVerified) {
+                    // Email підтверджений самим Google — ставимо прапорець.
+                    existing.emailVerified = true
+                    existing.updatedAt = now
+                }
+                ok(tokens(existing))
+            } else {
+                // Новий користувач: логін із префікса пошти; якщо зайнятий —
+                // додаємо випадкове число. Пароль — випадкові 256 біт:
+                // увійти за паролем такий акаунт не може, лише через Google.
+                var candidate = email.substringBefore('@')
+                    .filter { it.isLetterOrDigit() }.take(40).ifBlank { "google-user" }
+                while (UserEntity.find { UserTable.login eq candidate }.any()) {
+                    candidate = candidate.take(34) + "-" + random.nextInt(1000)
+                }
+                val user = UserEntity.new {
+                    login = candidate
+                    this.email = email
+                    phone = null
+                    passwordHash = BCrypt.hashpw(randomToken(), BCrypt.gensalt())
+                    emailVerified = true
+                    phoneVerified = false
+                    twoFactorEnabled = false
+                    twoFactorSecret = null
+                    createdAt = now
+                    updatedAt = now
+                }
+                ok(tokens(user))
+            }
+        }
+    }
+
     // ===== Внутрішнє =====
 
     private fun tokens(user: UserEntity): TokenResponse {
@@ -247,4 +320,29 @@ class AuthService(
 
     private fun ByteArray.toHexString(): String =
         joinToString("") { "%02x".format(it) }
+
+    /**
+     * 1.2.0: звертається до офіційного tokeninfo Google. Успіх — мапа
+     * полів токена (aud, email, email_verified, exp, sub); будь-яка
+     * невдача (мережа, код != 200, кривий JSON) — null, і клієнт
+     * отримує чесну «Токен Google недійсний».
+     */
+    private fun googleTokenInfo(idToken: String): Map<String, String>? = runCatching {
+        val encoded = java.net.URLEncoder.encode(idToken, "UTF-8")
+        val conn = java.net.URI("https://oauth2.googleapis.com/tokeninfo?id_token=$encoded")
+            .toURL()
+            .openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 10_000
+        conn.readTimeout = 10_000
+        conn.requestMethod = "GET"
+        if (conn.responseCode != 200) {
+            conn.disconnect()
+            return null
+        }
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        val obj = kotlinx.serialization.json.Json.parseToJsonElement(body).jsonObject
+        obj.entries.associate { (k, v) ->
+            k to (v as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+        }
+    }.getOrNull()
 }

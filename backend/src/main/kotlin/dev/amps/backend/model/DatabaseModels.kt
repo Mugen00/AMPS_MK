@@ -186,3 +186,28 @@ class RepostEntity(id: EntityID<Int>) : IntEntity(id) {
     var postId by RepostTable.postId
     var createdAt by RepostTable.createdAt
 }
+
+// ===== Сторіс (1.2.0): фото/відео на 24 години =====
+object StoryTable : IntIdTable("stories") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    // "photo" | "video"
+    val kind = varchar("kind", 8)
+    // Ім'я файлу у сховищі медіа (UUID); віддається за /media/{kind}/{file}
+    val fileName = varchar("file_name", 100)
+    val createdAt = long("created_at")
+    val expiresAt = long("expires_at")
+
+    init {
+        index(false, userId, createdAt)
+    }
+}
+
+class StoryEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<StoryEntity>(StoryTable)
+
+    var userId by StoryTable.userId
+    var kind by StoryTable.kind
+    var fileName by StoryTable.fileName
+    var createdAt by StoryTable.createdAt
+    var expiresAt by StoryTable.expiresAt
+}

@@ -30,6 +30,16 @@ class AppConfig(
      * Локально, якщо /data недоступний, сховище падає в ./data.
      */
     val mediaDir: String = env("MEDIA_DIR") ?: defaultMediaDir(),
+
+    /**
+     * 1.2.0: допустимі client ID для входу через Google. Список через
+     * кому: Web-клієнт застосунку та, за потреби, Android-клієнти.
+     * ID-токен від Credential Manager приймається, лише якщо його "aud"
+     * входить у цей список — інакше чужий токен від іншого проєкту
+     * пройшов би перевірку підпису.
+     */
+    val googleClientIds: List<String> =
+        env("GOOGLE_CLIENT_IDS")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
 ) {
 
     /** Термін життя access-токена: 30 хвилин. */
@@ -40,6 +50,9 @@ class AppConfig(
 
     /** Термін життя кодів підтвердження: 10 хвилин. */
     val codeExpiryMillis: Long = 10L * 60 * 1000
+
+    /** 1.2.0: термін життя сторіс — 24 години, після чого зникає сама. */
+    val storyTtlMillis: Long = 24L * 60 * 60 * 1000
 
     /** JDBC-адреса, зібрана з Railway-рядка postgresql://user:pass@host:port/db */
     val jdbcUrl: String

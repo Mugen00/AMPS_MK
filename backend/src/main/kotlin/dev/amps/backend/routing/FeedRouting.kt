@@ -19,6 +19,7 @@ import io.ktor.server.request.receive
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondFile
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
@@ -42,6 +43,7 @@ fun Application.feedRoutes(
     feedService: FeedService,
     profileService: ProfileService,
     media: MediaStorage,
+    stories: dev.amps.backend.service.StoryService,
 ) {
     routing {
         // Роздача медіа — публічна: імена файлів — невгадувані UUID.
@@ -105,6 +107,34 @@ fun Application.feedRoutes(
                     }
                 }
             }
+
+            // --- сторіс (1.2.0): публікація і видалення — лише свої ---
+            post("/stories") {
+                val uid = call.requireUid() ?: return@post
+                val upload = call.receiveStory(media) ?: return@post
+                call.respondApi(stories.create(uid, upload.kind, upload.fileName))
+            }
+            delete("/stories/{id}") {
+                call.requireUid()?.let { uid ->
+                    val id = call.parameters["id"]?.toIntOrNull()
+                    if (id == null) {
+                        call.respond(
+                            HttpStatusCode.BadRequest,
+                            ApiError(error = "Невірний ідентифікатор сторіс"),
+                        )
+                    } else {
+                        val removed = stories.delete(uid, id)
+                        if (removed) {
+                            call.respond(dev.amps.backend.model.ApiResponse(success = true, data = true))
+                        } else {
+                            call.respond(
+                                HttpStatusCode.NotFound,
+                                ApiError(error = "Сторіс не знайдено (або це не ваша)", errorCode = "NO_STORY"),
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // 1.1.3: гостевий режим — читання стрічки публічне. З валідним
@@ -118,6 +148,13 @@ fun Application.feedRoutes(
                 val offset = (call.request.queryParameters["offset"]?.toLongOrNull() ?: 0L)
                     .coerceAtLeast(0)
                 call.respondApi(feedService.feed(call.optionalUid() ?: 0, limit, offset))
+            }
+
+            // 1.2.0: сторіс видно всім — як і стрічку; лише живі, свіжі зверху.
+            get("/stories") {
+                call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                    dev.amps.backend.model.StoriesResponse(stories.list())
+                ))
             }
         }
     }
@@ -242,4 +279,84 @@ private suspend fun ByteReadChannel.readCapped(cap: Long): ByteArray? {
     val buffer = readBuffer((cap + 1).toInt())
     val bytes = buffer.readByteArray()
     return if (bytes.size.toLong() > cap) null else bytes
+}
+
+/** Сторіс до запису в базу: вид і вже збережене ім'я файлу. */
+internal data class StoryUpload(val kind: String, val fileName: String)
+
+/**
+ * 1.2.0: читає multipart-запит сторіс — один файл "photo" або "video".
+ * Ліміти ті самі, що в постів (фото 10 МБ, відео 50 МБ), білий список
+ * розширень спільний зі стрічкою; файл кладеться у сховище одразу тут.
+ */
+private suspend fun ApplicationCall.receiveStory(media: MediaStorage): StoryUpload? {
+    var kind: String? = null
+    var fileName: String? = null
+    var tooLarge = false
+    var failed = false
+    try {
+        receiveMultipart().forEachPart { part ->
+            when (part) {
+                is PartData.FormItem -> Unit // текст у сторіс немає: лише медіа
+                is PartData.FileItem -> {
+                    if (kind == null && !tooLarge && !failed) {
+                        val fileKind = when (part.name) {
+                            "photo" -> MediaStorage.KIND_PHOTO
+                            "video" -> MediaStorage.KIND_VIDEO
+                            else -> null
+                        }
+                        if (fileKind != null) {
+                            val cap = if (fileKind == MediaStorage.KIND_VIDEO) {
+                                AppConfig.MAX_VIDEO_BYTES
+                            } else {
+                                AppConfig.MAX_PHOTO_BYTES
+                            }
+                            val bytes = part.provider().readCapped(cap)
+                            val ext = media.extensionOf(part.originalFileName, part.contentType?.toString(), fileKind)
+                            when {
+                                bytes == null -> tooLarge = true
+                                ext == null -> Unit // не зображення і не відео — пропускається
+                                else -> {
+                                    val name = media.save(fileKind, bytes, ext)
+                                    if (name == null) failed = true else {
+                                        kind = fileKind
+                                        fileName = name
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                else -> Unit
+            }
+            part.dispose()
+        }
+    } catch (e: Throwable) {
+        respond(HttpStatusCode.BadRequest, ApiError(error = "Не вдалося прочитати запит", errorCode = "BAD_UPLOAD"))
+        return null
+    }
+    when {
+        tooLarge -> {
+            respond(
+                HttpStatusCode.PayloadTooLarge,
+                ApiError(error = "Сторіс більша за дозволений ліміт (фото 10 МБ, відео 50 МБ)", errorCode = "TOO_LARGE"),
+            )
+            return null
+        }
+        failed -> {
+            respond(
+                HttpStatusCode.InternalServerError,
+                ApiError(error = "Сховище медіа недоступне", errorCode = "MEDIA_UNAVAILABLE"),
+            )
+            return null
+        }
+        kind == null -> {
+            respond(
+                HttpStatusCode.BadRequest,
+                ApiError(error = "Файл сторіс не знайдено (part 'photo' або 'video')", errorCode = "NO_FILE"),
+            )
+            return null
+        }
+    }
+    return StoryUpload(kind!!, fileName!!)
 }

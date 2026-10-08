@@ -98,6 +98,15 @@ data class RefreshRequest(
     val refreshToken: String
 )
 
+/**
+ * 1.2.0: вхід через Google. Клієнт (Credential Manager) отримує
+ * ID-токен, сервер перевіряє підпис через tokeninfo Google і "aud".
+ */
+@Serializable
+data class GoogleAuthRequest(
+    val idToken: String
+)
+
 @Serializable
 data class UnitResult(
     val success: Boolean = true
@@ -228,4 +237,26 @@ data class RepostResponse(
 @Serializable
 data class PostCreatedResponse(
     val postId: Int
+)
+
+// ===== Сторіс (1.2.0) =====
+
+/** Одна сторіс: медіа за відносним URL і час зникнення. */
+@Serializable
+data class StoryDto(
+    val id: Int,
+    val author: ProfileDto,
+    /** "photo" | "video" */
+    val kind: String,
+    /** Відносний шлях: /media/{kind}/{file}; клієнт додає адресу сервера. */
+    val url: String,
+    val createdAt: Long,
+    val expiresAt: Long,
+    /** Уже прострочена? Сервер віддає лише живі, але клієнт перевіряє сам. */
+    val expired: Boolean = false
+)
+
+@Serializable
+data class StoriesResponse(
+    val stories: List<StoryDto>
 )
