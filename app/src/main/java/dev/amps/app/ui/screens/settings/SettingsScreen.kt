@@ -129,6 +129,23 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Spacer(Modifier.height(14.dp))
+                // 1.2.0: Web Client ID для входу через Google.
+                OutlinedTextField(
+                    value = state.googleWebClientId,
+                    onValueChange = viewModel::onGoogleClientId,
+                    label = { Text("Google Client ID (Web)") },
+                    placeholder = { Text("1234567890-abc.apps.googleusercontent.com") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Ідентифікатор Web-клієнта з Google Cloud Console (APIs & Services → Credentials). " +
+                        "Він же треба у GOOGLE_CLIENT_IDS на сервері. Це публічний ID, не секрет: " +
+                        "без нього кнопка «Увійти через Google» просто захована.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Spacer(Modifier.height(10.dp))
                 Button(
                     onClick = viewModel::save,

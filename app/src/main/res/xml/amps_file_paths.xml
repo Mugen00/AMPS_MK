@@ -12,4 +12,8 @@
 -->
 <paths>
     <external-files-path name="updates" path="updates/" />
+    <!-- 1.2.0: чернетки сторіс — камера пише знімок/відео сюди через
+         content:// URI (file:// на API 24+ заборонений), файл віддається
+         лише системній камері на час зйомки. -->
+    <cache-path name="camera" path="camera/" />
 </paths>

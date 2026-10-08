@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -55,6 +56,16 @@ data class AuthState(
      * збереженої сесії, щоб випадкове відкриття екрана не викидало людей.
      */
     val justAuthenticated: Boolean = false,
+    /**
+     * 1.2.0: чи налаштований Google Client ID у Налаштуваннях. Кнопка
+     * «Увійти через Google» показується лише коли він є — без нього
+     * Credential Manager видасть помилку ще до запиту до сервера.
+     */
+    val googleConfigured: Boolean = false,
+    /** 1.2.0: сам Client ID — для Credential Manager (serverClientId). */
+    val googleClientId: String = "",
+    /** 1.2.0: чи триває обмін Google ID-токена на токени бекенду. */
+    val googleBusy: Boolean = false,
 ) {
     enum class Mode { LOGIN, REGISTER, SECURITY, PASSWORD_RESET }
 
@@ -110,6 +121,14 @@ class AuthViewModel(
             _state.value = _state.value.copy(
                 mode = AuthState.Mode.SECURITY,
                 backendUser = BackendUser(fresh.accessToken, fresh.refreshToken, userInfo),
+            )
+        }
+        // 1.2.0: Google Client ID береться з Налаштувань — публічний ідентифікатор.
+        viewModelScope.launch {
+            val settings = settingsStore.settings.first()
+            _state.value = _state.value.copy(
+                googleConfigured = settings.googleWebClientId.isNotBlank(),
+                googleClientId = settings.googleWebClientId,
             )
         }
     }
@@ -203,6 +222,44 @@ class AuthViewModel(
             is ApiResult.Failure -> _state.value = _state.value.copy(busy = false, error = result.error)
             is ApiResult.NetworkError -> _state.value = _state.value.copy(busy = false, error = result.message)
         }
+    }
+
+    // ===== Google (1.2.0) =====
+
+    /**
+     * Вхід/реєстрація через Google. [idToken] — ID-токен від Credential
+     * Manager; сервер перевіряє його через tokeninfo і або знаходить
+     * акаунт за email, або створює. Google-акаунт створюється одразу
+     * підтвердженим — підтверджувати email не треба.
+     */
+    fun googleSignIn(idToken: String) {
+        if (_state.value.busy || _state.value.googleBusy) return
+        _state.value = _state.value.copy(googleBusy = true, error = null, notice = null)
+        viewModelScope.launch {
+            val result = backendApi.googleAuth(idToken)
+            if (result is ApiResult.Failure) {
+                _state.value = _state.value.copy(googleBusy = false, error = result.error)
+                return@launch
+            }
+            if (result is ApiResult.NetworkError) {
+                _state.value = _state.value.copy(googleBusy = false, error = result.message)
+                return@launch
+            }
+            val tokens = (result as ApiResult.Success).data as TokenResponse
+            viewModelScope.launch { backendSession.save(tokens) }
+            _state.value = AuthState(
+                mode = AuthState.Mode.SECURITY,
+                backendUser = BackendUser(tokens.accessToken, tokens.refreshToken, tokens.user),
+                notice = "Вхід через Google успішний.",
+                // Email уже підтверджений самим Google — одразу у Спільноту.
+                justAuthenticated = true,
+            )
+        }
+    }
+
+    /** 1.2.0: помилка на боці пристрою — Credential Manager не віддав токен. */
+    fun googleFailed(message: String) {
+        _state.value = _state.value.copy(googleBusy = false, error = message)
     }
 
     // ===== Backend code verification (email/phone/password reset) =====

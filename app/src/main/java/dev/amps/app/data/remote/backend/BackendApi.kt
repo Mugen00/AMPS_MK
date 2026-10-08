@@ -234,6 +234,63 @@ class BackendApi private constructor(
         execute("POST", "feed/$postId/repost", null, RepostResponse.serializer(), authHeader)
     }
 
+    // ===== Сторіс (1.2.0) =====
+
+    /** Живі сторіс усіх користувачів; публічно — як і стрічка. */
+    suspend fun getStories(): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "stories", null, StoriesResponse.serializer(), null)
+    }
+
+    /**
+     * Публікація сторіс: один файл "photo" (≤10 МБ) або "video" (≤50 МБ).
+     * Живе 24 години, потім зникає і в списку, і зі сховища сервера.
+     */
+    suspend fun createStory(
+        authHeader: String,
+        kind: String,
+        bytes: ByteArray,
+    ): ApiResult = withContext(Dispatchers.IO) {
+        val isVideo = kind == "video"
+        val part = MultipartPart(
+            name = kind,
+            filename = if (isVideo) "story.mp4" else "story.jpg",
+            contentType = if (isVideo) "video/mp4" else "image/jpeg",
+            bytes = bytes,
+        )
+        executeMultipart("stories", authHeader, listOf(part), StoryDto.serializer())
+    }
+
+    suspend fun deleteStory(authHeader: String, storyId: Int): ApiResult = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(baseUrl + "stories/$storyId")
+            .delete()
+            .addHeader("Authorization", authHeader)
+            .build()
+        try {
+            client.newCall(request).execute().use { response ->
+                val bodyString = response.body?.string() ?: ""
+                if (response.isSuccessful) ApiResult.Success(UnitResult(true)) else {
+                    val envelope = runCatching { json.decodeFromString(Envelope.serializer(), bodyString) }.getOrNull()
+                    ApiResult.Failure(
+                        response.code,
+                        envelope?.error ?: "Сторіс не знайдено",
+                        envelope?.errorCode,
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            ApiResult.NetworkError(e.message ?: "Мережева помилка")
+        }
+    }
+
+    // ===== Google (1.2.0) =====
+
+    /** Вхід/реєстрація через Google: ID-токен перевіряє сервер. */
+    suspend fun googleAuth(idToken: String): ApiResult = withContext(Dispatchers.IO) {
+        val body = json.encodeToString(GoogleAuthRequest.serializer(), GoogleAuthRequest(idToken))
+        execute("POST", "auth/google", body, TokenResponse.serializer(), null)
+    }
+
     // ===== Core =====
 
     /**

@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
@@ -48,9 +49,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -97,7 +102,7 @@ fun CommunityScreen(
         }
     }
 
-    // Вибір фото/відео: системні документи, обмеження розміру — при читанні.
+    // Вибір фото/відео для поста: системні документи, обмеження розміру — при читанні.
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -115,106 +120,279 @@ fun CommunityScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        // --- заголовок ---
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-        ) {
-            Icon(Icons.Default.Groups, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(10.dp))
-            Text(
-                "Спільнота",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = viewModel::load) {
-                Icon(Icons.Default.Refresh, contentDescription = "Оновити")
-            }
-            // 1.1.3: для гостя кнопка профіля веде на вхід.
-            IconButton(onClick = if (state.authorized) onOpenProfile else onOpenAuth) {
-                Icon(Icons.Default.Person, contentDescription = if (state.authorized) "Мій профіль" else "Увійти")
-            }
-        }
+    // ===== Сторіс (1.2.0): камера телефону =====
 
-        if (state.error != null) {
-            Text(
-                state.error!!,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-        }
-        if (state.notice != null) {
-            Text(
-                state.notice!!,
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-        }
+    // Чернетки сторіс: камера пише у приватний cache/camera через FileProvider
+    // (file:// на API 24+ заборонений). Фіксовані імена: кожен дубль перезаписує.
+    val storyShotDir = remember { java.io.File(context.cacheDir, "camera").apply { mkdirs() } }
+    val storyPhotoFile = remember { java.io.File(storyShotDir, "story.jpg") }
+    val storyVideoFile = remember { java.io.File(storyShotDir, "story.mp4") }
+    // Що знімати після дозволу камери: true — відео, false — фото.
+    var pendingStoryVideo by remember { mutableStateOf(false) }
 
-        // --- стрічка ---
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                horizontal = 16.dp, vertical = 8.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            item {
-                if (state.authorized) {
-                    ComposeBar(
-                        state = state,
-                        onTextChange = viewModel::setComposeText,
-                        onPickPhoto = {
-                            photoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp", "image/gif"))
-                        },
-                        onPickVideo = { videoPicker.launch(arrayOf("video/mp4", "video/webm", "video/quicktime")) },
-                        onClearAttachments = viewModel::clearAttachments,
-                        onPublish = viewModel::publish,
-                    )
-                } else {
-                    // 1.1.3: гість читає стрічку без акаунта.
-                    GuestBanner(onOpenAuth = onOpenAuth)
+    val photoStoryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture(),
+    ) { ok ->
+        if (ok) {
+            val bytes = storyPhotoFile.takeIf { it.length() in 1..10L * 1024 * 1024 }?.readBytes()
+            if (bytes != null) viewModel.publishStory("photo", bytes)
+            else viewModel.publishStoryFailed("Знімок порожній або завеликий (ліміт 10 МБ)")
+        }
+    }
+    val videoStoryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakeVideo(),
+    ) { thumb ->
+        // TakeVideo повертає Bitmap-прев'ю (null — запис не відбувся);
+        // саме відео лежить у файлі за EXTRA_OUTPUT.
+        if (thumb != null) {
+            // TakeVideo не вміє ліміт тривалості — чесна межа лише за розміром.
+            val bytes = storyVideoFile.takeIf { it.length() in 1..50L * 1024 * 1024 }?.readBytes()
+            if (bytes != null) viewModel.publishStory("video", bytes)
+            else viewModel.publishStoryFailed("Відео порожнє або завелике (ліміт 50 МБ)")
+        }
+    }
+
+    // Дозвіл камери: після згоди запускаємо ту зйомку, що була запрошена.
+    val cameraPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.updates",
+                if (pendingStoryVideo) storyVideoFile else storyPhotoFile,
+            )
+            if (pendingStoryVideo) videoStoryLauncher.launch(uri) else photoStoryLauncher.launch(uri)
+        } else {
+            viewModel.publishStoryFailed("Без дозволу на камеру сторіс не зняти")
+        }
+    }
+
+    fun startStoryCapture(isVideo: Boolean) {
+        pendingStoryVideo = isVideo
+        val file = if (isVideo) storyVideoFile else storyPhotoFile
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.updates", file,
+        )
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            if (isVideo) videoStoryLauncher.launch(uri) else photoStoryLauncher.launch(uri)
+        } else {
+            cameraPermission.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    // 1.2.0: стан панелі поста й меню сторіс.
+    var showCompose by remember { mutableStateOf(false) }
+    var showStoryMenu by remember { mutableStateOf(false) }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+
+    // Вибір фото для сторіс із галереї (минути камеру).
+    val storyPhotoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            readBytesCapped(context, uri, maxBytes = 10L * 1024 * 1024)
+                ?.let { viewModel.publishStory("photo", it) }
+                ?: viewModel.publishStoryFailed("Фото завелике (ліміт 10 МБ)")
+        }
+    }
+
+    // FAB і діалоги лежать у Box, який обгортає всю колонку, — інакше
+    // align(BottomEnd) не працює.
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            // --- заголовок ---
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Icon(Icons.Default.Groups, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Спільнота",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = viewModel::load) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Оновити")
+                }
+                // 1.1.3: для гостя кнопка профіля веде на вхід.
+                IconButton(onClick = if (state.authorized) onOpenProfile else onOpenAuth) {
+                    Icon(Icons.Default.Person, contentDescription = if (state.authorized) "Мій профіль" else "Увійти")
                 }
             }
-            if (state.loading && state.items.isEmpty()) {
-                item {
-                    Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                }
-            }
-            items(state.items, key = { "${it.kind}-${it.post.id}-${it.at}" }) { item ->
-                FeedItemCard(
-                    item = item,
-                    baseUrl = baseUrl,
-                    busy = item.post.id in state.busyPostIds,
-                    // 1.1.3: гість, натиснувши лайк/репост, попадає на вхід.
-                    onLike = {
-                        if (state.authorized) viewModel.toggleLike(item.post.id) else onOpenAuth()
-                    },
-                    onRepost = {
-                        if (state.authorized) viewModel.toggleRepost(item.post.id) else onOpenAuth()
-                    },
+
+            if (state.error != null) {
+                Text(
+                    state.error!!,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp),
                 )
             }
-            if (state.items.isNotEmpty() && !state.endReached) {
+            if (state.notice != null) {
+                Text(
+                    state.notice!!,
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+
+            // 1.1.3: сторіс завантажуються разом зі стрічкою — публічні.
+            LaunchedEffect(Unit) { viewModel.loadStories() }
+
+            // 1.2.0: панель поста — за кнопкою «+» (FAB): раніше ComposeBar
+            // був першим рядком стрічки і прокручувався геть, тому кнопки
+            // постинга на екрані взагалі не було видно.
+            if (state.authorized && showCompose) {
+                ComposeBar(
+                    state = state,
+                    onTextChange = viewModel::setComposeText,
+                    onPickPhoto = {
+                        photoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp", "image/gif"))
+                    },
+                    onPickVideo = { videoPicker.launch(arrayOf("video/mp4", "video/webm", "video/quicktime")) },
+                    onClearAttachments = viewModel::clearAttachments,
+                    onPublish = {
+                        viewModel.publish()
+                        showCompose = false
+                    },
+                    onClose = { showCompose = false },
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // --- стрічка ---
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 16.dp, vertical = 8.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                // 1.2.0: рядок сторіс — аватарки з кнопкою «+» першою.
                 item {
-                    TextButton(
-                        onClick = viewModel::loadMore,
-                        enabled = !state.loadingMore,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(if (state.loadingMore) "Завантаження…" else "Показати ще")
+                    StoriesRow(
+                        state = state,
+                        baseUrl = baseUrl,
+                        onAddStory = {
+                            if (state.authorized) showStoryMenu = true else onOpenAuth()
+                        },
+                        onOpenStory = { storyId -> viewModel.openStory(storyId) },
+                    )
+                }
+                if (state.loading && state.items.isEmpty()) {
+                    item {
+                        Box(Modifier.fillMaxWidth().padding(32.dp), Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                }
+                items(state.items, key = { "${it.kind}-${it.post.id}-${it.at}" }) { item ->
+                    FeedItemCard(
+                        item = item,
+                        baseUrl = baseUrl,
+                        busy = item.post.id in state.busyPostIds,
+                        // 1.1.3: гість, натиснувши лайк/репост, попадає на вхід.
+                        onLike = {
+                            if (state.authorized) viewModel.toggleLike(item.post.id) else onOpenAuth()
+                        },
+                        onRepost = {
+                            if (state.authorized) viewModel.toggleRepost(item.post.id) else onOpenAuth()
+                        },
+                    )
+                }
+                if (state.items.isNotEmpty() && !state.endReached) {
+                    item {
+                        TextButton(
+                            onClick = viewModel::loadMore,
+                            enabled = !state.loadingMore,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (state.loadingMore) "Завантаження…" else "Показати ще")
+                        }
                     }
                 }
             }
         }
+
+        // --- FAB: помітна кнопка постинга (1.2.0) ---
+        androidx.compose.material3.FloatingActionButton(
+            onClick = {
+                if (state.authorized) showCompose = !showCompose else onOpenAuth()
+            },
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(20.dp),
+        ) {
+            Icon(
+                if (showCompose) Icons.Default.Close else Icons.Default.Add,
+                contentDescription = if (showCompose) "Сховати поле поста" else "Написати пост",
+            )
+        }
+    }
+
+    // --- меню «+» на сторіс: камера чи галерея ---
+    if (showStoryMenu) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showStoryMenu = false },
+            title = { Text("Нова сторіс") },
+            text = {
+                Column {
+                    Text(
+                        "Сторіс живе 24 години і потім зникає сама. " +
+                            "Фото — до 10 МБ, відео — до 50 МБ.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    if (state.storyUploading) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Публікація…")
+                        }
+                    } else {
+                        TextButton(onClick = { showStoryMenu = false; startStoryCapture(false) }) {
+                            Text("Зняти фото на камеру")
+                        }
+                        TextButton(onClick = { showStoryMenu = false; startStoryCapture(true) }) {
+                            Text("Записати відео (камера)")
+                        }
+                        TextButton(onClick = {
+                            showStoryMenu = false
+                            storyPhotoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp"))
+                        }) {
+                            Text("Вибрати фото з галереї")
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showStoryMenu = false }) { Text("Скасувати") }
+            },
+        )
+    }
+
+    // --- переглядач сторіс ---
+    val openId = state.openStoryId
+    if (openId != null) {
+        StoriesViewer(
+            stories = state.stories,
+            baseUrl = baseUrl,
+            startId = openId,
+            onClose = { viewModel.openStory(null) },
+        )
     }
 }
 
@@ -251,6 +429,270 @@ private fun GuestBanner(onOpenAuth: () -> Unit) {
     }
 }
 
+/**
+ * 1.2.0: рядок сторіс — кружечок «+» першим, потім по кружечку на автора.
+ * Сторіс публічні, як стрічка: гість теж бачить кружечки.
+ */
+@Composable
+private fun StoriesRow(
+    state: CommunityUiState,
+    baseUrl: String,
+    onAddStory: () -> Unit,
+    onOpenStory: (Int) -> Unit,
+) {
+    // Один кружечок на автора: сторіс групуються за userId, порядок —
+    // за найсвіжішою сторіс автора (сервер і так віддає свіжі зверху).
+    val groups = state.stories
+        .groupBy { it.author.userId }
+        .map { it.value }
+    androidx.compose.foundation.lazy.LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        item {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                        .clickable { onAddStory() },
+                ) {
+                    if (state.storyUploading) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = "Додати сторіс",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Моя",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        items(groups.size) { index ->
+            val group = groups[index]
+            val first = group.first()
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.clickable { onOpenStory(first.id) },
+            ) {
+                StoryCircle(author = first.author, baseUrl = baseUrl)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    first.author.displayName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/** Кружечок автора сторіс: аватар або перша літера, з кільцем-виділенням. */
+@Composable
+private fun StoryCircle(
+    author: dev.amps.app.data.remote.backend.dto.ProfileDto,
+    baseUrl: String,
+) {
+    Box(
+        modifier = Modifier
+            .size(60.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primary)
+            .padding(2.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface),
+        ) {
+            if (author.avatarPath != null) {
+                AsyncImage(
+                    model = absoluteMediaUrl(baseUrl, author.avatarPath),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    Text(
+                        author.displayName.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 1.2.0: повноекранний переглядач сторіс. Фото — 5 секунд з прогресом,
+ * відео — кнопкою у системний плеєр (ExoPlayer у збірці немає, це чесно
+ * зафіксовано). Тап справа — далі, зліва — назад, хрестик — вихід.
+ */
+@Composable
+private fun StoriesViewer(
+    stories: List<dev.amps.app.data.remote.backend.dto.StoryDto>,
+    baseUrl: String,
+    startId: Int,
+    onClose: () -> Unit,
+) {
+    if (stories.isEmpty()) {
+        onClose()
+        return
+    }
+    val startIndex = stories.indexOfFirst { it.id == startId }.coerceAtLeast(0)
+    var index by remember(startId) { mutableStateOf(startIndex) }
+    val context = LocalContext.current
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            color = androidx.compose.ui.graphics.Color.Black,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            val story = stories[index]
+            Box(Modifier.fillMaxSize()) {
+                if (story.kind == "photo") {
+                    AsyncImage(
+                        model = absoluteMediaUrl(baseUrl, story.url),
+                        contentDescription = "Сторіс",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.align(Alignment.Center),
+                    ) {
+                        Icon(
+                            Icons.Default.PlayCircle,
+                            contentDescription = null,
+                            tint = androidx.compose.ui.graphics.Color.White,
+                            modifier = Modifier.size(56.dp),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Відео-сторіс — дивитися у плеєрі",
+                            color = androidx.compose.ui.graphics.Color.White,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = {
+                            openExternally(context, absoluteMediaUrl(baseUrl, story.url), "video/*")
+                        }) {
+                            Text("Відтворити")
+                        }
+                    }
+                }
+
+                // Тапи: ліва половина — назад, права — далі. Лежать ПІД
+                // смужками прогресу і хедером (малюються раніше), щоб
+                // хрестик лишався клікабельним.
+                Row(Modifier.fillMaxSize()) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxSize()
+                            .clickable {
+                                if (index > 0) index -= 1 else onClose()
+                            },
+                    )
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxSize()
+                            .clickable {
+                                if (index < stories.size - 1) index += 1 else onClose()
+                            },
+                    )
+                }
+
+                // Смужки прогресу по всіх сторіс перегляду.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    stories.forEachIndexed { i, _ ->
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .height(3.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(
+                                    if (i <= index) {
+                                        Color.White
+                                    } else {
+                                        Color.White.copy(alpha = 0.3f)
+                                    },
+                                ),
+                        )
+                    }
+                }
+
+                // Хедер: хто і коли зникає.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 18.dp),
+                ) {
+                    StoryCircle(author = story.author, baseUrl = baseUrl)
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            story.author.displayName,
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        val hoursLeft = ((story.expiresAt - System.currentTimeMillis()) / 3_600_000L).coerceAtLeast(0)
+                        Text(
+                            "зникне за $hoursLeft год",
+                            color = Color.White.copy(alpha = 0.7f),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    IconButton(onClick = onClose) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Закрити",
+                            tint = Color.White,
+                        )
+                    }
+                }
+
+                // Автопрокрутка фото: 5 секунд — і далі. Відео не тікає.
+                if (story.kind == "photo") {
+                    LaunchedEffect(index) {
+                        kotlinx.coroutines.delay(5_000)
+                        if (index < stories.size - 1) index += 1 else onClose()
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ComposeBar(
     state: CommunityUiState,
@@ -259,13 +701,29 @@ private fun ComposeBar(
     onPickVideo: () -> Unit,
     onClearAttachments: () -> Unit,
     onPublish: () -> Unit,
+    onClose: () -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceVariant,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Новий пост",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                // 1.2.0: панель відкривається FAB — хрестик її прибирає.
+                if (onClose != {}) {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Default.Close, contentDescription = "Сховати")
+                    }
+                }
+            }
             OutlinedTextField(
                 value = state.composeText,
                 onValueChange = onTextChange,

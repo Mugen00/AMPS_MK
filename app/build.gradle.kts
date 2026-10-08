@@ -78,8 +78,8 @@ android {
 // всё приложение. Теперь Android убьёт только процесс `:tagger`.
 // Также largeHeap, проверка свободной памяти до загрузки модели и
 // Throwable вместо Exception в разборе кадра.
-        versionCode = 17
-        versionName = "1.1.3"
+        versionCode = 18
+        versionName = "1.2.0"
         resourceConfigurations += listOf("ru", "en")
 
         ndk {
@@ -177,6 +177,15 @@ dependencies {
     // 1.1.3: Markdown-відповідь Gemini (заголовки, списки, клікабельні
     // посилання) рендериться в TextView через Markwon.
     implementation("io.noties.markwon:core:4.6.2")
+
+    // 1.2.0: вхід через Google — Credential Manager отримує ID-токен,
+    // сервер перевіряє його через tokeninfo. Обидві частини обов'язкові:
+    // ядро API + прив'язка до Play Services (старі телефони без GMS
+    // отримають чесну помилку «Google недоступний»). Артефакт googleid
+    // несе класи GetGoogleIdOption/GoogleIdTokenCredential.
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 
     // 1.0.6: аниме-тегер вместо ML Kit. ML Kit отдавал общие словари
     // («человек», «волосы») и занимал 20 МБ APK — 81% размера. Тегер

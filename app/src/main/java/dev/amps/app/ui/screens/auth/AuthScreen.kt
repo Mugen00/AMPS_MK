@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Shield
@@ -42,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -136,37 +138,21 @@ private fun AuthHeader() {
     }
 }
 
+/**
+ * 1.2.0: один онлайн-акаунт. Локальні (офлайн) акаунти прибрані —
+ * вхід лише через сервер (Railway) або Google; локальні кроки PBKDF2
+ * вилучено з UI разом із перемикачем «Локальний / Через сервер».
+ *
+ * Google-кнопка показується лише коли у Налаштуваннях уведено
+ * Google Web Client ID: без нього Credential Manager видасть помилку
+ * ще до запиту до сервера, а сервер взагалі не матиме GOOGLE_CLIENT_IDS.
+ */
 @Composable
 private fun LoginStep(state: AuthState, viewModel: AuthViewModel) {
     var login by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var isBackendMode by remember { mutableStateOf(state.isBackendMode) }
 
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        // Mode toggle
-        if (state.backendUser == null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { isBackendMode = false; viewModel.setMode(AuthState.Mode.LOGIN) },
-                    modifier = Modifier.weight(1f),
-                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                        containerColor = if (!isBackendMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                ) { Text("Локальний") }
-                OutlinedButton(
-                    onClick = { isBackendMode = true; viewModel.setMode(AuthState.Mode.LOGIN) },
-                    modifier = Modifier.weight(1f),
-                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                        containerColor = if (isBackendMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                ) { Text("Через сервер") }
-            }
-            Spacer(Modifier.height(16.dp))
-        }
-
         OutlinedTextField(
             value = login,
             onValueChange = { login = it; viewModel.clearError() },
@@ -183,7 +169,7 @@ private fun LoginStep(state: AuthState, viewModel: AuthViewModel) {
             label = "Пароль",
             onDone = {
                 if (login.isNotBlank() && password.isNotBlank()) {
-                    if (isBackendMode) viewModel.loginBackend(login, password) else viewModel.loginLocal(login, password)
+                    viewModel.loginBackend(login, password)
                 }
             },
         )
@@ -192,31 +178,81 @@ private fun LoginStep(state: AuthState, viewModel: AuthViewModel) {
 
         Spacer(Modifier.height(12.dp))
         SubmitButton(
-            text = if (isBackendMode) "Увійти через сервер" else "Увійти локально",
+            text = "Увійти",
             busy = state.busy,
             enabled = login.isNotBlank() && password.isNotBlank(),
-            onClick = {
-                if (isBackendMode) viewModel.loginBackend(login, password) else viewModel.loginLocal(login, password)
-            },
+            onClick = { viewModel.loginBackend(login, password) },
         )
 
-        if (!isBackendMode) {
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = { viewModel.setMode(AuthState.Mode.REGISTER) }) {
-                Text("Створити локальний акаунт")
-            }
-            TextButton(onClick = { viewModel.continueAsGuest() }) {
-                Text("Продолжити як гість")
-            }
-        } else {
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = { viewModel.setMode(AuthState.Mode.PASSWORD_RESET) }) {
-                Text("Забули пароль?")
-            }
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = { viewModel.setMode(AuthState.Mode.PASSWORD_RESET) }) {
+            Text("Забули пароль?")
         }
+        TextButton(onClick = { viewModel.setMode(AuthState.Mode.REGISTER) }) {
+            Text("Створити акаунт")
+        }
+
+        GoogleSignInBlock(state, viewModel)
 
         Spacer(Modifier.height(16.dp))
         GuestNote()
+    }
+}
+
+/** 1.2.0: кнопка входу через Google — лише коли є Client ID у Налаштуваннях. */
+@Composable
+private fun GoogleSignInBlock(state: AuthState, viewModel: AuthViewModel) {
+    if (!state.googleConfigured) return
+    val context = LocalContext.current
+    var googlePending by remember { mutableStateOf(false) }
+
+    // 1.2.0: тут — лише отримання ID-токена від Credential Manager
+    // (системне вікно Google); обмін на токени бекенду — у viewModel.
+    LaunchedEffect(googlePending) {
+        if (!googlePending) return@LaunchedEffect
+        googlePending = false
+        val clientId = viewModel.state.value.googleClientId
+        if (clientId.isBlank()) return@LaunchedEffect
+        try {
+            val manager = androidx.credentials.CredentialManager.create(context)
+            val option = com.google.android.libraries.identity.googleid.GetGoogleIdOption.Builder()
+                .setServerClientId(clientId)
+                .setFilterByAuthorizedAccounts(false)
+                .build()
+            val request = androidx.credentials.GetCredentialRequest.Builder()
+                .addCredentialOption(option)
+                .build()
+            val response = manager.getCredential(context, request)
+            val credential = response.credential
+            if (credential is androidx.credentials.CustomCredential &&
+                credential.type == com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+            ) {
+                val google = com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.createFrom(credential.data)
+                viewModel.googleSignIn(google.idToken)
+            } else {
+                viewModel.googleFailed("Google повернув невідомий тип облікових даних")
+            }
+        } catch (e: androidx.credentials.exceptions.GetCredentialCancellationException) {
+            // Користувач закрив вікно — не помилка.
+        } catch (e: Exception) {
+            viewModel.googleFailed(e.message ?: "Вхід через Google не вдався")
+        }
+    }
+
+    OutlinedButton(
+        onClick = { googlePending = true },
+        enabled = !state.googleBusy,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        if (state.googleBusy) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(8.dp))
+            Text("Google…")
+        } else {
+            Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Увійти через Google")
+        }
     }
 }
 
@@ -227,32 +263,9 @@ private fun RegisterStep(state: AuthState, viewModel: AuthViewModel) {
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
-    var isBackendMode by remember { mutableStateOf(state.isBackendMode) }
 
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        // Mode toggle
-        if (state.backendUser == null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { isBackendMode = false; viewModel.setMode(AuthState.Mode.REGISTER) },
-                    modifier = Modifier.weight(1f),
-                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                        containerColor = if (!isBackendMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                ) { Text("Локальний") }
-                OutlinedButton(
-                    onClick = { isBackendMode = true; viewModel.setMode(AuthState.Mode.REGISTER) },
-                    modifier = Modifier.weight(1f),
-                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                        containerColor = if (isBackendMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                ) { Text("Через сервер") }
-            }
-            Spacer(Modifier.height(16.dp))
-        }
+        // 1.2.0: локальних акаунтів більше немає — реєстрація лише на сервері.
 
         OutlinedTextField(
             value = login,
@@ -264,32 +277,30 @@ private fun RegisterStep(state: AuthState, viewModel: AuthViewModel) {
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(10.dp))
-        if (isBackendMode) {
-            OutlinedTextField(
-                value = email,
-                onValueChange = { email = it; viewModel.clearError() },
-                label = { Text("Email") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Email,
-                    imeAction = ImeAction.Next,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = phone,
-                onValueChange = { phone = it; viewModel.clearError() },
-                label = { Text("Телефон (опціонально)") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Phone,
-                    imeAction = ImeAction.Next,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(10.dp))
-        }
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it; viewModel.clearError() },
+            label = { Text("Email") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Email,
+                imeAction = ImeAction.Next,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = phone,
+            onValueChange = { phone = it; viewModel.clearError() },
+            label = { Text("Телефон (опціонально)") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Phone,
+                imeAction = ImeAction.Next,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(10.dp))
         PasswordField(
             value = password,
             onValueChange = { password = it; viewModel.clearError() },
@@ -302,12 +313,8 @@ private fun RegisterStep(state: AuthState, viewModel: AuthViewModel) {
             onValueChange = { confirm = it; viewModel.clearError() },
             label = "Підтвердження пароля",
             onDone = {
-                if (login.isNotBlank() && password.isNotBlank() && confirm.isNotBlank()) {
-                    if (isBackendMode) {
-                        viewModel.registerBackend(login, email, password, phone.takeIf { it.isNotBlank() })
-                    } else {
-                        viewModel.registerLocal(login, password, confirm)
-                    }
+                if (login.isNotBlank() && email.isNotBlank() && password.isNotBlank() && confirm.isNotBlank()) {
+                    viewModel.registerBackend(login, email, password, phone.takeIf { it.isNotBlank() })
                 }
             },
         )
@@ -316,26 +323,20 @@ private fun RegisterStep(state: AuthState, viewModel: AuthViewModel) {
 
         Spacer(Modifier.height(12.dp))
         SubmitButton(
-            text = if (isBackendMode) "Зареєструватися на сервері" else "Створити локальний акаунт",
+            text = "Зареєструватися",
             busy = state.busy,
-            enabled = login.isNotBlank() && password.isNotBlank() && confirm.isNotBlank(),
+            enabled = login.isNotBlank() && email.isNotBlank() && password.isNotBlank() && confirm.isNotBlank(),
             onClick = {
-                if (isBackendMode) {
-                    viewModel.registerBackend(login, email, password, phone.takeIf { it.isNotBlank() })
-                } else {
-                    viewModel.registerLocal(login, password, confirm)
-                }
+                viewModel.registerBackend(login, email, password, phone.takeIf { it.isNotBlank() })
             },
         )
 
-        if (!isBackendMode) {
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = { viewModel.setMode(AuthState.Mode.LOGIN) }) {
-                Text("Вже є акаунт")
-            }
-            TextButton(onClick = { viewModel.continueAsGuest() }) {
-                Text("Продолжити як гість")
-            }
+        Spacer(Modifier.height(12.dp))
+        GoogleSignInBlock(state, viewModel)
+
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = { viewModel.setMode(AuthState.Mode.LOGIN) }) {
+            Text("Вже є акаунт")
         }
 
         Spacer(Modifier.height(16.dp))

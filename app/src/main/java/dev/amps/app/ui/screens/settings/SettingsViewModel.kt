@@ -18,6 +18,8 @@ data class SettingsUiState(
     val keepHistory: Boolean = true,
     /** 1.1.3: ключ Gemini; порожній — AI-аналіз фото недоступний. */
     val geminiApiKey: String = "",
+    /** 1.2.0: Google Web Client ID; порожній — кнопка Google захована. */
+    val googleWebClientId: String = "",
     val dirty: Boolean = false,
 )
 
@@ -43,6 +45,7 @@ class SettingsViewModel(
                 importToMediaStore = current.importToMediaStore,
                 keepHistory = current.keepSearchHistory,
                 geminiApiKey = current.geminiApiKey,
+                googleWebClientId = current.googleWebClientId,
             )
         }
     }
@@ -56,9 +59,15 @@ class SettingsViewModel(
         _state.value = _state.value.copy(geminiApiKey = value, dirty = true)
     }
 
+    /** 1.2.0: Google Web Client ID — публічний, уводиться у Налаштуваннях. */
+    fun onGoogleClientId(value: String) {
+        _state.value = _state.value.copy(googleWebClientId = value, dirty = true)
+    }
+
     fun save() = viewModelScope.launch {
         settings.setJamendoClientId(_state.value.jamendoClientId)
         settings.setGeminiApiKey(_state.value.geminiApiKey)
+        settings.setGoogleWebClientId(_state.value.googleWebClientId)
         _state.value = _state.value.copy(dirty = false)
     }
 

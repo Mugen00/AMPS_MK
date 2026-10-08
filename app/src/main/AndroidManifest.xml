@@ -36,6 +36,22 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
+        1.2.0: зйомка сторіс. Камера телефону викликається через системний
+        застосунок камери (TakePicture/TakeVideo) — тому тут лише CAMERA;
+        читання знімків чужих застосунків ми не просимо.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- 1.2.0: Credential Manager знаходить постачальника облікових даних
+         (Google Play Services) через явний намір — без <queries> на деяких
+         пристроях отримувача не видно і вхід через Google не працює. -->
+    <queries>
+        <intent>
+            <action android:name="androidx.credentials.registry.provider.action.GET_CREDENTIAL" />
+        </intent>
+    </queries>
+
+    <!--
         1.0.6: поднять лимит кучи.
 
         Аниме-тегер держит в памяти 167 МБ весов плюс рабочие буферы, и на

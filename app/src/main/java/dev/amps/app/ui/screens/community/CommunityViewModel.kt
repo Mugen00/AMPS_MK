@@ -34,6 +34,14 @@ data class CommunityUiState(
     val busyPostIds: Set<Int> = emptySet(),
     val loadingMore: Boolean = false,
     val endReached: Boolean = false,
+    // ===== Сторіс (1.2.0) =====
+    /** Живі сторіс усіх авторів, свіжі зверху. */
+    val stories: List<dev.amps.app.data.remote.backend.dto.StoryDto> = emptyList(),
+    val storiesLoading: Boolean = false,
+    /** Сторіс, яку зараз завантажуємо на сервер. */
+    val storyUploading: Boolean = false,
+    /** Відкритий переглядач: id сторіс, яку показуємо (null — закрито). */
+    val openStoryId: Int? = null,
 ) {
     val canPublish: Boolean
         get() = !posting &&
@@ -207,6 +215,66 @@ class CommunityViewModel(
                 _state.value.copy(busyPostIds = _state.value.busyPostIds - postId)
             }
         }
+    }
+
+    // ===== Сторіс (1.2.0) =====
+
+    /** Живі сторіс; публічно — як і стрічка. Викликається разом із load(). */
+    fun loadStories() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(storiesLoading = true)
+            when (val result = backendApi.getStories()) {
+                is ApiResult.Success -> _state.value = _state.value.copy(
+                    storiesLoading = false,
+                    stories = (result.data as dev.amps.app.data.remote.backend.dto.StoriesResponse).stories,
+                )
+                is ApiResult.Failure -> _state.value = _state.value.copy(
+                    storiesLoading = false,
+                    // Сторіс — необов'язковий блок: помилка не затьмарює стрічку.
+                    notice = "Сторіс не завантажилися: ${result.error}",
+                )
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(
+                    storiesLoading = false,
+                    notice = "Сторіс не завантажилися: ${result.message}",
+                )
+            }
+        }
+    }
+
+    /** Публікація сторіс: фото або відео з камери. Живе 24 години. */
+    fun publishStory(kind: String, bytes: ByteArray) {
+        if (_state.value.storyUploading) return
+        viewModelScope.launch {
+            _state.value = _state.value.copy(storyUploading = true, error = null, notice = null)
+            val result = backendSession.authedCall { header ->
+                backendApi.createStory(header, kind, bytes)
+            }
+            when (result) {
+                is ApiResult.Success -> _state.value = _state.value.copy(
+                    storyUploading = false,
+                    notice = "Сторіс опубліковано — зникне через 24 години",
+                )
+                is ApiResult.Failure -> _state.value = _state.value.copy(storyUploading = false, error = result.error)
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(storyUploading = false, error = result.message)
+            }
+            loadStories()
+        }
+    }
+
+    fun deleteStory(storyId: Int) {
+        viewModelScope.launch {
+            backendSession.authedCall { header -> backendApi.deleteStory(header, storyId) }
+            loadStories()
+        }
+    }
+
+    fun openStory(storyId: Int?) {
+        _state.value = _state.value.copy(openStoryId = storyId)
+    }
+
+    /** 1.2.0: сторіс не вдалося навіть підготувати (камера/розмір). */
+    fun publishStoryFailed(message: String) {
+        _state.value = _state.value.copy(storyUploading = false, error = message)
     }
 
     class Factory(

@@ -189,6 +189,34 @@ data class PostCreatedResponse(
     val postId: Int
 )
 
+// ===== Сторіс (1.2.0) =====
+
+/** Одна сторіс: медіа за відносним URL і час зникнення. */
+@Serializable
+data class StoryDto(
+    val id: Int,
+    val author: ProfileDto,
+    /** "photo" | "video" */
+    val kind: String,
+    /** Відносний шлях: /media/{kind}/{file}; клієнт додає адресу сервера. */
+    val url: String,
+    val createdAt: Long,
+    val expiresAt: Long
+)
+
+@Serializable
+data class StoriesResponse(
+    val stories: List<StoryDto>
+)
+
+// ===== Google (1.2.0) =====
+
+/** ID-токен від Credential Manager — сервер перевіряє його через tokeninfo. */
+@Serializable
+data class GoogleAuthRequest(
+    val idToken: String
+)
+
 @Serializable
 data class LikeToggleResponse(
     val liked: Boolean,

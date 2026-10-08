@@ -29,6 +29,13 @@ data class AppSettings(
      * функція недоступна. Навмисно без дефолта в коді: публічний репозиторій.
      */
     val geminiApiKey: String = "",
+    /**
+     * 1.2.0: Google Client ID (Web-клієнт з Google Cloud Console). Він же —
+     * serverClientId для Credential Manager, і його ж треба вписати у
+     * GOOGLE_CLIENT_IDS на сервері. Порожній — кнопка «Увійти через Google»
+     * захована. Публічний ідентифікатор клієнта, не секрет.
+     */
+    val googleWebClientId: String = "",
 ) {
     companion object {
         /**
@@ -64,6 +71,7 @@ class SettingsStore(private val context: Context) {
         val themeMode = stringPreferencesKey("theme_mode")
         val backendBaseUrl = stringPreferencesKey("backend_base_url")
         val geminiApiKey = stringPreferencesKey("gemini_api_key")
+        val googleWebClientId = stringPreferencesKey("google_web_client_id")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -77,6 +85,7 @@ class SettingsStore(private val context: Context) {
                 ?: ThemeMode.DARK,
             backendBaseUrl = prefs[Keys.backendBaseUrl]?.takeIf { it.isNotBlank() } ?: "",
             geminiApiKey = prefs[Keys.geminiApiKey]?.takeIf { it.isNotBlank() } ?: "",
+            googleWebClientId = prefs[Keys.googleWebClientId]?.takeIf { it.isNotBlank() } ?: "",
         )
     }
 
@@ -93,6 +102,9 @@ class SettingsStore(private val context: Context) {
 
     /** 1.1.3: ключ Gemini для AI-аналізу фото; зберігається лише на пристрої. */
     suspend fun setGeminiApiKey(key: String) = put(Keys.geminiApiKey, key.trim())
+
+    /** 1.2.0: Google Web Client ID для входу через Google. */
+    suspend fun setGoogleWebClientId(id: String) = put(Keys.googleWebClientId, id.trim())
 
     private suspend fun <T> put(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) {
         context.dataStore.edit { it[key] = value }
