@@ -11,13 +11,15 @@ COPY backend/settings.gradle.kts backend/settings.gradle.kts
 COPY backend/gradle.properties backend/gradle.properties
 
 # Download dependencies
-RUN cd backend && ./gradlew dependencies --no-daemon
+# 1.1.3: `sh gradlew` замість `./gradlew` — на Windows exec-біт не
+# зберігається, і COPY у Docker приходив без права виконання (exit 126).
+RUN cd backend && sh gradlew dependencies --no-daemon
 
 # Copy source
 COPY backend/src backend/src
 
 # Build fat jar
-RUN cd backend && ./gradlew shadowJar --no-daemon
+RUN cd backend && sh gradlew shadowJar --no-daemon
 
 # ===== Runtime stage =====
 FROM eclipse-temurin:17-jre-alpine
