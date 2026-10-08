@@ -147,8 +147,32 @@ class AppContainer(private val context: Context) {
         BackendApi.getOrCreate(baseUrl, httpClient)
     }
 
+    /**
+     * 1.1.2: сесія бекенда, що переживає рестарт — токени в DataStore.
+     * Стрічка, профіль і фонова перевірка сповіщень беруть токен звідси.
+     */
+    val backendSession: dev.amps.app.data.remote.backend.BackendSession by lazy {
+        dev.amps.app.data.remote.backend.BackendSession(context, backendApi)
+    }
+
+    /**
+     * 1.1.2: сповіщення — канали, «завантаження завершено», фонова перевірка
+     * активності у Спільноті. Один екземпляр на процес.
+     */
+    val notifier: dev.amps.app.core.AmpsNotifier by lazy {
+        dev.amps.app.core.AmpsNotifier(context)
+    }
+
     val syncManager: SyncManager by lazy {
         SyncManager(context, backendApi, session, accounts, history)
+    }
+
+    /**
+     * 1.1.2: фонова перевірка Спільноти раз на годину — нові пости й лайки
+     * стають сповіщеннями. Корутин без WorkManager: живе в scope контейнера.
+     */
+    val communityWatcher: dev.amps.app.core.CommunityNotifier by lazy {
+        dev.amps.app.core.CommunityNotifier(context, backendApi, backendSession, notifier)
     }
 
     /**
@@ -186,6 +210,7 @@ class AppContainer(private val context: Context) {
             context = context,
             history = history,
             importer = mediaStoreImporter,
+            notifier = notifier,
         )
     }
 }

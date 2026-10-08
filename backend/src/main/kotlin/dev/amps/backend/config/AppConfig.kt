@@ -23,6 +23,13 @@ class AppConfig(
     val twilioAuthToken: String? = env("TWILIO_AUTH_TOKEN"),
     val twilioFromNumber: String? = env("TWILIO_FROM_NUMBER"),
     val frontendBaseUrl: String = env("FRONTEND_BASE_URL") ?: "",
+
+    /**
+     * 1.1.2: корінь сховища медіа (аватри, фото і відео постів).
+     * На Railway том монтується в /data — він переживає передеплої.
+     * Локально, якщо /data недоступний, сховище падає в ./data.
+     */
+    val mediaDir: String = env("MEDIA_DIR") ?: defaultMediaDir(),
 ) {
 
     /** Термін життя access-токена: 30 хвилин. */
@@ -51,6 +58,10 @@ class AppConfig(
     companion object {
         const val ISSUER = "amps-backend"
 
+        /** Обмеження розміру вкладень: фото 10 МБ, відео 50 МБ. */
+        const val MAX_PHOTO_BYTES = 10L * 1024 * 1024
+        const val MAX_VIDEO_BYTES = 50L * 1024 * 1024
+
         private fun env(name: String): String? =
             System.getenv(name)?.takeIf { it.isNotBlank() }
 
@@ -59,5 +70,8 @@ class AppConfig(
 
         private fun requireEnv(name: String): String =
             env(name) ?: error("Змінна оточення $name обов'язкова. Додайте її у налаштуваннях сервісу Railway.")
+
+        private fun defaultMediaDir(): String =
+            if (java.io.File("/data").canWrite()) "/data" else "data"
     }
 }

@@ -94,11 +94,19 @@ class AuthService(
                 "Невірний логін або пароль", "INVALID_CREDENTIALS")
         }
         if (user.twoFactorEnabled) {
-            // Чесно: повний ланцюжок «логін → код 2FA» на клієнті 1.1.0
-            // ще не завершено, тому вхід із 2FA поки не видає токен.
-            return@newSuspendedTransaction ApiResponse.fail<TokenResponse>(
-                "Обліковий запис захищений 2FA — увімкніть вхід через серверний " +
-                    "обліковий запис без 2FA або вимкніть 2FA", "NEED_2FA")
+            // 1.1.2: повний ланцюжок «логін → код з аутентифікатора».
+            // Без кода — NEED_2FA, клієнт показує крок введення; з кодом —
+            // перевірка тим самим TOTP, що працює на /2fa/verify.
+            val secret = user.twoFactorSecret
+                ?: return@newSuspendedTransaction ApiResponse.fail<TokenResponse>(
+                    "2FA увімкнена, але секрет не знайдено — вимкніть 2FA через підтримку", "NEED_2FA")
+            val code = request.totp
+                ?: return@newSuspendedTransaction ApiResponse.fail<TokenResponse>(
+                    "Потрібен код з аутентифікатора", "NEED_2FA")
+            if (!Totp.verify(secret, code)) {
+                return@newSuspendedTransaction ApiResponse.fail<TokenResponse>(
+                    "Невірний код з аутентифікатора", "BAD_TOTP")
+            }
         }
         if (!user.emailVerified) {
             // Повторний вхід = свіжий код підтвердження: це заміна кнопки

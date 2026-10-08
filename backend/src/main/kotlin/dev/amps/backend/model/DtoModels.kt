@@ -47,7 +47,13 @@ data class RegisterRequest(
 @Serializable
 data class LoginRequest(
     val login: String,
-    val password: String
+    val password: String,
+    /**
+     * 1.1.2: код з аутентифікатора. Обов'язковий лише тоді, коли у
+     * користувача ввімкнено 2FA; без нього сервер відповідає NEED_2FA,
+     * і клієнт показує крок введення кода.
+     */
+    val totp: String? = null
 )
 
 @Serializable
@@ -142,4 +148,84 @@ fun UserEntity.info() = UserInfo(
     emailVerified = emailVerified,
     phoneVerified = phoneVerified,
     twoFactorEnabled = twoFactorEnabled,
+)
+
+// ===== Профіль (1.1.2) =====
+@Serializable
+data class ProfileDto(
+    val userId: Int,
+    val login: String,
+    val displayName: String,
+    val bio: String? = null,
+    /** Відносний шлях аватара або null; клієнт додає адресу сервера. */
+    val avatarPath: String? = null
+)
+
+@Serializable
+data class ProfileUpdateRequest(
+    val displayName: String,
+    val bio: String? = null
+)
+
+@Serializable
+data class AvatarResponse(
+    val avatarUrl: String
+)
+
+// ===== Спільнота (1.1.2) =====
+
+@Serializable
+data class MediaDto(
+    /** "photo" | "video" */
+    val kind: String,
+    /** Відносний шлях: /media/{kind}/{file}; клієнт додає адресу сервера. */
+    val url: String
+)
+
+@Serializable
+data class PostDto(
+    val id: Int,
+    val author: ProfileDto,
+    val text: String,
+    val media: List<MediaDto> = emptyList(),
+    /** Епоха-мілісекунди: дата публікації, яку показує застосунок. */
+    val createdAt: Long,
+    val likeCount: Int,
+    val repostCount: Int,
+    val likedByMe: Boolean,
+    val repostedByMe: Boolean
+)
+
+/**
+ * Рядок стрічки: або власне пост (kind = "POST"), або репост — тоді
+ * [repostBy] вказує, хто поширив, а [post] несе оригінал.
+ */
+@Serializable
+data class FeedItemDto(
+    val kind: String,
+    val post: PostDto,
+    val repostBy: ProfileDto? = null,
+    val at: Long
+)
+
+@Serializable
+data class FeedResponse(
+    val items: List<FeedItemDto>
+)
+
+@Serializable
+data class LikeToggleResponse(
+    val liked: Boolean,
+    val likeCount: Int
+)
+
+@Serializable
+data class RepostResponse(
+    val reposted: Boolean,
+    val repostCount: Int
+)
+
+@Serializable
+data class PostCreatedResponse(
+    val postId: Int
 )

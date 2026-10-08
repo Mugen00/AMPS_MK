@@ -10,5 +10,8 @@ class AmpsApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        // 1.1.2: канали сповіщень одразу, фонова перевірка Спільноти — цикл.
+        container.notifier.createChannels()
+        container.communityWatcher.start()
     }
 }

@@ -30,7 +30,7 @@ import io.ktor.server.routing.routing
 fun Application.authRoutes(auth: AuthService, twoFactor: TwoFactorService, sync: SyncService) {
     routing {
         get("/health") {
-            call.respond(mapOf("status" to "ok", "version" to "1.1.0"))
+            call.respond(mapOf("status" to "ok", "version" to "1.1.2"))
         }
 
         route("/auth") {
@@ -60,8 +60,8 @@ fun Application.authRoutes(auth: AuthService, twoFactor: TwoFactorService, sync:
     }
 }
 
-/** Ідентифікатор користувача з JWT або 401. */
-private suspend fun ApplicationCall.requireUid(): Int? {
+/** Ідентифікатор користувача з JWT або 401. Спільний для auth- і feed-роутингу. */
+internal suspend fun ApplicationCall.requireUid(): Int? {
     val uid = principal<JWTPrincipal>()?.payload?.getClaim("uid")?.asInt()
     if (uid == null || uid <= 0) {
         respond(HttpStatusCode.Unauthorized, ApiError(error = "Не авторизовано", errorCode = "UNAUTHORIZED"))
@@ -73,8 +73,9 @@ private suspend fun ApplicationCall.requireUid(): Int? {
 /**
  * Успіх — 200 із повним конвертом; невдача — 400 (409 для конфлікту
  * версій синхронізації). Клієнт читає errorCode у обох випадках.
+ * Спільний для auth- і feed-роутингу.
  */
-private suspend inline fun <reified T : Any> ApplicationCall.respondApi(result: ApiResponse<T>) {
+internal suspend inline fun <reified T : Any> ApplicationCall.respondApi(result: ApiResponse<T>) {
     if (result.success) {
         respond(result)
     } else {

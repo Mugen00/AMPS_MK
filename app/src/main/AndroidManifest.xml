@@ -30,6 +30,12 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
     <!--
+        1.1.2: сповіщення у шторці (Android 13+). Запитує екран Спільноти,
+        поки користувач не погодиться — сповіщення просто не показуються.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
         1.0.6: поднять лимит кучи.
 
         Аниме-тегер держит в памяти 167 МБ весов плюс рабочие буферы, и на

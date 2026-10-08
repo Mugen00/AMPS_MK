@@ -102,6 +102,11 @@ class MusicRepository(
     context: Context,
     private val history: HistoryStore,
     private val importer: MediaStoreImporter? = null,
+    /**
+     * 1.1.2: сповіщення «завантаження завершено». Опційний, щоб тести й
+     * офлайн-прогони репозиторія не вимагали Android-контекст сповіщень.
+     */
+    private val notifier: dev.amps.app.core.AmpsNotifier? = null,
 ) {
 
     private val appContext: Context = context.applicationContext
@@ -968,6 +973,11 @@ class MusicRepository(
                 val done = DownloadProgress(key, label, read, read, DownloadState.DONE, "Файл сохранён")
                 publish(key, done)
                 onProgress(done)
+                // 1.1.2: сповіщення в шторці — трек готовий навіть коли екран
+                // застосунку згорнутий. Без дозволу нотифікатор мовчить.
+                runCatching {
+                    notifier?.notifyDownloadComplete(track.title, track.artistName.orEmpty())
+                }
                 entry
             }
         } catch (error: Throwable) {

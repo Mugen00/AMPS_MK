@@ -8,9 +8,11 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 
 /**
  * 1.1.0: HTTP-клієнт для бекенду на OkHttp + kotlinx.serialization.
@@ -30,8 +32,16 @@ class BackendApi private constructor(
 
     private val jsonMediaType = "application/json".toMediaType()
 
+    /** 1.1.2: ефективна адреса сервера — для складання URL медіа зі стрічки. */
+    val effectiveBaseUrl: String get() = baseUrl
+
     companion object {
-        private const val DEFAULT_BASE_URL = "https://amps-backend-production.up.railway.app/"
+        /**
+         * 1.1.2: адреса свіжого розгортання на Railway. Попереднє значення
+         * вказувало на старий сервіс, і реєстрація «не працювала» саме
+         * через це — застосунок стукався не в той сервер.
+         */
+        private const val DEFAULT_BASE_URL = "https://ampsmk-production.up.railway.app/"
 
         @Volatile
         private var instance: BackendApi? = null
@@ -153,6 +163,68 @@ class BackendApi private constructor(
         }
     }
 
+    // ===== Спільнота і профіль (1.1.2) =====
+
+    /** Мій профіль із сервера (створюється там ліниво). */
+    suspend fun fetchProfile(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "profile", null, ProfileDto.serializer(), authHeader)
+    }
+
+    suspend fun updateProfile(authHeader: String, request: ProfileUpdateRequest): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute(
+                "PUT", "profile",
+                json.encodeToString(ProfileUpdateRequest.serializer(), request),
+                ProfileDto.serializer(), authHeader,
+            )
+        }
+
+    /** Аватар: multipart з одним файлом "avatar" (jpeg). */
+    suspend fun uploadAvatar(authHeader: String, bytes: ByteArray): ApiResult = withContext(Dispatchers.IO) {
+        executeMultipart(
+            "profile/avatar", authHeader,
+            listOf(MultipartPart(name = "avatar", filename = "avatar.jpg", contentType = "image/jpeg", bytes = bytes)),
+            AvatarResponse.serializer(),
+        )
+    }
+
+    /** Стрічка спільноти; limit 1..50, offset — зсув пагінації. */
+    suspend fun getFeed(authHeader: String, limit: Int = 20, offset: Long = 0): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "feed?limit=$limit&offset=$offset", null, FeedResponse.serializer(), authHeader)
+        }
+
+    /**
+     * Публікація поста: текст і вкладення multipart'ом. Вкладення —
+     * частини з іменами "photo" (jpg/png/webp/gif, ≤10 МБ) або "video"
+     * (mp4/webm/mov, ≤50 МБ); сервер береже розмір ще при читанні.
+     */
+    suspend fun createPost(
+        authHeader: String,
+        text: String,
+        photo: ByteArray? = null,
+        video: ByteArray? = null,
+    ): ApiResult = withContext(Dispatchers.IO) {
+        val parts = buildList {
+            add(MultipartPart(name = "text", value = text))
+            if (photo != null) {
+                add(MultipartPart(name = "photo", filename = "photo.jpg", contentType = "image/jpeg", bytes = photo))
+            }
+            if (video != null) {
+                add(MultipartPart(name = "video", filename = "video.mp4", contentType = "video/mp4", bytes = video))
+            }
+        }
+        executeMultipart("feed", authHeader, parts, PostCreatedResponse.serializer())
+    }
+
+    suspend fun toggleLike(authHeader: String, postId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("POST", "feed/$postId/like", null, LikeToggleResponse.serializer(), authHeader)
+    }
+
+    suspend fun toggleRepost(authHeader: String, postId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("POST", "feed/$postId/repost", null, RepostResponse.serializer(), authHeader)
+    }
+
     // ===== Core =====
 
     /**
@@ -169,6 +241,7 @@ class BackendApi private constructor(
         val requestBuilder = Request.Builder().url(baseUrl + path)
         when (method) {
             "POST" -> requestBuilder.post((bodyJson ?: "").toRequestBody(jsonMediaType))
+            "PUT" -> requestBuilder.put((bodyJson ?: "").toRequestBody(jsonMediaType))
             "GET" -> requestBuilder.get()
         }
         authHeader?.let { requestBuilder.addHeader("Authorization", it) }
@@ -217,4 +290,90 @@ class BackendApi private constructor(
         val error: String? = null,
         val errorCode: String? = null,
     )
+
+    /** Одна частина multipart-запита: або текстове поле, або файл. */
+    class MultipartPart(
+        val name: String,
+        val value: String? = null,
+        val filename: String? = null,
+        val contentType: String? = null,
+        val bytes: ByteArray? = null,
+    )
+
+    /**
+     * Multipart-відправник: файл або текстове поле. Відповідь — той самий
+     * конверт, що й у звичайних викликів.
+     */
+    private suspend fun <T : Any> executeMultipart(
+        path: String,
+        authHeader: String?,
+        parts: List<MultipartPart>,
+        dataSerializer: KSerializer<T>,
+    ): ApiResult = withContext(Dispatchers.IO) {
+        val requestBody = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .apply {
+                parts.forEach { part ->
+                    if (part.bytes != null && part.filename != null) {
+                        val media = (part.contentType ?: "application/octet-stream").toMediaType()
+                        addFormDataPart(
+                            name = part.name,
+                            filename = part.filename,
+                            body = part.bytes.toRequestBody(media),
+                        )
+                    } else {
+                        addFormDataPart(name = part.name, value = part.value.orEmpty())
+                    }
+                }
+            }
+            .build()
+        val request = Request.Builder()
+            .url(baseUrl + path)
+            .post(requestBody)
+            .apply { authHeader?.let { addHeader("Authorization", it) } }
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                parseEnvelope(response, dataSerializer)
+            }
+        } catch (e: Exception) {
+            ApiResult.NetworkError(e.message ?: "Мережева помилка")
+        }
+    }
+
+    /** Спільне розбирання конверта з OkHttp-відповіді. */
+    private fun <T : Any> parseEnvelope(response: Response, dataSerializer: KSerializer<T>): ApiResult {
+        val bodyString = response.body?.string() ?: ""
+        val envelope = try {
+            json.decodeFromString(Envelope.serializer(), bodyString)
+        } catch (_: Exception) {
+            null
+        }
+        if (!response.isSuccessful) {
+            return ApiResult.Failure(
+                code = response.code,
+                error = envelope?.error ?: bodyString.takeIf { it.isNotBlank() }
+                    ?: "HTTP ${response.code}",
+                errorCode = envelope?.errorCode,
+            )
+        }
+        if (envelope == null) {
+            return ApiResult.Failure(response.code, "Незрозуміла відповідь сервера", "BAD_BODY")
+        }
+        if (!envelope.success) {
+            return ApiResult.Failure(
+                response.code,
+                envelope.error ?: "Невідома помилка",
+                envelope.errorCode,
+            )
+        }
+        val element = envelope.data
+            ?: return ApiResult.Failure(response.code, "Порожня відповідь сервера", "EMPTY_DATA")
+        return try {
+            ApiResult.Success(json.decodeFromJsonElement(dataSerializer, element))
+        } catch (e: Exception) {
+            ApiResult.Failure(response.code, "Незрозумілий формат відповіді", "BAD_DATA")
+        }
+    }
 }

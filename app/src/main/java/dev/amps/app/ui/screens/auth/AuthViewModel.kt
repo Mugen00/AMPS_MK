@@ -38,9 +38,14 @@ data class AuthState(
     val pendingLocalLogin: String = "",
     /** Чекаємо код від бекенду (email/SMS верифікація). */
     val awaitingBackendCode: Boolean = false,
-    val pendingBackendType: String = "", // "EMAIL_VERIFY" | "PHONE_VERIFY" | "PASSWORD_RESET" | "2FA_SETUP"
+    val pendingBackendType: String = "", // "EMAIL_VERIFY" | "PHONE_VERIFY" | "PASSWORD_RESET" | "2FA_SETUP" | "2FA_LOGIN"
     /** Секрет для налаштування 2FA (показується один раз). */
     val totpSecret: String? = null,
+    /** otpauth-посилання того ж ключа — для аутентифікаторів, що вміють вставку. */
+    val totpOtpauth: String? = null,
+    /** 1.1.2: логін/пароль у пам'яті на час кроку введення кода 2FA. */
+    val pendingBackendLogin: String = "",
+    val pendingBackendPassword: String = "",
     val account: Account? = null,
     val backendUser: BackendUser? = null,
 ) {
@@ -67,6 +72,7 @@ class AuthViewModel(
     private val sessionStore: SessionStore,
     private val backendApi: BackendApi,
     private val settingsStore: dev.amps.app.core.SettingsStore,
+    private val backendSession: dev.amps.app.data.remote.backend.BackendSession,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AuthState())
@@ -85,6 +91,19 @@ class AuthViewModel(
                 }
                 _session.value = SessionUi.Signed(current, account, null)
             }
+        }
+        // 1.1.2: після рестарту бекенд-акаунт відновлюється зі сховища.
+        // /auth/me перевіряє access-токен; при 401 BackendSession один раз
+        // оновлює пару refresh-токеном. Не вийшло — звичайний вхід.
+        viewModelScope.launch {
+            val stored = backendSession.current() ?: return@launch
+            val result = backendSession.authedCall { header -> backendApi.getProfile(header) }
+            val userInfo = (result as? ApiResult.Success)?.data as? UserInfo ?: return@launch
+            val fresh = backendSession.current() ?: return@launch
+            _state.value = _state.value.copy(
+                mode = AuthState.Mode.SECURITY,
+                backendUser = BackendUser(fresh.accessToken, fresh.refreshToken, userInfo),
+            )
         }
     }
 
@@ -116,12 +135,25 @@ class AuthViewModel(
     }
 
     // ===== Backend login =====
-    fun loginBackend(login: String, password: String) {
+    fun loginBackend(login: String, password: String, totp: String? = null) {
         if (_state.value.busy) return
         _state.value = _state.value.copy(busy = true, error = null)
         viewModelScope.launch {
-            val request = LoginRequest(login, password)
+            val request = LoginRequest(login, password, totp)
             val result = backendApi.login(request)
+            if (result is ApiResult.Failure && result.errorCode == "NEED_2FA") {
+                // 1.1.2: акаунт захищений 2FA — показуємо крок введення кода.
+                // Пароль лишається лише в пам'яті до завершення входу.
+                _state.value = AuthState(
+                    mode = AuthState.Mode.LOGIN,
+                    awaitingBackendCode = true,
+                    pendingBackendType = "2FA_LOGIN",
+                    pendingBackendLogin = login,
+                    pendingBackendPassword = password,
+                    notice = "Увімкнено 2FA — введіть код з аутентифікатора",
+                )
+                return@launch
+            }
             handleBackendResult(result) { tokens, userInfo ->
                 _state.value = AuthState(
                     mode = AuthState.Mode.SECURITY,
@@ -147,8 +179,9 @@ class AuthViewModel(
         when (result) {
             is ApiResult.Success -> {
                 val tokens = result.data as TokenResponse
-                val userInfo = tokens.user
-                onSuccess(tokens, userInfo)
+                // 1.1.2: токени зберігаються — сесія переживає рестарт.
+                viewModelScope.launch { backendSession.save(tokens) }
+                onSuccess(tokens, tokens.user)
             }
             is ApiResult.Failure -> _state.value = _state.value.copy(busy = false, error = result.error)
             is ApiResult.NetworkError -> _state.value = _state.value.copy(busy = false, error = result.message)
@@ -163,6 +196,11 @@ class AuthViewModel(
         // сервер розпізнає лише EMAIL_VERIFY і PHONE_VERIFY.
         if (current.pendingBackendType == "2FA_SETUP") {
             verifyBackendTwoFactor(code)
+            return
+        }
+        if (current.pendingBackendType == "2FA_LOGIN") {
+            // Повторний вхід уже з кодом з аутентифікатора.
+            loginBackend(current.pendingBackendLogin, current.pendingBackendPassword, totp = code)
             return
         }
         _state.value = current.copy(busy = true, error = null)
@@ -272,6 +310,8 @@ class AuthViewModel(
             awaitingBackendCode = false,
             pendingLocalLogin = "",
             pendingBackendType = "",
+            pendingBackendLogin = "",
+            pendingBackendPassword = "",
             error = null
         )
     }
@@ -286,6 +326,7 @@ class AuthViewModel(
     fun signOut() {
         viewModelScope.launch {
             sessionStore.signOut()
+            backendSession.clear()
             _state.value = AuthState()
         }
     }
@@ -294,11 +335,16 @@ class AuthViewModel(
     fun beginTwoFactor() {
         val account = _state.value.account ?: return
         val secret = Totp.newSecret()
-        _state.value = _state.value.copy(totpSecret = secret, account = account, error = null)
+        _state.value = _state.value.copy(
+            totpSecret = secret,
+            totpOtpauth = Totp.otpauthUri(secret, account.login, "AMPS"),
+            account = account,
+            error = null,
+        )
     }
 
     fun cancelTwoFactor() {
-        _state.value = _state.value.copy(totpSecret = null)
+        _state.value = _state.value.copy(totpSecret = null, totpOtpauth = null)
     }
 
     fun confirmTwoFactor(code: String) {
@@ -354,6 +400,7 @@ class AuthViewModel(
                     _state.value = current.copy(
                         busy = false,
                         totpSecret = setup.secret,
+                        totpOtpauth = setup.otpAuthUrl,
                         notice = "Відскануйте QR-код у Google Authenticator",
                         awaitingBackendCode = true,
                         pendingBackendType = "2FA_SETUP"
@@ -494,9 +541,10 @@ class AuthViewModel(
         private val sessionStore: SessionStore,
         private val backendApi: BackendApi,
         private val settingsStore: dev.amps.app.core.SettingsStore,
+        private val backendSession: dev.amps.app.data.remote.backend.BackendSession,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            AuthViewModel(accounts, sessionStore, backendApi, settingsStore) as T
+            AuthViewModel(accounts, sessionStore, backendApi, settingsStore, backendSession) as T
     }
 }

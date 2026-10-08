@@ -98,3 +98,91 @@ class RefreshTokenEntity(id: EntityID<Int>) : IntEntity(id) {
     var expiresAt by RefreshTokenTable.expiresAt
     var createdAt by RefreshTokenTable.createdAt
 }
+
+// ===== Профіль (1.1.2): показуване ім'я, біо, аватар =====
+object ProfileTable : IntIdTable("profiles") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE).uniqueIndex()
+    val displayName = varchar("display_name", 64)
+    val bio = varchar("bio", 280).nullable()
+    /** Ім'я файлу аватара у сховищі медіа; UUID, без шляху. */
+    val avatarFile = varchar("avatar_file", 100).nullable()
+    val updatedAt = long("updated_at")
+}
+
+class ProfileEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<ProfileEntity>(ProfileTable)
+
+    var userId by ProfileTable.userId
+    var displayName by ProfileTable.displayName
+    var bio by ProfileTable.bio
+    var avatarFile by ProfileTable.avatarFile
+    var updatedAt by ProfileTable.updatedAt
+}
+
+// ===== Спільнота: пости =====
+object PostTable : IntIdTable("posts") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val text = varchar("text", 1000)
+    val createdAt = long("created_at")
+}
+
+class PostEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<PostEntity>(PostTable)
+
+    var userId by PostTable.userId
+    var text by PostTable.text
+    var createdAt by PostTable.createdAt
+}
+
+// ===== Вкладення поста: фото або відео =====
+object PostMediaTable : IntIdTable("post_media") {
+    val postId = integer("post_id").references(PostTable.id, ReferenceOption.CASCADE)
+    // "photo" | "video"
+    val kind = varchar("kind", 8)
+    // Ім'я файлу у сховищі: UUID + розширення; віддається за /media/{kind}/{file}
+    val fileName = varchar("file_name", 100)
+}
+
+class PostMediaEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<PostMediaEntity>(PostMediaTable)
+
+    var postId by PostMediaTable.postId
+    var kind by PostMediaTable.kind
+    var fileName by PostMediaTable.fileName
+}
+
+// ===== Лайки: пара (хто, що) існує в одному екземплярі =====
+object LikeTable : IntIdTable("likes") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val postId = integer("post_id").references(PostTable.id, ReferenceOption.CASCADE)
+
+    init {
+        uniqueIndex(userId, postId)
+    }
+}
+
+class LikeEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<LikeEntity>(LikeTable)
+
+    var userId by LikeTable.userId
+    var postId by LikeTable.postId
+}
+
+// ===== Репости: хто, що і коли =====
+object RepostTable : IntIdTable("reposts") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val postId = integer("post_id").references(PostTable.id, ReferenceOption.CASCADE)
+    val createdAt = long("created_at")
+
+    init {
+        uniqueIndex(userId, postId)
+    }
+}
+
+class RepostEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<RepostEntity>(RepostTable)
+
+    var userId by RepostTable.userId
+    var postId by RepostTable.postId
+    var createdAt by RepostTable.createdAt
+}

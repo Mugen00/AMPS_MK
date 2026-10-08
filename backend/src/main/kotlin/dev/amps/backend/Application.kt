@@ -6,13 +6,22 @@ import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import dev.amps.backend.config.AppConfig
 import dev.amps.backend.model.ApiError
+import dev.amps.backend.model.LikeTable
+import dev.amps.backend.model.PostMediaTable
+import dev.amps.backend.model.PostTable
+import dev.amps.backend.model.ProfileTable
 import dev.amps.backend.model.RefreshTokenTable
+import dev.amps.backend.model.RepostTable
 import dev.amps.backend.model.SyncDataTable
 import dev.amps.backend.model.UserTable
 import dev.amps.backend.model.VerificationCodeTable
 import dev.amps.backend.routing.authRoutes
+import dev.amps.backend.routing.feedRoutes
 import dev.amps.backend.service.AuthService
 import dev.amps.backend.service.EmailService
+import dev.amps.backend.service.FeedService
+import dev.amps.backend.service.MediaStorage
+import dev.amps.backend.service.ProfileService
 import dev.amps.backend.service.SmsService
 import dev.amps.backend.service.SyncService
 import dev.amps.backend.service.TwoFactorService
@@ -50,11 +59,15 @@ fun main() {
     val authService = AuthService(config, emailService, smsService)
     val twoFactorService = TwoFactorService()
     val syncService = SyncService()
+    // 1.1.2: спільнота і профіль — сховище медіа спільне для всіх трьох.
+    val media = MediaStorage(config)
+    val profileService = ProfileService(media)
+    val feedService = FeedService(media, profileService)
 
     initDatabase(config)
 
     embeddedServer(Netty, port = config.port, host = "0.0.0.0") {
-        module(config, authService, twoFactorService, syncService)
+        module(config, authService, twoFactorService, syncService, feedService, profileService, media)
     }.start(wait = true)
 }
 
@@ -70,8 +83,18 @@ private fun initDatabase(config: AppConfig) {
     Database.connect(HikariDataSource(hikari))
     transaction {
         // Схема створюється за відсутності — міграційний фреймворк для
-        // чотирьох таблиць особистого проєкту був би надлишковістю.
-        SchemaUtils.create(UserTable, VerificationCodeTable, SyncDataTable, RefreshTokenTable)
+        // десятка таблиць особистого проєкту був би надлишковістю.
+        SchemaUtils.create(
+            UserTable,
+            VerificationCodeTable,
+            SyncDataTable,
+            RefreshTokenTable,
+            ProfileTable,
+            PostTable,
+            PostMediaTable,
+            LikeTable,
+            RepostTable,
+        )
     }
 }
 
@@ -80,6 +103,9 @@ fun Application.module(
     authService: AuthService,
     twoFactorService: TwoFactorService,
     syncService: SyncService,
+    feedService: FeedService,
+    profileService: ProfileService,
+    media: MediaStorage,
 ) {
     install(ContentNegotiation) {
         json(kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
@@ -120,4 +146,6 @@ fun Application.module(
     }
 
     authRoutes(authService, twoFactorService, syncService)
+    // 1.1.2: спільнота, профіль і роздача медіа.
+    feedRoutes(config, feedService, profileService, media)
 }

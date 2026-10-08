@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.ImageSearch
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Settings
@@ -42,9 +43,13 @@ import dev.amps.app.core.AppSettings
 import dev.amps.app.ui.screens.auth.AuthScreen
 import dev.amps.app.ui.screens.auth.AuthViewModel
 import dev.amps.app.ui.screens.auth.SessionUi
+import dev.amps.app.ui.screens.community.CommunityScreen
+import dev.amps.app.ui.screens.community.CommunityViewModel
 import dev.amps.app.ui.screens.framesearch.FrameSearchScreen
 import dev.amps.app.ui.screens.framesearch.FrameSearchViewModel
 import dev.amps.app.ui.screens.history.HistoryScreen
+import dev.amps.app.ui.screens.profile.ProfileScreen
+import dev.amps.app.ui.screens.profile.ProfileViewModel
 import dev.amps.app.ui.screens.update.UpdateScreen
 import dev.amps.app.ui.screens.update.updateViewModel
 import dev.amps.app.ui.screens.music.MusicSearchScreen
@@ -107,6 +112,8 @@ private object Routes {
     const val MUSIC_TRACK = "music/track"
     const val SETTINGS = "settings"
     const val AUTH = "auth"
+    const val COMMUNITY = "community"
+    const val PROFILE = "profile"
     const val HISTORY = "history"
     const val UPDATE = "update"
 }
@@ -141,8 +148,16 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
             container.accounts,
             container.session,
             container.backendApi,
-            container.settings
+            container.settings,
+            container.backendSession
         )
+    )
+    // 1.1.2: Спільнота і профіль — сесія бекенда спільна з фоновою перевіркою.
+    val communityViewModel: CommunityViewModel = viewModel(
+        factory = CommunityViewModel.Factory(container.backendApi, container.backendSession)
+    )
+    val profileViewModel: ProfileViewModel = viewModel(
+        factory = ProfileViewModel.Factory(container.backendApi, container.backendSession)
     )
 
     val frameState by frameViewModel.state.collectAsStateWithLifecycle()
@@ -165,6 +180,7 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
     val tabs = listOf(
         TabItem(Routes.FRAME, "Картинка", Icons.Default.ImageSearch),
         TabItem(Routes.MUSIC, "Музыка", Icons.Default.MusicNote),
+        TabItem(Routes.COMMUNITY, "Спільнота", Icons.Default.Groups),
         TabItem(Routes.SETTINGS, "Настройки", Icons.Default.Settings),
     )
 
@@ -200,6 +216,23 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
             composable(Routes.WIKI) {
                 WikiScreen(
                     viewModel = wikiViewModel,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            // 1.1.2: Спільнота — стрічка, пости з фото/відео, лайки, репости.
+            composable(Routes.COMMUNITY) {
+                CommunityScreen(
+                    viewModel = communityViewModel,
+                    baseUrl = container.backendApi.effectiveBaseUrl,
+                    onOpenProfile = { navController.navigate(Routes.PROFILE) },
+                    onOpenAuth = { navController.navigate(Routes.AUTH) },
+                )
+            }
+            // 1.1.2: профіль — ім'я, біо, аватар; редагуються лише тут.
+            composable(Routes.PROFILE) {
+                ProfileScreen(
+                    viewModel = profileViewModel,
+                    baseUrl = container.backendApi.effectiveBaseUrl,
                     onBack = { navController.popBackStack() },
                 )
             }
