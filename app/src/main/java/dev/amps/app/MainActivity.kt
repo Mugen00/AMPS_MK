@@ -252,10 +252,18 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
             // 1.0.9: вход, регистрация и безопасность. Аккаунт не блокирует
             // приложение — гость пользуется им целиком, поэтому экран
             // открывается по кнопке, а не принудительно на старте.
+            // 1.1.3: после успешного входа/регистрации — автопереход
+            // в Спільноту: сессия уже сохранена, стричка подхватит её
+            // сама (CommunityViewModel следит за backendSession).
             composable(Routes.AUTH) {
                 AuthScreen(
                     viewModel = authViewModel,
                     onBack = { navController.popBackStack() },
+                    onAuthenticated = {
+                        navController.navigate(Routes.COMMUNITY) {
+                            popUpTo(Routes.AUTH) { inclusive = true }
+                        }
+                    },
                 )
             }
             composable(Routes.UPDATE) {

@@ -33,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,8 +59,26 @@ import dev.amps.app.security.Totp
  * - Бекенд (Railway): JWT + email/SMS верифікація, password reset, sync
  */
 @Composable
-fun AuthScreen(viewModel: AuthViewModel, onBack: () -> Unit) {
+fun AuthScreen(
+    viewModel: AuthViewModel,
+    onBack: () -> Unit,
+    /**
+     * 1.1.3: викликається, коли вхід/реєстрація щойно завершилися успіхом —
+     * навігація веде користувача у Спільноту, а не лишає його на екрані входу.
+     */
+    onAuthenticated: () -> Unit = {},
+) {
     val state by viewModel.state.collectAsState()
+
+    // 1.1.3: автоперехід після успішного входу/реєстрації. Флаг
+    // одноразовий — споживаємо його до навігації, щоб повторне
+    // відкриття екрана не викидало вже увійшовшого користувача.
+    LaunchedEffect(state.justAuthenticated) {
+        if (state.justAuthenticated) {
+            viewModel.consumeAuthenticated()
+            onAuthenticated()
+        }
+    }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(

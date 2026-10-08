@@ -48,6 +48,13 @@ data class AuthState(
     val pendingBackendPassword: String = "",
     val account: Account? = null,
     val backendUser: BackendUser? = null,
+    /**
+     * 1.1.3: одноразовий сигнал «автентифікація щойно завершилася» —
+     * екран входу бачить його і веде користувача у Спільноту. Ставиться
+     * лише в момент завершення входу/реєстрації, ніколи при відновленні
+     * збереженої сесії, щоб випадкове відкриття екрана не викидало людей.
+     */
+    val justAuthenticated: Boolean = false,
 ) {
     enum class Mode { LOGIN, REGISTER, SECURITY, PASSWORD_RESET }
 
@@ -115,6 +122,14 @@ class AuthViewModel(
         _state.value = _state.value.copy(error = null, notice = null)
     }
 
+    /**
+     * 1.1.3: екран входу споживає сигнал і веде у Спільноту. Скидання
+     * одразу після навігації, щоб повторне відкриття екрана не стрибало.
+     */
+    fun consumeAuthenticated() {
+        _state.value = _state.value.copy(justAuthenticated = false)
+    }
+
     // ===== Backend registration =====
     fun registerBackend(login: String, email: String, password: String, phone: String?) {
         if (_state.value.busy) return
@@ -166,7 +181,9 @@ class AuthViewModel(
                         "Вхід успішний."
                     },
                     awaitingBackendCode = !userInfo.emailVerified,
-                    pendingBackendType = if (!userInfo.emailVerified) "EMAIL_VERIFY" else ""
+                    pendingBackendType = if (!userInfo.emailVerified) "EMAIL_VERIFY" else "",
+                    // 1.1.3: вхід завершено — ведемо у Спільноту.
+                    justAuthenticated = !userInfo.emailVerified,
                 )
             }
         }
@@ -219,7 +236,9 @@ class AuthViewModel(
                         else -> "Підтверджено!"
                     },
                     awaitingBackendCode = false,
-                    pendingBackendType = ""
+                    pendingBackendType = "",
+                    // 1.1.3: підтвердження завершено — ведемо у Спільноту.
+                    justAuthenticated = true,
                 )
             }
         }
@@ -236,7 +255,9 @@ class AuthViewModel(
                 _state.value = AuthState(
                     mode = AuthState.Mode.SECURITY,
                     account = account,
-                    notice = "Локальний акаунт створено. Можна увімкнути 2FA."
+                    notice = "Локальний акаунт створено. Можна увімкнути 2FA.",
+                    // 1.1.3: локальна реєстрація одразу знак у — ведемо у Спільноту.
+                    justAuthenticated = true,
                 )
             }
         }
@@ -250,7 +271,12 @@ class AuthViewModel(
             val result = withContext(Dispatchers.Default) { accounts.login(login, password) }
             handleLocalResult(result) { account ->
                 sessionStore.signIn(account)
-                _state.value = AuthState(mode = AuthState.Mode.SECURITY, account = account)
+                // 1.1.3: локальний вхід завершено — ведемо у Спільноту.
+                _state.value = AuthState(
+                    mode = AuthState.Mode.SECURITY,
+                    account = account,
+                    justAuthenticated = true,
+                )
             }
         }
     }
@@ -299,7 +325,12 @@ class AuthViewModel(
             }
             handleLocalResult(result) { account ->
                 sessionStore.signIn(account)
-                _state.value = AuthState(mode = AuthState.Mode.SECURITY, account = account)
+                // 1.1.3: локальний 2FA-код прийнято — ведемо у Спільноту.
+                _state.value = AuthState(
+                    mode = AuthState.Mode.SECURITY,
+                    account = account,
+                    justAuthenticated = true,
+                )
             }
         }
     }
@@ -312,7 +343,11 @@ class AuthViewModel(
             pendingBackendType = "",
             pendingBackendLogin = "",
             pendingBackendPassword = "",
-            error = null
+            error = null,
+            // 1.1.3: «Продовжити без підтвердження» — якщо сесія вже є,
+            // це завершений вхід, і екран веде у Спільноту. Якщо сесії немає,
+            // людина просто лишається на екрані входу як гість.
+            justAuthenticated = _state.value.backendUser != null || _state.value.account != null,
         )
     }
 
@@ -427,6 +462,8 @@ class AuthViewModel(
                         awaitingBackendCode = false,
                         pendingBackendType = "",
                         notice = "2FA увімкнено",
+                        // 1.1.3: налаштування 2FA завершено — ведемо у Спільноту.
+                        justAuthenticated = true,
                         backendUser = current.backendUser?.copy(
                             userInfo = current.backendUser!!.userInfo.copy(twoFactorEnabled = true)
                         )
