@@ -236,27 +236,36 @@ class CommunityViewModel(
 
     /** Живі сторіс; публічно — як і стрічка. Викликається разом із load(). */
     fun loadStories() {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(storiesLoading = true)
-            when (val result = backendApi.getStories()) {
-                is ApiResult.Success -> _state.value = _state.value.copy(
-                    storiesLoading = false,
-                    stories = (result.data as dev.amps.app.data.remote.backend.dto.StoriesResponse).stories,
-                )
-                is ApiResult.Failure -> _state.value = _state.value.copy(
-                    storiesLoading = false,
-                    // Сторіс — необов'язковий блок: помилка не затьмарює стрічку.
-                    notice = "Сторіс не завантажилися: ${result.error}",
-                )
-                is ApiResult.NetworkError -> _state.value = _state.value.copy(
-                    storiesLoading = false,
-                    notice = "Сторіс не завантажилися: ${result.message}",
-                )
-            }
+        viewModelScope.launch { refreshStories() }
+    }
+
+    /** 1.2.0 (патч 25): suspend-ядро, щоб чекати список після публікації. */
+    private suspend fun refreshStories() {
+        _state.value = _state.value.copy(storiesLoading = true)
+        when (val result = backendApi.getStories()) {
+            is ApiResult.Success -> _state.value = _state.value.copy(
+                storiesLoading = false,
+                stories = (result.data as dev.amps.app.data.remote.backend.dto.StoriesResponse).stories,
+            )
+            is ApiResult.Failure -> _state.value = _state.value.copy(
+                storiesLoading = false,
+                // Сторіс — необов'язковий блок: помилка не затьмарює стрічку.
+                notice = "Сторіс не завантажилися: ${result.error}",
+            )
+            is ApiResult.NetworkError -> _state.value = _state.value.copy(
+                storiesLoading = false,
+                notice = "Сторіс не завантажилися: ${result.message}",
+            )
         }
     }
 
-    /** Публікація сторіс: фото або відео з камери. Живе 24 години. */
+    /**
+     * Публікація сторіс: фото або відео з камери/галереї. Живе 24 години.
+     *
+     * 1.2.0 (патч 25): після успіху список оновлюється ДО відкриття
+     * переглядача — і щойно опублікована сторіс ОДРАЗУ показується на весь
+     * екран, як в Instagram (фіксує «зняв — нічого не з'явилось»).
+     */
     fun publishStory(kind: String, bytes: ByteArray) {
         if (_state.value.storyUploading) return
         viewModelScope.launch {
@@ -265,14 +274,21 @@ class CommunityViewModel(
                 backendApi.createStory(header, kind, bytes)
             }
             when (result) {
-                is ApiResult.Success -> _state.value = _state.value.copy(
-                    storyUploading = false,
-                    notice = "Сторіс опубліковано — зникне через 24 години",
-                )
+                is ApiResult.Success -> {
+                    val created = result.data as? dev.amps.app.data.remote.backend.dto.StoryDto
+                    refreshStories()
+                    _state.value = _state.value.copy(
+                        storyUploading = false,
+                        notice = "Сторіс опубліковано — зникне через 24 години",
+                        // Автопоказ опублікованого: список уже свіжий.
+                        openStoryId = created?.id?.takeIf { id ->
+                            _state.value.stories.any { it.id == id }
+                        },
+                    )
+                }
                 is ApiResult.Failure -> _state.value = _state.value.copy(storyUploading = false, error = result.error)
                 is ApiResult.NetworkError -> _state.value = _state.value.copy(storyUploading = false, error = result.message)
             }
-            loadStories()
         }
     }
 

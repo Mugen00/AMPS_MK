@@ -42,11 +42,12 @@ class AppConfig(
         env("GOOGLE_CLIENT_IDS")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList(),
 ) {
 
-    /** Термін життя access-токена: 30 хвилин. */
-    val accessTokenExpiryMillis: Long = 30L * 60 * 1000
-
-    /** Термін життя refresh-токена: 30 днів. */
-    val refreshTokenExpiryMillis: Long = 30L * 24 * 60 * 60 * 1000
+    /** Термін життя access-токена: 7 днів (патч 25), refresh — 365 днів. */
+    // 1.2.0 (патч 25): довга сесія, щоб користувача не викидало.
+    // Access оновлюється автоматично при 401 (ротація refresh),
+    // тому короткий access — це лише безпека, не разлогін.
+    val accessTokenExpiryMillis: Long = 7L * 24 * 60 * 60 * 1000
+    val refreshTokenExpiryMillis: Long = 365L * 24 * 60 * 60 * 1000
 
     /** Термін життя кодів підтвердження: 10 хвилин. */
     val codeExpiryMillis: Long = 10L * 60 * 1000

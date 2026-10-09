@@ -144,13 +144,15 @@ fun CommunityScreen(
     val videoStoryLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakeVideo(),
     ) { thumb ->
-        // TakeVideo повертає Bitmap-прев'ю (null — запис не відбувся);
-        // саме відео лежить у файлі за EXTRA_OUTPUT.
-        if (thumb != null) {
-            // TakeVideo не вміє ліміт тривалості — чесна межа лише за розміром.
-            val bytes = storyVideoFile.takeIf { it.length() in 1..50L * 1024 * 1024 }?.readBytes()
-            if (bytes != null) viewModel.publishStory("video", bytes)
-            else viewModel.publishStoryFailed("Відео порожнє або завелике (ліміт 50 МБ)")
+        // 1.2.0 (патч 25): багато камер (MIUI та ін.) повертають null-прев'ю,
+        // але ВІДЕО пишуть у файл за EXTRA_OUTPUT. Тому рішення — файл:
+        // є файл з даними → публікуємо, навіть якщо прев'ю не прийшло.
+        val bytes = storyVideoFile.takeIf { it.length() in 1..50L * 1024 * 1024 }?.readBytes()
+        when {
+            bytes != null -> viewModel.publishStory("video", bytes)
+            thumb != null ->
+                viewModel.publishStoryFailed("Відео порожнє або завелике (ліміт 50 МБ)")
+            // thumb == null і файл порожній — запис скасовано: мовчки.
         }
     }
 
