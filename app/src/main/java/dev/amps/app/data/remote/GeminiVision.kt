@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -17,6 +18,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -39,8 +41,20 @@ object GeminiVision {
     private const val API_URL =
         "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"
 
-    /** 2026: gemini-2.5-flash більше не видається новим користувачам — API підказав 3.8. */
-    const val DEFAULT_MODEL = "gemini-3.8-flash"
+    /**
+     * 1.2.0 (патч 22): ланцюжок моделей. Перша — офіційний АЛІАС
+     * `gemini-flash-latest`: Google тримає його назавжди актуальним
+     * (вказує на поточний flash), тому «модель відкликана» більше не ламає
+     * аналіз. Далі — конкретні імена на випадок, якщо alias приберуть.
+     */
+    private val FALLBACK_MODELS = listOf(
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+    )
+
+    /** 1.1.3: модель за замовчуванням — перша у ланцюжку фолбеку. */
+    const val DEFAULT_MODEL = "gemini-flash-latest"
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -72,11 +86,20 @@ object GeminiVision {
      * Аналіз: JPEG-байти + ключ → Markdown-текст або виняток з людською
      * причиною. Ключ віддається при кожному виклику — застосунок читає
      * його з налаштувань.
+     *
+     * 1.2.0 (патч 22) — стійкість:
+     *  * модель відкликана (404 / "not found") → наступна у ланцюжку;
+     *  * 429/503 (ліміт тарифу) → один ретрай через паузу;
+     *  * safety-фільтри (часто хибно спрацьовують на аніме) — вимикаються
+     *    BLOCK_NONE; якщо API відмовив — відкат на BLOCK_ONLY_HIGH,
+     *    потім на запит без safetySettings взагалі;
+     *  * 200 без тексту — читаємо blockReason/finishReason і кажемо чесно
+     *    чому замість «порожня відповідь».
      */
     suspend fun analyze(
         imageBytes: ByteArray,
         apiKey: String,
-        model: String = DEFAULT_MODEL,
+        model: String? = null,
     ): String = withContext(Dispatchers.IO) {
         val trimmed = apiKey.trim()
         if (trimmed.isEmpty()) {
@@ -85,7 +108,7 @@ object GeminiVision {
         val compact = toJpegForApi(imageBytes)
             ?: throw IllegalStateException("Не вдалося обробити зображення для AI")
         val base64 = Base64.encodeToString(compact, Base64.NO_WRAP)
-        val payload = buildJsonObject {
+        val contents = buildJsonObject {
             put(
                 "contents",
                 JsonArray(listOf(
@@ -108,22 +131,132 @@ object GeminiVision {
                     },
                 )),
             )
-        }.toString()
+        }
 
+        val models = if (model.isNullOrBlank()) FALLBACK_MODELS else listOf(model)
+        var lastError: Exception? = null
+
+        for (candidate in models) {
+            // Три варіанти safetySettings: BLOCK_NONE → BLOCK_ONLY_HIGH → без них.
+            val safetyVariants: List<Pair<List<String>, String?>> = listOf(
+                SAFETY_CATEGORIES to "BLOCK_NONE",
+                SAFETY_CATEGORIES to "BLOCK_ONLY_HIGH",
+                emptyList<String>() to null,
+            )
+            for ((categories, threshold) in safetyVariants) {
+                val payload = contents.addSafetySettings(categories, threshold).toString()
+                var (code, body) = postOnce(candidate, payload, trimmed)
+                // Ліміт тарифу (429) або перевантаження (503): пауза й один ретрай.
+                if (code == 429 || code == 503) {
+                    delay(RETRY_PAUSE_MS)
+                    val retry = postOnce(candidate, payload, trimmed)
+                    code = retry.first
+                    body = retry.second
+                }
+
+                if (code == 404 || isModelNotFound(code, body)) {
+                    lastError = IllegalStateException("Модель $candidate недоступна (${describe(code, body)})")
+                    break // наступна модель у ланцюжку
+                }
+                if (code == 400 && body.contains("BLOCK_NONE", ignoreCase = true)) {
+                    continue // цей поріг не дозволений — нижчий
+                }
+                if (code != 200) {
+                    throw IllegalStateException("Gemini: ${describe(code, body)}")
+                }
+                val text = extractText(body)
+                if (text != null) return@withContext text
+                // 200, але тексту немає — фільтри або обрізання.
+                throw IllegalStateException(emptyResponseReason(body))
+            }
+        }
+        throw lastError ?: IllegalStateException("Gemini: жодна модель не відповіла")
+    }
+
+    /**
+     * Один HTTP-дзвінок. Мережеві помилки загортаються в людську фразу;
+     * код і тіло повертаються як є для аналізу вгорі.
+     */
+    private fun postOnce(model: String, payload: String, apiKey: String): Pair<Int, String> {
         val request = Request.Builder()
-            .url(API_URL.format(model, URLEncoder.encode(trimmed, "UTF-8")))
+            .url(API_URL.format(model, URLEncoder.encode(apiKey, "UTF-8")))
             .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
-
-        http.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                val message = parseErrorMessage(body)
-                throw IllegalStateException(
-                    if (message != null) "Gemini: $message" else "Gemini: HTTP ${response.code}",
-                )
+        return try {
+            http.newCall(request).execute().use { response ->
+                response.code to response.body?.string().orEmpty()
             }
-            extractText(body) ?: throw IllegalStateException("Gemini повернув порожню відповідь")
+        } catch (error: IOException) {
+            throw IllegalStateException(
+                "Немає зв'язку з Gemini: ${error.message ?: "мережева помилка"}", error,
+            )
+        }
+    }
+
+    /** 404 або 400 з «model … not found» — модель не існує/більше не видається. */
+    private fun isModelNotFound(code: Int, body: String): Boolean =
+        code == 404 ||
+            (code == 400 &&
+                body.contains("model", ignoreCase = true) &&
+                body.contains("not found", ignoreCase = true))
+
+    /** Людська причина від API: error.message, інакше — код. */
+    private fun describe(code: Int, body: String): String =
+        parseErrorMessage(body) ?: "HTTP $code"
+
+    /**
+     * 200 без тексту — читаємо promptFeedback.blockReason або
+     * candidates[0].finishReason і пояснюємо це по-людськи.
+     */
+    private fun emptyResponseReason(body: String): String {
+        val reason = runCatching {
+            val root = json.parseToJsonElement(body).jsonObject
+            val block = (root["promptFeedback"] as? JsonObject)
+                ?.get("blockReason")?.jsonPrimitive?.content
+            block ?: ((root["candidates"] as? JsonArray)
+                ?.firstOrNull() as? JsonObject)
+                ?.get("finishReason")?.jsonPrimitive?.content
+        }.getOrNull()
+        return when (reason) {
+            "SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST" ->
+                "Gemini відмовився аналізувати це фото через фільтр безпеки ($reason) — спробуйте інший кадр"
+            "RECITATION" ->
+                "Gemini припинив відповідь через підозру на цитування (RECITATION) — спробуйте ще раз"
+            "MAX_TOKENS" ->
+                "Відповідь обрізалась через ліміт довжини (MAX_TOKENS) — спробуйте ще раз"
+            null -> "Gemini повернув порожню відповідь"
+            else -> "Gemini не дав текст відповіді (reason: $reason)"
+        }
+    }
+
+    /** Категорії safety для вимкнення блокувань аналізу. */
+    private val SAFETY_CATEGORIES = listOf(
+        "HARM_CATEGORY_HARASSMENT",
+        "HARM_CATEGORY_HATE_SPEECH",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "HARM_CATEGORY_DANGEROUS_CONTENT",
+    )
+
+    private const val RETRY_PAUSE_MS = 1500L
+
+    /** Додає safetySettings до payload: [категорія to поріг]; поріг null — без них. */
+    private fun JsonObject.addSafetySettings(
+        categories: List<String>,
+        threshold: String?,
+    ): JsonObject {
+        if (threshold == null || categories.isEmpty()) return this
+        val source = this
+        return buildJsonObject {
+            for ((key, value) in source) put(key, value)
+            put(
+                "safetySettings",
+                JsonArray(categories.map { category ->
+                    buildJsonObject {
+                        put("category", category)
+                        put("threshold", threshold)
+                    }
+                }),
+            )
         }
     }
 
