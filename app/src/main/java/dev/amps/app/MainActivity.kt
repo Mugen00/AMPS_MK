@@ -77,6 +77,10 @@ class MainActivity : ComponentActivity() {
 
         val container = (application as AmpsApp).container
 
+        // 1.2.0: патч завантажений у фоні, поки застосунок був закритий —
+        // одразу показуємо системне встановлення: відкрив → вікно «Оновити».
+        dev.amps.app.update.maybeAutoInstallPendingUpdate(this)
+
         setContent {
             val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
             AmpsTheme(themeMode = settings.themeMode) {

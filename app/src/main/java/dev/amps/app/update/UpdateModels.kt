@@ -137,6 +137,12 @@ data class UpdateRelease(
     val publishedAt: String?,
     val version: AppVersion,
     val apk: UpdateApk,
+    /**
+     * Номер збирання патча з тіла релізу (`build-code: 21`).
+     * Для патчів, що не міняють versionName: саме він вирішує, пропонувати
+     * оновлення, коли версія та сама. null — реліз без мітки (старі релізи).
+     */
+    val buildCode: Long? = null,
 ) {
     val versionLabel: String get() = version.label
 
@@ -162,6 +168,16 @@ internal fun GitHubReleaseDto.pickApkAsset(): GitHubAssetDto? =
     assets.firstOrNull { it.name.endsWith(RELEASE_APK_SUFFIX, ignoreCase = true) }
         ?: assets.firstOrNull { it.name.endsWith(APK_SUFFIX, ignoreCase = true) }
 
+/**
+ * Номер патча з тіла релізу: рядок `build-code: 21` (або `[build-code]: 21`).
+ * Реліз без мітки — null: порівняння тоді падає назад на versionName.
+ */
+internal fun GitHubReleaseDto.patchBuildCode(): Long? =
+    body?.let { text ->
+        Regex("""build-code\]?:?\s*(\d+)""", RegexOption.IGNORE_CASE)
+            .find(text)?.groupValues?.get(1)?.toLongOrNull()
+    }
+
 /** Maps a decoded release plus its chosen asset onto the domain model. */
 internal fun GitHubReleaseDto.toRelease(version: AppVersion, asset: GitHubAssetDto): UpdateRelease =
     UpdateRelease(
@@ -177,4 +193,5 @@ internal fun GitHubReleaseDto.toRelease(version: AppVersion, asset: GitHubAssetD
             sizeBytes = asset.size,
             contentType = asset.contentType,
         ),
+        buildCode = patchBuildCode(),
     )

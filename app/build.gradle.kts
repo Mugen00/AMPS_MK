@@ -78,7 +78,7 @@ android {
 // всё приложение. Теперь Android убьёт только процесс `:tagger`.
 // Также largeHeap, проверка свободной памяти до загрузки модели и
 // Throwable вместо Exception в разборе кадра.
-        versionCode = 20
+        versionCode = 21
         versionName = "1.2.0"
         resourceConfigurations += listOf("ru", "en")
 
@@ -186,6 +186,10 @@ dependencies {
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+
+    // 1.2.0: фонові патчі — WorkManager перевіряє GitHub і завантажує
+    // нову збірку, поки застосунок закритий (період ~4 години, мережа).
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
 
     // 1.0.6: аниме-тегер вместо ML Kit. ML Kit отдавал общие словари
     // («человек», «волосы») и занимал 20 МБ APK — 81% размера. Тегер

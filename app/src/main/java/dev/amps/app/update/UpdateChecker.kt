@@ -1,6 +1,7 @@
 package dev.amps.app.update
 
 import android.content.Context
+import android.os.Build
 import dev.amps.app.util.readableMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -70,6 +71,12 @@ class UpdateChecker(
     /**
      * Compares the published release against the installed `versionName`.
      *
+     * 1.2.0: іще й за номером збирання. Глобальні релізи підіймають
+     * versionName (1.2.0 → 1.2.1) — вони й так новіші. Патчі лишають
+     * versionName незмінним і містять у тілі релізу рядок
+     * `build-code: N`: оновлення пропонується, коли N більший за
+     * versionCode встановленої збірки — навіть за тієї ж версії.
+     *
      * @throws IOException with a Russian, user-facing message.
      */
     suspend fun check(): UpdateCheck = withContext(Dispatchers.IO) {
@@ -84,8 +91,14 @@ class UpdateChecker(
         val remote = parseVersion(tag)
             ?: throw IOException("Не удалось разобрать номер вер релиза: $tag")
 
-        // Nothing newer: an older release without an APK is not a problem.
-        if (remote <= current) {
+        val installedBuild = installedVersionCode()
+        val remoteBuild = release.patchBuildCode()
+
+        // Нічого нового: версія не вища І (мітки патча немає або номер
+        // збирання не більший). Старіший реліз без APK — не проблема.
+        val patchNewer = installedBuild != null && remoteBuild != null &&
+            remoteBuild > installedBuild
+        if (remote <= current && !patchNewer) {
             return@withContext UpdateCheck.UpToDate(current = currentRaw, latest = remote.label)
         }
 
@@ -94,6 +107,21 @@ class UpdateChecker(
 
         UpdateCheck.Available(release.toRelease(version = remote, asset = asset))
     }
+
+    /**
+     * `versionCode` встановленої збірки. Патчі з однаковою versionName
+     * розпізнаються саме по ньому: 20 → 21 — «є патч», навіть коли
+     * versionName обох — «1.2.0».
+     */
+    private fun installedVersionCode(): Long? = runCatching {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+    }.getOrNull()?.takeIf { it > 0 }
 
     /** One GET, mapped onto the three documented failures plus everything else. */
     private fun readLatestRelease(): GitHubReleaseDto {
