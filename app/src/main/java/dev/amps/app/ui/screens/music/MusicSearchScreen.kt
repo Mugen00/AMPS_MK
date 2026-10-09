@@ -26,13 +26,18 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -71,8 +76,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.amps.app.AmpsApp
 import dev.amps.app.data.model.AudioLibraryEntry
-import dev.amps.app.data.model.DownloadProgress
-import dev.amps.app.data.model.DownloadState
 import dev.amps.app.data.model.FreeTrack
 import dev.amps.app.data.model.FreeTrackFilter
 import dev.amps.app.data.model.LicenceSummary
@@ -81,6 +84,7 @@ import dev.amps.app.data.model.MusicHitKind
 import dev.amps.app.data.model.MusicSearchScope
 import dev.amps.app.data.model.MusicSourceError
 import dev.amps.app.data.repo.MusicRepository
+import dev.amps.app.music.MusicOnlinePlayer
 import dev.amps.app.ui.components.EmptyState
 import dev.amps.app.ui.components.InfoChip
 import dev.amps.app.ui.components.NetworkImage
@@ -102,8 +106,11 @@ fun MusicSearchScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val downloads by viewModel.downloads.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
+
+    // 1.2.1: стан онлайн-плеєра (трек, що грає зараз) — живе в AppContainer.
+    val nowPlaying = viewModel.player?.now?.collectAsStateWithLifecycle()?.value
+    val isPlaying = viewModel.player?.playing?.collectAsStateWithLifecycle()?.value ?: false
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::importAudio)
@@ -116,6 +123,11 @@ fun MusicSearchScreen(
         val message = state.message ?: return@LaunchedEffect
         snackbar.showSnackbar(message)
         viewModel.dismissMessage()
+    }
+
+    LaunchedEffect(Unit) {
+        // 1.2.1: плейлісти підтягуються раз, при вході на вкладку музики.
+        viewModel.loadPlaylists()
     }
 
     Scaffold(
@@ -172,9 +184,7 @@ fun MusicSearchScreen(
                 keyboardActions = KeyboardActions(onSearch = { viewModel.submit() }),
             )
 
-            // Что человек получит — выбирается ДО поиска, а не после. Это
-            // единственное место, где можно честно сказать «здесь будут файлы»
-            // или «здесь будут только ссылки», не обманывая его результатом.
+            // 1.2.1: завантажень більше немає — пошук і онлайн-прослуховування.
             ScopePicker(state.scope, state.scope.blurb) { viewModel.onScopeChange(it) }
 
             TabRow(selectedTabIndex = state.tab) {
@@ -189,6 +199,14 @@ fun MusicSearchScreen(
                     text = { Text("Свободные") },
                 )
                 Tab(
+                    selected = state.tab == MusicSearchViewModel.TAB_PLAYLISTS,
+                    onClick = {
+                        viewModel.onTabChange(MusicSearchViewModel.TAB_PLAYLISTS)
+                        viewModel.loadPlaylists()
+                    },
+                    text = { Text("Плейлісти") },
+                )
+                Tab(
                     selected = state.tab == MusicSearchViewModel.TAB_LIBRARY,
                     onClick = { viewModel.onTabChange(MusicSearchViewModel.TAB_LIBRARY) },
                     text = { Text("Мои файлы") },
@@ -196,13 +214,40 @@ fun MusicSearchScreen(
             }
 
             when (state.tab) {
-                MusicSearchViewModel.TAB_FREE -> FreeTracksTab(state, downloads, viewModel, onOpenTrack)
+                MusicSearchViewModel.TAB_PLAYLISTS -> PlaylistsTab(state, viewModel, nowPlaying, isPlaying)
+                MusicSearchViewModel.TAB_FREE -> FreeTracksTab(
+                    state, viewModel, nowPlaying, isPlaying, onOpenTrack,
+                )
                 MusicSearchViewModel.TAB_LIBRARY -> LibraryTab(state, viewModel, onOpenTrack) {
                     picker.launch(arrayOf("audio/*"))
                 }
-                else -> MetadataTab(state, viewModel, onOpenTrack)
+                else -> MetadataTab(state, viewModel, nowPlaying, isPlaying, onOpenTrack)
+            }
+
+            // 1.2.1: міні-плеєр — завжди внизу, поки щось грає.
+            nowPlaying?.let { now ->
+                PlayerBar(
+                    now = now,
+                    isPlaying = isPlaying,
+                    onToggle = viewModel::togglePlay,
+                    onNext = viewModel::nextTrack,
+                    onPrevious = viewModel::previousTrack,
+                    onClose = viewModel::stopPlayer,
+                )
             }
         }
+    }
+
+    // 1.2.1: діалог «додати в плейліст» — поверх екрана.
+    state.addTrackTarget?.let { target ->
+        AddToPlaylistDialog(
+            track = target,
+            playlists = state.playlists,
+            busy = state.playlistBusy,
+            onPick = { playlistId -> viewModel.addToPlaylist(target, playlistId) },
+            onCreate = { name -> viewModel.createPlaylist(name) },
+            onDismiss = viewModel::dismissAddToPlaylist,
+        )
     }
 }
 
@@ -258,6 +303,8 @@ private fun ScopePicker(
 private fun MetadataTab(
     state: MusicSearchViewModel.UiState,
     viewModel: MusicSearchViewModel,
+    nowPlaying: MusicOnlinePlayer.NowPlaying?,
+    isPlaying: Boolean,
     onOpenTrack: () -> Unit,
 ) {
     val files = state.hits.filter { it.freeTrack != null }
@@ -281,19 +328,25 @@ private fun MetadataTab(
             if (files.isNotEmpty()) {
                 item(key = "section-files") {
                     SectionLabel(
-                        title = "Можно скачать",
+                        title = "Слухати онлайн",
                         count = files.size,
-                        subtitle = "Свободная лицензия, файл отдаёт источник",
+                        subtitle = "Повний трек з вільного джерела — грає одразу",
                         color = AmpsColors.violet,
                     )
                 }
                 items(files, key = { it.key }) { hit ->
                     UnifiedTrackRow(
                         hit = hit,
+                        isPlaying = nowPlaying?.trackKey == hit.freeTrack?.key && isPlaying,
+                        onPlay = {
+                            val track = hit.freeTrack ?: return@UnifiedTrackRow
+                            val mine = nowPlaying?.trackKey == track.key
+                            if (mine) viewModel.togglePlay() else viewModel.playTrack(track)
+                        },
+                        onAddToPlaylist = { hit.freeTrack?.let(viewModel::showAddToPlaylist) },
                         onClick = {
                             if (viewModel.openResult(hit)) onOpenTrack()
                         },
-                        onDownload = { hit.freeTrack?.let(viewModel::downloadAndImport) },
                     )
                 }
             }
@@ -310,10 +363,12 @@ private fun MetadataTab(
                 items(metadata, key = { it.key }) { hit ->
                     UnifiedTrackRow(
                         hit = hit,
+                        isPlaying = false,
+                        onPlay = {},
+                        onAddToPlaylist = {},
                         onClick = {
                             if (viewModel.openResult(hit)) onOpenTrack()
                         },
-                        onDownload = {},
                     )
                 }
             }
@@ -410,16 +465,16 @@ private fun LicenceBanner(summary: LicenceSummary) {
 /**
  * Строка объединённой выдачи.
  *
- * Кнопка скачивания активна ровно там, где [dev.amps.app.data.model.FreeTrack.downloadable]
- * истинно, то есть где есть и файл, и прочитанная лицензия. Всё остальное —
- * серая подпись, потому что «скачать» рядом с описанием записи было бы обещанием,
- * которого источник не выполняет.
+ * 1.2.1: кнопка скачивания заменена на ПЛЕЙ — треки вільних джерел грають
+ * потоково, повністю. iTunes — чесна позначка «прев'ю 30с».
  */
 @Composable
 private fun UnifiedTrackRow(
     hit: MusicHit,
+    isPlaying: Boolean,
+    onPlay: () -> Unit,
+    onAddToPlaylist: () -> Unit,
     onClick: () -> Unit,
-    onDownload: () -> Unit,
 ) {
     TrackCard(onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -457,14 +512,22 @@ private fun UnifiedTrackRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (hit.downloadable) {
-                IconButton(onClick = onDownload) {
+            // 1.2.1: ПЛЕЙ (онлайн-потік) + «додати в плейліст».
+            if (hit.freeTrack?.audioUrl != null) {
+                IconButton(onClick = onPlay) {
                     Icon(
-                        imageVector = Icons.Default.Download,
-                        contentDescription = "Скачать в музыку телефона",
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Пауза" else "Слухати онлайн",
                         tint = AmpsColors.violet,
                     )
                 }
+            }
+            IconButton(onClick = onAddToPlaylist) {
+                Icon(
+                    imageVector = Icons.Default.PlaylistAdd,
+                    contentDescription = "Додати в плейліст",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 
@@ -516,8 +579,9 @@ private fun UnifiedTrackRow(
 @Composable
 private fun FreeTracksTab(
     state: MusicSearchViewModel.UiState,
-    downloads: Map<String, DownloadProgress>,
     viewModel: MusicSearchViewModel,
+    nowPlaying: MusicOnlinePlayer.NowPlaying?,
+    isPlaying: Boolean,
     onOpenTrack: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
@@ -580,12 +644,16 @@ private fun FreeTracksTab(
             items(state.freeResults, key = { it.key }) { track ->
                 FreeTrackRow(
                     track = track,
-                    progress = downloads[track.key],
+                    isPlaying = nowPlaying?.trackKey == track.key && isPlaying,
+                    onPlay = {
+                        val mine = nowPlaying?.trackKey == track.key
+                        if (mine) viewModel.togglePlay() else viewModel.playTrack(track)
+                    },
+                    onAddToPlaylist = { viewModel.showAddToPlaylist(track) },
                     onOpen = {
                         viewModel.openFreeTrack(track)
                         onOpenTrack()
                     },
-                    onDownload = { viewModel.downloadAndImport(track) },
                 )
             }
         }
@@ -595,9 +663,10 @@ private fun FreeTracksTab(
 @Composable
 private fun FreeTrackRow(
     track: FreeTrack,
-    progress: DownloadProgress?,
+    isPlaying: Boolean,
+    onPlay: () -> Unit,
+    onAddToPlaylist: () -> Unit,
     onOpen: () -> Unit,
-    onDownload: () -> Unit,
 ) {
     TrackCard(onClick = onOpen) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -635,14 +704,21 @@ private fun FreeTrackRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(
-                onClick = onDownload,
-                enabled = track.downloadable && progress?.state != DownloadState.RUNNING,
-            ) {
+            // 1.2.1: ПЛЕЙ (повне онлайн-прослуховування) + плейліст.
+            if (!track.audioUrl.isNullOrBlank()) {
+                IconButton(onClick = onPlay) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlaying) "Пауза" else "Слухати онлайн",
+                        tint = AmpsColors.violet,
+                    )
+                }
+            }
+            IconButton(onClick = onAddToPlaylist) {
                 Icon(
-                    imageVector = Icons.Default.Download,
-                    contentDescription = "Скачать в музыку телефона",
-                    tint = if (track.downloadable) AmpsColors.violet else MaterialTheme.colorScheme.onSurfaceVariant,
+                    imageVector = Icons.Default.PlaylistAdd,
+                    contentDescription = "Додати в плейліст",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -682,33 +758,6 @@ private fun FreeTrackRow(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
-
-        progress?.let { bar ->
-            Spacer(Modifier.height(8.dp))
-            when (bar.state) {
-                DownloadState.RUNNING -> {
-                    LinearProgressIndicator(
-                        progress = { bar.fraction ?: 0f },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text(
-                        text = "${formatBytes(bar.bytesRead)} из ${formatBytes(bar.totalBytes) ?: "?"}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                DownloadState.DONE -> Text(
-                    text = "Файл сохранён: ${formatBytes(bar.bytesRead)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AmpsColors.violet,
-                )
-                DownloadState.FAILED -> Text(
-                    text = bar.message.orEmpty(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AmpsColors.danger,
-                )
-            }
         }
     }
 }
@@ -854,6 +903,353 @@ private fun SourceErrors(errors: List<MusicSourceError>) {
             )
         }
     }
+}
+
+/** Треки плейліста → черга онлайн-плеєра. Ключ "pl:source:sourceId". */
+private fun playlistToQueue(
+    tracks: List<dev.amps.app.data.remote.backend.dto.PlaylistTrackDto>,
+): List<MusicOnlinePlayer.QueueItem> = tracks.map { t ->
+    MusicOnlinePlayer.QueueItem(
+        trackKey = "pl:${t.source}:${t.sourceId}",
+        title = t.title,
+        artist = t.artist,
+        audioUrl = t.audioUrl,
+        coverUrl = t.coverUrl,
+        isPreview = t.source == "itunes",
+    )
+}
+
+// --- вкладка «Плейлісти» (1.2.1) ---------------------------------------------
+
+/**
+ * Свої плейлісти акаунта — живуть у базі сервера і переживают оновлення,
+ * бо прив'язані до профіля, а не до пристрою.
+ */
+@Composable
+private fun PlaylistsTab(
+    state: MusicSearchViewModel.UiState,
+    viewModel: MusicSearchViewModel,
+    nowPlaying: MusicOnlinePlayer.NowPlaying?,
+    isPlaying: Boolean,
+) {
+    var newPlaylistName by remember { mutableStateOf("") }
+
+    Column(Modifier.fillMaxSize()) {
+        // Створення нового плейліста.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            OutlinedTextField(
+                value = newPlaylistName,
+                onValueChange = { newPlaylistName = it },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text("Назва нового плейліста") },
+            )
+            Spacer(Modifier.width(8.dp))
+            FilledTonalButton(
+                onClick = {
+                    viewModel.createPlaylist(newPlaylistName)
+                    newPlaylistName = ""
+                },
+                enabled = newPlaylistName.isNotBlank() && !state.playlistBusy,
+            ) {
+                Text("Створити")
+            }
+        }
+
+        if (!state.playlistsAuthorized) {
+            EmptyState(
+                icon = Icons.Default.LibraryMusic,
+                title = "Плейлісти живуть в акаунті",
+                message = "Увійдіть у спільноті — плейлісти прив'яжуться до вашого профіля " +
+                    "і зберігатимуться на сервері: вони не зникнуть після оновлення застосунку.",
+            )
+            return@Column
+        }
+        if (state.playlistsLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+
+        if (state.openPlaylistId != null) {
+            // --- детальний вигляд: треки відкритого плейліста ---
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = state.openPlaylistName.ifEmpty { "Плейліст" },
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = "${state.openPlaylistTracks.size} треків",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = viewModel::closePlaylist) { Text("До списку") }
+            }
+            if (state.openPlaylistTracks.isNotEmpty()) {
+                val queue = playlistToQueue(state.openPlaylistTracks)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                ) {
+                    FilledTonalButton(onClick = {
+                        viewModel.player?.play(queue, queue.firstOrNull()?.trackKey.orEmpty())
+                    }) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Грати все")
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+            LazyColumn(
+                contentPadding = PaddingValues(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(state.openPlaylistTracks, key = { it.id }) { row ->
+                    PlaylistTrackRow(
+                        track = row,
+                        isPlaying = nowPlaying?.trackKey == "pl:${row.source}:${row.sourceId}" && isPlaying,
+                        onPlay = {
+                            val queue = playlistToQueue(state.openPlaylistTracks)
+                            val mine = nowPlaying?.trackKey == "pl:${row.source}:${row.sourceId}"
+                            if (mine) viewModel.togglePlay()
+                            else viewModel.player?.play(queue, "pl:${row.source}:${row.sourceId}")
+                        },
+                        onRemove = {
+                            state.openPlaylistId?.let { id -> viewModel.removePlaylistTrack(id, row.id) }
+                        },
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                contentPadding = PaddingValues(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (state.playlists.isEmpty() && !state.playlistsLoading) {
+                    item {
+                        EmptyState(
+                            icon = Icons.Default.LibraryMusic,
+                            title = "Плейлістів ще немає",
+                            message = "Знайдіть трек на вкладках «Поиск» або «Свободные», " +
+                                "натисніть «+» у рядку — і він опиниться тут. Плейлісти " +
+                                "прив'язані до акаунта і живуть на сервері.",
+                        )
+                    }
+                }
+                items(state.playlists, key = { it.id }) { pl ->
+                    TrackCard(onClick = { viewModel.openPlaylist(pl.id) }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.LibraryMusic,
+                                contentDescription = null,
+                                tint = AmpsColors.violet,
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(pl.name, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = "${pl.trackCount} треків",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(onClick = { viewModel.deletePlaylist(pl.id) }) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Видалити плейліст",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Рядок трека всередині плейліста: грає потоково, можна прибрати. */
+@Composable
+private fun PlaylistTrackRow(
+    track: dev.amps.app.data.remote.backend.dto.PlaylistTrackDto,
+    isPlaying: Boolean,
+    onPlay: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    TrackCard(onClick = onPlay) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            NetworkImage(
+                url = track.coverUrl,
+                contentDescription = track.title,
+                modifier = Modifier
+                    .size(width = 48.dp, height = 56.dp)
+                    .clip(RoundedCornerShape(12.dp)),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = track.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = track.artist.ifEmpty { "автор не указан" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = track.source,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onPlay) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (isPlaying) "Пауза" else "Слухати",
+                    tint = AmpsColors.violet,
+                )
+            }
+            IconButton(onClick = onRemove) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Прибрати з плейліста",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** Міні-плеєр: що грає, плей/пауза, далі/назад, стоп. */
+@Composable
+private fun PlayerBar(
+    now: MusicOnlinePlayer.NowPlaying,
+    isPlaying: Boolean,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Surface(
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+        ) {
+            NetworkImage(
+                url = now.coverUrl,
+                contentDescription = now.title,
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(10.dp)),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = now.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = (now.artist.ifBlank { "—" }) + if (now.isPreview) " · прев'ю 30с" else "",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onPrevious) {
+                Icon(Icons.Default.SkipPrevious, contentDescription = "Попередній")
+            }
+            IconButton(onClick = onToggle) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (isPlaying) "Пауза" else "Грати",
+                    tint = AmpsColors.violet,
+                )
+            }
+            IconButton(onClick = onNext) {
+                Icon(Icons.Default.SkipNext, contentDescription = "Наступний")
+            }
+            IconButton(onClick = onClose) {
+                Icon(Icons.Default.Close, contentDescription = "Зупинити", tint = AmpsColors.danger)
+            }
+        }
+    }
+}
+
+/** Діалог вибору плейліста для трека (або створення нового). */
+@Composable
+private fun AddToPlaylistDialog(
+    track: FreeTrack,
+    playlists: List<dev.amps.app.data.remote.backend.dto.PlaylistDto>,
+    busy: Boolean,
+    onPick: (Int) -> Unit,
+    onCreate: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var newName by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Додати в плейліст") },
+        text = {
+            Column {
+                Text(
+                    track.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(modifier = Modifier.height(180.dp)) {
+                    items(playlists, key = { it.id }) { pl ->
+                        TextButton(onClick = { onPick(pl.id) }) {
+                            Text("${pl.name} · ${pl.trackCount}")
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("Або створити новий") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (newName.isNotBlank()) onCreate(newName) },
+                enabled = !busy && newName.isNotBlank(),
+            ) {
+                Text("Створити плейліст")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Скасувати") }
+        },
+    )
 }
 
 // --- точка входа во view model -------------------------------------------------

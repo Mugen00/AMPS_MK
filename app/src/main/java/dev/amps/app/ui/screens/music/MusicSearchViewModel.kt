@@ -15,6 +15,14 @@ import dev.amps.app.data.model.MusicSource
 import dev.amps.app.data.model.MusicSourceError
 import dev.amps.app.data.model.TrackTarget
 import dev.amps.app.data.ranking.MusicRanker
+import dev.amps.app.data.remote.backend.BackendApi
+import dev.amps.app.data.remote.backend.BackendSession
+import dev.amps.app.data.remote.backend.dto.PlaylistDto
+import dev.amps.app.data.remote.backend.dto.PlaylistTrackAddRequest
+import dev.amps.app.data.remote.backend.dto.PlaylistTrackDto
+import dev.amps.app.data.remote.backend.dto.PlaylistsResponse
+import dev.amps.app.data.remote.backend.dto.PlaylistTracksResponse
+import dev.amps.app.music.MusicOnlinePlayer
 import dev.amps.app.util.readableMessage
 import dev.amps.app.data.repo.MusicRepository
 import kotlinx.coroutines.CancellationException
@@ -45,6 +53,9 @@ import kotlinx.coroutines.launch
  */
 class MusicSearchViewModel(
     private val repository: MusicRepository,
+    private val backendApi: BackendApi? = null,
+    private val backendSession: BackendSession? = null,
+    val player: MusicOnlinePlayer? = null,
 ) : ViewModel() {
 
     data class UiState(
@@ -66,6 +77,18 @@ class MusicSearchViewModel(
         val recentQueries: List<String> = emptyList(),
         val library: List<AudioLibraryEntry> = emptyList(),
         val importsInProgress: Boolean = false,
+        // ===== 1.2.1: плейлісти акаунта (живуть у базі сервера) =====
+        val playlists: List<PlaylistDto> = emptyList(),
+        val playlistsLoading: Boolean = false,
+        /** Відкритий плейліст: id; null — показуємо список плейлістів. */
+        val openPlaylistId: Int? = null,
+        val openPlaylistName: String = "",
+        val openPlaylistTracks: List<PlaylistTrackDto> = emptyList(),
+        val playlistBusy: Boolean = false,
+        /** Трек, який користувач додає в плейліст (відкрито діалог вибору). */
+        val addTrackTarget: FreeTrack? = null,
+        /** Плейлісти прив'язані до акаунта — без входу вкладка просить увійти. */
+        val playlistsAuthorized: Boolean = false,
     ) {
         val hasQuery: Boolean get() = query.isNotBlank()
 
@@ -231,38 +254,191 @@ class MusicSearchViewModel(
 
     // --- files --------------------------------------------------------------
 
-    fun download(track: FreeTrack) {
+    /**
+     * 1.2.1: завантажень більше немає. Замість кнопки «скачати» — ПЛЕЙ:
+     * повне онлайн-прослуховування потоково з вільних джерел
+     * (Jamendo / Internet Archive / ccMixter / Openverse; iTunes — 30с-прев'ю).
+     * [queue] — що гратиме далі (видача пошуку).
+     */
+    fun playTrack(track: FreeTrack, queue: List<FreeTrack> = _state.value.freeResults) {
+        val p = player ?: return
+        val items = queue.filter { !it.audioUrl.isNullOrBlank() }.map { t ->
+            MusicOnlinePlayer.QueueItem(
+                trackKey = t.key,
+                title = t.title,
+                artist = t.artistName ?: "",
+                audioUrl = t.audioUrl.orEmpty(),
+                coverUrl = t.coverUrl,
+                isPreview = t.source == MusicSource.ITUNES,
+            )
+        }
+        p.play(items, track.key)
+    }
+
+    fun togglePlay() = player?.toggle()
+    fun nextTrack() = player?.next()
+    fun previousTrack() = player?.previous()
+    fun stopPlayer() = player?.stop()
+
+    // --- плейлісти акаунта (1.2.1) -------------------------------------------
+
+    /** Плейлісти живуть у базі на сервері — потрібен вхід. */
+    fun loadPlaylists() {
+        val api = backendApi ?: return
+        val session = backendSession ?: return
         viewModelScope.launch {
-            runCatching { repository.download(track) }
-                .onSuccess { entry ->
-                    refreshLibrary()
-                    _state.update { it.copy(message = "Сохранено: ${entry.fileName}") }
+            _state.update { it.copy(playlistsLoading = true) }
+            val stored = session.current()
+            if (stored == null) {
+                _state.update { it.copy(playlistsLoading = false, playlistsAuthorized = false) }
+                return@launch
+            }
+            when (val result = api.getPlaylists("Bearer ${stored.accessToken}")) {
+                is dev.amps.app.data.remote.backend.ApiResult.Success -> _state.update {
+                    it.copy(
+                        playlistsLoading = false,
+                        playlistsAuthorized = true,
+                        playlists = (result.data as PlaylistsResponse).playlists,
+                    )
                 }
-                .onFailure { error ->
-                    _state.update { it.copy(message = "Не удалось скачать: ${error.readableMessage()}") }
+                is dev.amps.app.data.remote.backend.ApiResult.Failure -> _state.update {
+                    it.copy(playlistsLoading = false, message = "Плейлісти: ${result.error}")
                 }
+                is dev.amps.app.data.remote.backend.ApiResult.NetworkError -> _state.update {
+                    it.copy(playlistsLoading = false, message = "Плейлісти: ${result.message}")
+                }
+            }
         }
     }
 
-    /**
-     * 1.0.3: скачать **и положить в музыку телефона** одним действием.
-     *
-     * Раньше файл оставался внутри приложения, и обычный плеер его не видел.
-     * Теперь после скачивания он кладётся в `Музыка/AMPS` с тегами и обложкой —
-     * то есть в список, который пользователь уже слушает.
-     */
-    fun downloadAndImport(track: FreeTrack) {
+    fun createPlaylist(name: String) {
+        val api = backendApi ?: return
+        val session = backendSession ?: return
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
         viewModelScope.launch {
-            runCatching { repository.importToLibrary(track) }
-                .onSuccess { imported ->
-                    refreshLibrary()
+            val stored = session.current() ?: run {
+                _state.update { it.copy(message = "Плейлісти зберігаються в акаунті — увійдіть у спільноті") }
+                return@launch
+            }
+            _state.update { it.copy(playlistBusy = true) }
+            when (val result = api.createPlaylist("Bearer ${stored.accessToken}", trimmed)) {
+                is dev.amps.app.data.remote.backend.ApiResult.Success -> {
+                    loadPlaylists()
+                    _state.update { it.copy(playlistBusy = false, message = "Плейліст створено") }
+                }
+                is dev.amps.app.data.remote.backend.ApiResult.Failure ->
+                    _state.update { it.copy(playlistBusy = false, message = result.error) }
+                is dev.amps.app.data.remote.backend.ApiResult.NetworkError ->
+                    _state.update { it.copy(playlistBusy = false, message = result.message) }
+            }
+        }
+    }
+
+    fun deletePlaylist(playlistId: Int) {
+        val api = backendApi ?: return
+        val session = backendSession ?: return
+        viewModelScope.launch {
+            val stored = session.current() ?: return@launch
+            _state.update { it.copy(playlistBusy = true) }
+            api.deletePlaylist("Bearer ${stored.accessToken}", playlistId)
+            if (_state.value.openPlaylistId == playlistId) closePlaylist()
+            loadPlaylists()
+        }
+    }
+
+    fun openPlaylist(id: Int) {
+        val api = backendApi ?: return
+        val session = backendSession ?: return
+        viewModelScope.launch {
+            val stored = session.current() ?: return@launch
+            _state.update { it.copy(playlistBusy = true, openPlaylistId = id) }
+            when (val result = api.getPlaylistTracks("Bearer ${stored.accessToken}", id)) {
+                is dev.amps.app.data.remote.backend.ApiResult.Success -> {
+                    val name = _state.value.playlists
+                        .firstOrNull { it.id == id }?.name.orEmpty()
                     _state.update {
-                        it.copy(message = "В «Музыка/AMPS»: ${imported.displayPath.substringAfterLast('/')}")
+                        it.copy(
+                            playlistBusy = false,
+                            openPlaylistId = id,
+                            openPlaylistName = name,
+                            openPlaylistTracks = (result.data as PlaylistTracksResponse).tracks,
+                        )
                     }
                 }
-                .onFailure { error ->
-                    _state.update { it.copy(message = "Не удалось сохранить: ${error.readableMessage()}") }
+                is dev.amps.app.data.remote.backend.ApiResult.Failure ->
+                    _state.update { it.copy(playlistBusy = false, message = result.error) }
+                is dev.amps.app.data.remote.backend.ApiResult.NetworkError ->
+                    _state.update { it.copy(playlistBusy = false, message = result.message) }
+            }
+        }
+    }
+
+    fun closePlaylist() {
+        _state.update {
+            it.copy(openPlaylistId = null, openPlaylistName = "", openPlaylistTracks = emptyList())
+        }
+    }
+
+    /** Відкрити діалог «додати в плейліст» для трека з видачі. */
+    fun showAddToPlaylist(track: FreeTrack) {
+        loadPlaylists()
+        _state.update { it.copy(addTrackTarget = track) }
+    }
+
+    fun dismissAddToPlaylist() = _state.update { it.copy(addTrackTarget = null) }
+
+    /** Додати трек (знімок рядка пошуку) у свій плейліст. */
+    fun addToPlaylist(track: FreeTrack, playlistId: Int) {
+        val api = backendApi ?: return
+        val session = backendSession ?: return
+        viewModelScope.launch {
+            val stored = session.current() ?: run {
+                _state.update {
+                    it.copy(addTrackTarget = null, message = "Плейлісти доступні після входу в акаунт")
                 }
+                return@launch
+            }
+            val request = PlaylistTrackAddRequest(
+                source = track.source.name.lowercase(),
+                sourceId = track.sourceId,
+                title = track.title,
+                artist = track.artistName.orEmpty(),
+                audioUrl = track.audioUrl.orEmpty(),
+                coverUrl = track.coverUrl,
+                pageUrl = track.pageUrl,
+                licenseUrl = track.license.url,
+                durationSec = track.format.durationSec,
+            )
+            _state.update { it.copy(playlistBusy = true, addTrackTarget = null) }
+            when (val result = api.addPlaylistTrack("Bearer ${stored.accessToken}", playlistId, request)) {
+                is dev.amps.app.data.remote.backend.ApiResult.Success ->
+                    _state.update { it.copy(playlistBusy = false, message = "Додано: ${track.title}") }
+                is dev.amps.app.data.remote.backend.ApiResult.Failure ->
+                    _state.update { it.copy(playlistBusy = false, message = result.error) }
+                is dev.amps.app.data.remote.backend.ApiResult.NetworkError ->
+                    _state.update { it.copy(playlistBusy = false, message = result.message) }
+            }
+        }
+    }
+
+    fun removePlaylistTrack(playlistId: Int, trackRowId: Int) {
+        val api = backendApi ?: return
+        val session = backendSession ?: return
+        viewModelScope.launch {
+            val stored = session.current() ?: return@launch
+            _state.update { it.copy(playlistBusy = true) }
+            when (
+                api.removePlaylistTrack("Bearer ${stored.accessToken}", playlistId, trackRowId)
+            ) {
+                is dev.amps.app.data.remote.backend.ApiResult.Success -> {
+                    _state.update { it.copy(playlistBusy = false) }
+                    openPlaylist(playlistId)
+                }
+                else -> _state.update {
+                    it.copy(playlistBusy = false, message = "Не вдалося прибрати трек")
+                }
+            }
         }
     }
 
@@ -376,6 +552,9 @@ class MusicSearchViewModel(
         const val TAB_FREE = 1
         const val TAB_LIBRARY = 2
 
+        /** 1.2.1: свої плейлісти акаунта (у базі сервера). */
+        const val TAB_PLAYLISTS = 3
+
         /** iTunes asks for ≥350 ms between calls; 420 ms leaves a little slack. */
         const val DEBOUNCE_MS = 420L
 
@@ -398,6 +577,9 @@ class MusicSearchViewModel(
  */
 class MusicSearchViewModelFactory(
     private val repository: MusicRepository,
+    private val backendApi: BackendApi? = null,
+    private val backendSession: BackendSession? = null,
+    private val player: MusicOnlinePlayer? = null,
 ) : ViewModelProvider.Factory {
 
     @Suppress("UNCHECKED_CAST")
@@ -405,6 +587,6 @@ class MusicSearchViewModelFactory(
         require(modelClass.isAssignableFrom(MusicSearchViewModel::class.java)) {
             "MusicSearchViewModelFactory не умеет создавать ${modelClass.name}"
         }
-        return MusicSearchViewModel(repository) as T
+        return MusicSearchViewModel(repository, backendApi, backendSession, player) as T
     }
 }

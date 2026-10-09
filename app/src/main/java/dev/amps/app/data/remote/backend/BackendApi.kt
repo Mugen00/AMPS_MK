@@ -283,6 +283,44 @@ class BackendApi private constructor(
         }
     }
 
+    // ===== Плейлісти (1.2.1) =====
+
+    /** Свої плейлісти акаунта (живуть у базі сервера). */
+    suspend fun getPlaylists(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "playlists", null, PlaylistsResponse.serializer(), authHeader)
+    }
+
+    suspend fun createPlaylist(authHeader: String, name: String): ApiResult = withContext(Dispatchers.IO) {
+        val body = json.encodeToString(PlaylistCreateRequest.serializer(), PlaylistCreateRequest(name))
+        execute("POST", "playlists", body, PlaylistCreatedResponse.serializer(), authHeader)
+    }
+
+    suspend fun deletePlaylist(authHeader: String, playlistId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("DELETE", "playlists/$playlistId", null, PlaylistsResponse.serializer(), authHeader)
+    }
+
+    /** Треки плейліста — знімки рядків пошуку, готові до онлайн-програвання. */
+    suspend fun getPlaylistTracks(authHeader: String, playlistId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "playlists/$playlistId/tracks", null, PlaylistTracksResponse.serializer(), authHeader)
+    }
+
+    suspend fun addPlaylistTrack(
+        authHeader: String,
+        playlistId: Int,
+        track: PlaylistTrackAddRequest,
+    ): ApiResult = withContext(Dispatchers.IO) {
+        val body = json.encodeToString(PlaylistTrackAddRequest.serializer(), track)
+        execute("POST", "playlists/$playlistId/tracks", body, PlaylistCreatedResponse.serializer(), authHeader)
+    }
+
+    suspend fun removePlaylistTrack(authHeader: String, playlistId: Int, trackRowId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute(
+                "DELETE", "playlists/$playlistId/tracks/$trackRowId", null,
+                PlaylistTracksResponse.serializer(), authHeader,
+            )
+        }
+
     // ===== Google (1.2.0) =====
 
     /** Вхід/реєстрація через Google: ID-токен перевіряє сервер. */

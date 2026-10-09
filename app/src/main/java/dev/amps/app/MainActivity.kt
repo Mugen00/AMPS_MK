@@ -140,7 +140,12 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
     )
     val wikiViewModel: WikiViewModel = viewModel(factory = WikiViewModel.Factory(container.frameRepository))
     val musicViewModel: MusicSearchViewModel = viewModel(
-        factory = MusicSearchViewModelFactory(container.musicRepository)
+        factory = MusicSearchViewModelFactory(
+            repository = container.musicRepository,
+            backendApi = container.backendApi,
+            backendSession = container.backendSession,
+            player = container.musicPlayer,
+        )
     )
     val trackViewModel: TrackWikiViewModel = viewModel(
         factory = TrackWikiViewModelFactory(container.musicRepository)

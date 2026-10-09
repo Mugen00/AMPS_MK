@@ -154,11 +154,31 @@ fun TrackWikiScreen(
             ) {
                 item { WikiHeader(page) }
                 item {
+                    val musicPlayer = (context.applicationContext as dev.amps.app.AmpsApp)
+                        .container.musicPlayer
                     PlaybackCard(
                         page = page,
                         state = state,
                         onToggle = viewModel::togglePlayback,
-                        onDownload = viewModel::download,
+                        onOnlinePlay = {
+                            val track = page.freeTrack
+                            val audio = track?.audioUrl
+                            if (track != null && !audio.isNullOrBlank()) {
+                                musicPlayer.play(
+                                    listOf(
+                                        dev.amps.app.music.MusicOnlinePlayer.QueueItem(
+                                            trackKey = track.key,
+                                            title = track.title,
+                                            artist = track.artistName ?: "",
+                                            audioUrl = audio,
+                                            coverUrl = track.coverUrl,
+                                            isPreview = track.source == dev.amps.app.data.model.MusicSource.ITUNES,
+                                        ),
+                                    ),
+                                    track.key,
+                                )
+                            }
+                        },
                     )
                 }
                 item { IdentityCard(page) }
@@ -272,7 +292,7 @@ private fun PlaybackCard(
     page: TrackWikiPage,
     state: TrackWikiViewModel.UiState,
     onToggle: () -> Unit,
-    onDownload: () -> Unit,
+    onOnlinePlay: () -> Unit,
 ) {
     SectionCard(title = "Файл", icon = Icons.Default.MusicNote, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
         if (page.playableFile == null) {
@@ -326,30 +346,23 @@ private fun PlaybackCard(
         }
 
         page.freeTrack?.let { track ->
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = onDownload,
-                enabled = track.downloadable,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (page.localPath != null) "Скачать заново" else "Скачать файл")
-            }
-            if (!track.downloadable) {
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.Warning,
-                        contentDescription = null,
-                        tint = AmpsColors.danger,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
+            // 1.2.1: завантажень більше немає — тільки онлайн-прослуховування.
+            if (!track.audioUrl.isNullOrBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = onOnlinePlay,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Слухати онлайн повністю")
+                }
+                if (track.source == dev.amps.app.data.model.MusicSource.ITUNES) {
+                    Spacer(Modifier.height(6.dp))
                     Text(
-                        text = track.licenceNote ?: "Скачивание недоступно",
+                        text = "iTunes дає лише 30-секундне прев'ю — повні версії дивіться на вкладці «Свободные».",
                         style = MaterialTheme.typography.labelSmall,
-                        color = AmpsColors.danger,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

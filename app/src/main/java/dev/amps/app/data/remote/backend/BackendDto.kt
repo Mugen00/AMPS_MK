@@ -228,3 +228,55 @@ data class RepostResponse(
     val reposted: Boolean,
     val repostCount: Int
 )
+
+// ===== Плейлісти (1.2.1) =====
+
+@Serializable
+data class PlaylistDto(
+    val id: Int,
+    val name: String,
+    val trackCount: Int,
+    val createdAt: Long,
+)
+
+@Serializable
+data class PlaylistsResponse(val playlists: List<PlaylistDto>)
+
+@Serializable
+data class PlaylistCreatedResponse(val playlistId: Int)
+
+/** Трек у плейлісті: знімок рядка пошуку — грає навіть без пошуку. */
+@Serializable
+data class PlaylistTrackDto(
+    val id: Int,
+    val source: String,
+    val sourceId: String,
+    val title: String,
+    val artist: String,
+    val audioUrl: String,
+    val coverUrl: String? = null,
+    val pageUrl: String? = null,
+    val licenseUrl: String? = null,
+    val durationSec: Int? = null,
+    val position: Int,
+    val addedAt: Long,
+)
+
+@Serializable
+data class PlaylistTracksResponse(val tracks: List<PlaylistTrackDto>)
+
+@Serializable
+data class PlaylistCreateRequest(val name: String)
+
+@Serializable
+data class PlaylistTrackAddRequest(
+    val source: String,
+    val sourceId: String,
+    val title: String,
+    val artist: String = "",
+    val audioUrl: String,
+    val coverUrl: String? = null,
+    val pageUrl: String? = null,
+    val licenseUrl: String? = null,
+    val durationSec: Int? = null,
+)

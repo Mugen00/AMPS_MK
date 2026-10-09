@@ -211,3 +211,64 @@ class StoryEntity(id: EntityID<Int>) : IntEntity(id) {
     var createdAt by StoryTable.createdAt
     var expiresAt by StoryTable.expiresAt
 }
+
+// ===== Плейлісти (1.2.1): свої списки треків, прив'язані до акаунта =====
+object PlaylistTable : IntIdTable("playlists") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val name = varchar("name", 120)
+    val createdAt = long("created_at")
+
+    init {
+        index(false, userId, createdAt)
+    }
+}
+
+class PlaylistEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<PlaylistEntity>(PlaylistTable)
+
+    var userId by PlaylistTable.userId
+    var name by PlaylistTable.name
+    var createdAt by PlaylistTable.createdAt
+}
+
+/**
+ * Трек у плейлісті: знімок полів рядка пошуку (джерело + URL аудіо),
+ * щоб трек грав навіть тоді, коли джерело пошуку не відповідає.
+ */
+object PlaylistTrackTable : IntIdTable("playlist_tracks") {
+    val playlistId = integer("playlist_id").references(PlaylistTable.id, ReferenceOption.CASCADE)
+    // "jamendo" | "archive" | "ccmixter" | "openverse" | "itunes" ...
+    // Властивість названа trackSource: у ColumnSet вже є member `source`.
+    val trackSource = varchar("source", 24)
+    val sourceId = varchar("source_id", 200)
+    val title = varchar("title", 250)
+    val artist = varchar("artist", 200)
+    val audioUrl = varchar("audio_url", 500)
+    val coverUrl = varchar("cover_url", 500).nullable()
+    val pageUrl = varchar("page_url", 500).nullable()
+    val licenseUrl = varchar("license_url", 500).nullable()
+    val durationSec = integer("duration_sec").nullable()
+    val position = integer("position")
+    val addedAt = long("added_at")
+
+    init {
+        index(false, playlistId, position)
+    }
+}
+
+class PlaylistTrackEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<PlaylistTrackEntity>(PlaylistTrackTable)
+
+    var playlistId by PlaylistTrackTable.playlistId
+    var trackSource by PlaylistTrackTable.trackSource
+    var sourceId by PlaylistTrackTable.sourceId
+    var title by PlaylistTrackTable.title
+    var artist by PlaylistTrackTable.artist
+    var audioUrl by PlaylistTrackTable.audioUrl
+    var coverUrl by PlaylistTrackTable.coverUrl
+    var pageUrl by PlaylistTrackTable.pageUrl
+    var licenseUrl by PlaylistTrackTable.licenseUrl
+    var durationSec by PlaylistTrackTable.durationSec
+    var position by PlaylistTrackTable.position
+    var addedAt by PlaylistTrackTable.addedAt
+}

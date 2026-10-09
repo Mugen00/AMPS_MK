@@ -213,4 +213,9 @@ class AppContainer(private val context: Context) {
             notifier = notifier,
         )
     }
+
+    /** 1.2.1: єдиний онлайн-плеєр — жодних завантажень, лише потік. */
+    val musicPlayer: dev.amps.app.music.MusicOnlinePlayer by lazy {
+        dev.amps.app.music.MusicOnlinePlayer(context)
+    }
 }

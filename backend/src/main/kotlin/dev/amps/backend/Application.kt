@@ -13,15 +13,19 @@ import dev.amps.backend.model.ProfileTable
 import dev.amps.backend.model.RefreshTokenTable
 import dev.amps.backend.model.RepostTable
 import dev.amps.backend.model.StoryTable
+import dev.amps.backend.model.PlaylistTable
+import dev.amps.backend.model.PlaylistTrackTable
 import dev.amps.backend.model.SyncDataTable
 import dev.amps.backend.model.UserTable
 import dev.amps.backend.model.VerificationCodeTable
 import dev.amps.backend.routing.authRoutes
 import dev.amps.backend.routing.feedRoutes
+import dev.amps.backend.routing.playlistRoutes
 import dev.amps.backend.service.AuthService
 import dev.amps.backend.service.EmailService
 import dev.amps.backend.service.FeedService
 import dev.amps.backend.service.MediaStorage
+import dev.amps.backend.service.PlaylistService
 import dev.amps.backend.service.ProfileService
 import dev.amps.backend.service.SmsService
 import dev.amps.backend.service.StoryService
@@ -67,11 +71,16 @@ fun main() {
     val feedService = FeedService(media, profileService)
     // 1.2.0: сторіс — ті самі папки медіа і той самий профільний сервіс.
     val storyService = StoryService(config, media, profileService)
+    // 1.2.1: свої плейлісти акаунта — живуть у базі.
+    val playlistService = PlaylistService(config)
 
     initDatabase(config)
 
     embeddedServer(Netty, port = config.port, host = "0.0.0.0") {
-        module(config, authService, twoFactorService, syncService, feedService, profileService, media, storyService)
+        module(
+            config, authService, twoFactorService, syncService,
+            feedService, profileService, media, storyService, playlistService,
+        )
     }.start(wait = true)
 }
 
@@ -99,6 +108,8 @@ private fun initDatabase(config: AppConfig) {
             LikeTable,
             RepostTable,
             StoryTable,
+            PlaylistTable,
+            PlaylistTrackTable,
         )
     }
 }
@@ -112,6 +123,7 @@ fun Application.module(
     profileService: ProfileService,
     media: MediaStorage,
     storyService: StoryService,
+    playlistService: dev.amps.backend.service.PlaylistService,
 ) {
     install(ContentNegotiation) {
         json(kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
@@ -154,4 +166,6 @@ fun Application.module(
     authRoutes(authService, twoFactorService, syncService)
     // 1.1.2: спільнота, профіль і роздача медіа; 1.2.0: сторіс у тому ж блоці.
     feedRoutes(config, feedService, profileService, media, storyService)
+    // 1.2.1: свої плейлісти акаунта — у базі, онлайн-слухання в застосунку.
+    playlistRoutes(playlistService)
 }

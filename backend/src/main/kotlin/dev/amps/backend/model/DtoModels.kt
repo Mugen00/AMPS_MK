@@ -239,6 +239,71 @@ data class PostCreatedResponse(
     val postId: Int
 )
 
+@Serializable
+data class StoriesResponse(
+    val stories: List<StoryDto>
+)
+
+// ===== Плейлісти (1.2.1) =====
+
+@Serializable
+data class PlaylistDto(
+    val id: Int,
+    val name: String,
+    val trackCount: Int,
+    val createdAt: Long
+)
+
+@Serializable
+data class PlaylistsResponse(
+    val playlists: List<PlaylistDto>
+)
+
+@Serializable
+data class PlaylistCreatedResponse(
+    val playlistId: Int
+)
+
+/** Трек у плейлісті: знімок рядка пошуку — грає навіть без пошуку. */
+@Serializable
+data class PlaylistTrackDto(
+    val id: Int,
+    val source: String,
+    val sourceId: String,
+    val title: String,
+    val artist: String,
+    val audioUrl: String,
+    val coverUrl: String? = null,
+    val pageUrl: String? = null,
+    val licenseUrl: String? = null,
+    val durationSec: Int? = null,
+    val position: Int,
+    val addedAt: Long
+)
+
+@Serializable
+data class PlaylistCreateRequest(
+    val name: String
+)
+
+@Serializable
+data class PlaylistTrackAddRequest(
+    val source: String,
+    val sourceId: String,
+    val title: String,
+    val artist: String = "",
+    val audioUrl: String,
+    val coverUrl: String? = null,
+    val pageUrl: String? = null,
+    val licenseUrl: String? = null,
+    val durationSec: Int? = null
+)
+
+@Serializable
+data class PlaylistTracksResponse(
+    val tracks: List<PlaylistTrackDto>
+)
+
 // ===== Сторіс (1.2.0) =====
 
 /** Одна сторіс: медіа за відносним URL і час зникнення. */
@@ -254,9 +319,4 @@ data class StoryDto(
     val expiresAt: Long,
     /** Уже прострочена? Сервер віддає лише живі, але клієнт перевіряє сам. */
     val expired: Boolean = false
-)
-
-@Serializable
-data class StoriesResponse(
-    val stories: List<StoryDto>
 )
