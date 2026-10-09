@@ -42,14 +42,17 @@ object GeminiVision {
         "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"
 
     /**
-     * 1.2.0 (патч 22): ланцюжок моделей. Перша — офіційний АЛІАС
-     * `gemini-flash-latest`: Google тримає його назавжди актуальним
-     * (вказує на поточний flash), тому «модель відкликана» більше не ламає
-     * аналіз. Далі — конкретні імена на випадок, якщо alias приберуть.
+     * 1.2.0 (патч 23): ланцюжок моделей за живою перевіркою ключа
+     * (2026: 3.8/3.7/3.6/3.5-flash відповідають 200, flash-latest — 503
+     * «high demand», 2.5-flash — 404 для нових ключів). Порядок — від
+     * найстабільнішої; 404/503 ведуть до наступної моделі.
      */
     private val FALLBACK_MODELS = listOf(
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
         "gemini-flash-latest",
-        "gemini-2.5-flash",
         "gemini-2.0-flash",
     )
 
@@ -59,8 +62,8 @@ object GeminiVision {
     private val json = Json { ignoreUnknownKeys = true }
 
     private val http = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
     /**
@@ -154,7 +157,9 @@ object GeminiVision {
                     body = retry.second
                 }
 
-                if (code == 404 || isModelNotFound(code, body)) {
+                if (code == 404 || code == 503 || isModelNotFound(code, body)) {
+                    // Модель не існує (404) або перевантажена (503 «high
+                    // demand») — наступна у ланцюжку, часто вона вільна.
                     lastError = IllegalStateException("Модель $candidate недоступна (${describe(code, body)})")
                     break // наступна модель у ланцюжку
                 }
@@ -174,23 +179,37 @@ object GeminiVision {
     }
 
     /**
-     * Один HTTP-дзвінок. Мережеві помилки загортаються в людську фразу;
-     * код і тіло повертаються як є для аналізу вгорі.
+     * Один HTTP-дзвінок. Мережеві збої (DNS, таймаут, обрив) — один ретрай:
+     * мобільна мережа часто дає короткий обрив, який другий спроба долає.
+     * SocketTimeout повідомляється чесно як «повільна мережа».
      */
     private fun postOnce(model: String, payload: String, apiKey: String): Pair<Int, String> {
         val request = Request.Builder()
             .url(API_URL.format(model, URLEncoder.encode(apiKey, "UTF-8")))
             .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .build()
-        return try {
-            http.newCall(request).execute().use { response ->
-                response.code to response.body?.string().orEmpty()
+        repeat(2) { attempt ->
+            try {
+                http.newCall(request).execute().use { response ->
+                    return response.code to response.body?.string().orEmpty()
+                }
+            } catch (error: java.net.SocketTimeoutException) {
+                if (attempt == 1) {
+                    throw IllegalStateException(
+                        "Gemini не відповів вчасно — мережа повільна або сервер навантажений. Спробуйте ще раз",
+                        error,
+                    )
+                }
+            } catch (error: IOException) {
+                if (attempt == 1) {
+                    throw IllegalStateException(
+                        "Немає зв'язку з Gemini: ${error.message ?: "мережева помилка"}", error,
+                    )
+                }
             }
-        } catch (error: IOException) {
-            throw IllegalStateException(
-                "Немає зв'язку з Gemini: ${error.message ?: "мережева помилка"}", error,
-            )
         }
+        // Сюди не дійдемо: repeat(2) або повертає відповідь, або кидає.
+        return 599 to ""
     }
 
     /** 404 або 400 з «model … not found» — модель не існує/більше не видається. */

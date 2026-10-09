@@ -78,7 +78,7 @@ android {
 // всё приложение. Теперь Android убьёт только процесс `:tagger`.
 // Также largeHeap, проверка свободной памяти до загрузки модели и
 // Throwable вместо Exception в разборе кадра.
-        versionCode = 22
+        versionCode = 23
         versionName = "1.2.0"
         resourceConfigurations += listOf("ru", "en")
 
@@ -171,6 +171,13 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
 
     implementation(libs.coil.compose)
+    // 1.2.0 (патч 23): анімовані GIF у постах і сторіс — декодер для Coil.
+    implementation("io.coil-kt:coil-gif:2.7.0")
+
+    // 1.2.0 (патч 23): вбудований відеоплеєр (як в Instagram) — посты
+    // і сторіс грають прямо в стрічці, без системного плеєра.
+    implementation("androidx.media3:media3-exoplayer:1.5.0")
+    implementation("androidx.media3:media3-ui:1.5.0")
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
 

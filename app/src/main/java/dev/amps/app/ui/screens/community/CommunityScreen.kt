@@ -36,6 +36,8 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -558,6 +560,9 @@ private fun StoriesViewer(
     val startIndex = stories.indexOfFirst { it.id == startId }.coerceAtLeast(0)
     var index by remember(startId) { mutableStateOf(startIndex) }
     val context = LocalContext.current
+    // 1.2.0 (патч 23): звук відео-сторіс керується кнопкою в хедері
+    // (тап-зони навігації вкривають увесь екран).
+    var storyMuted by remember { mutableStateOf(false) }
 
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onClose,
@@ -570,6 +575,7 @@ private fun StoriesViewer(
             val story = stories[index]
             Box(Modifier.fillMaxSize()) {
                 if (story.kind == "photo") {
+                    // GIF анімується (coil-gif, патч 23); звичайні фото теж тут.
                     AsyncImage(
                         model = absoluteMediaUrl(baseUrl, story.url),
                         contentDescription = "Сторіс",
@@ -577,29 +583,15 @@ private fun StoriesViewer(
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.align(Alignment.Center),
-                    ) {
-                        Icon(
-                            Icons.Default.PlayCircle,
-                            contentDescription = null,
-                            tint = androidx.compose.ui.graphics.Color.White,
-                            modifier = Modifier.size(56.dp),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Відео-сторіс — дивитися у плеєрі",
-                            color = androidx.compose.ui.graphics.Color.White,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Button(onClick = {
-                            openExternally(context, absoluteMediaUrl(baseUrl, story.url), "video/*")
-                        }) {
-                            Text("Відтворити")
-                        }
-                    }
+                    // 1.2.0 (патч 23): відео грає ВБУДОВАНО, зі звуком,
+                    // як в Instagram — без переходу в системний плеєр.
+                    dev.amps.app.ui.components.InlineVideo(
+                        url = absoluteMediaUrl(baseUrl, story.url),
+                        modifier = Modifier.fillMaxSize(),
+                        mutedByDefault = false,
+                        loop = true,
+                        mutedOverride = storyMuted,
+                    )
                 }
 
                 // Тапи: ліва половина — назад, права — далі. Лежать ПІД
@@ -671,6 +663,16 @@ private fun StoriesViewer(
                             color = Color.White.copy(alpha = 0.7f),
                             style = MaterialTheme.typography.labelSmall,
                         )
+                    }
+                    // 1.2.0 (патч 23): для відео-сторіс — вимикач звуку.
+                    if (story.kind == "video") {
+                        IconButton(onClick = { storyMuted = !storyMuted }) {
+                            Icon(
+                                if (storyMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                contentDescription = if (storyMuted) "Увімкнути звук" else "Вимкнути звук",
+                                tint = Color.White,
+                            )
+                        }
                     }
                     IconButton(onClick = onClose) {
                         Icon(
@@ -891,8 +893,10 @@ private fun AuthorAvatar(post: PostDto, baseUrl: String) {
 }
 
 /**
- * Вкладення поста: фото — картинка з коїл, відео — картка, що відкриває
- * системний плеєр за прямою адресою.
+ * Вкладення поста. 1.2.0 (патч 23): фото (і GIF — анімуються через
+ * coil-gif) — картинка; відео — ВБУДОВАНИЙ плеєр у стилі Instagram:
+ * автоплей без звуку, повтор, тап — пауза, іконка — звук. Системний
+ * плеєр більше не потрібен.
  */
 @Composable
 private fun MediaView(media: MediaDto, baseUrl: String) {
@@ -910,22 +914,13 @@ private fun MediaView(media: MediaDto, baseUrl: String) {
                 .clickable { openExternally(context, url, "image/*") },
         )
     } else {
-        Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
+        dev.amps.app.ui.components.InlineVideo(
+            url = url,
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { openExternally(context, url, "video/*") },
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(14.dp),
-            ) {
-                Icon(Icons.Default.PlayCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(10.dp))
-                Text("Відео — відтворити", style = MaterialTheme.typography.bodyMedium)
-            }
-        }
+                .height(240.dp)
+                .clip(RoundedCornerShape(10.dp)),
+        )
     }
 }
 
