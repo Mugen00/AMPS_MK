@@ -189,7 +189,9 @@ fun CommunityScreen(
     var showStoryMenu by remember { mutableStateOf(false) }
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
 
-    // Вибір фото для сторіс із галереї (минути камеру).
+    // Вибір фото для сторіс із галереї (минути камеру). 1.2.0 (патч 24):
+    // дозволяємо й GIF — сервер тримає .gif у KIND_PHOTO, а Coil 2.7
+    // анімує його (патч 23).
     val storyPhotoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -197,6 +199,18 @@ fun CommunityScreen(
             readBytesCapped(context, uri, maxBytes = 10L * 1024 * 1024)
                 ?.let { viewModel.publishStory("photo", it) }
                 ?: viewModel.publishStoryFailed("Фото завелике (ліміт 10 МБ)")
+        }
+    }
+
+    // 1.2.0 (патч 24): відео для сторіс З ГАЛЕРЕЇ (mp4/webm/mov) —
+    // раніше відео можна було тільки зняти на камеру.
+    val storyVideoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            readBytesCapped(context, uri, maxBytes = 50L * 1024 * 1024)
+                ?.let { viewModel.publishStory("video", it) }
+                ?: viewModel.publishStoryFailed("Відео завелике (ліміт 50 МБ)")
         }
     }
 
@@ -372,9 +386,15 @@ fun CommunityScreen(
                         }
                         TextButton(onClick = {
                             showStoryMenu = false
-                            storyPhotoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp"))
+                            storyPhotoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp", "image/gif"))
                         }) {
-                            Text("Вибрати фото з галереї")
+                            Text("Фото/GIF з галереї")
+                        }
+                        TextButton(onClick = {
+                            showStoryMenu = false
+                            storyVideoPicker.launch(arrayOf("video/mp4", "video/webm", "video/quicktime"))
+                        }) {
+                            Text("Відео з галереї (mp4)")
                         }
                     }
                 }
@@ -444,7 +464,11 @@ private fun StoriesRow(
 ) {
     // Один кружечок на автора: сторіс групуються за userId, порядок —
     // за найсвіжішою сторіс автора (сервер і так віддає свіжі зверху).
+    // 1.2.0 (патч 24): СВОЇ сторіс показує перший кружечок «Моя» (як в
+    // Instagram — «Ваша історія»), тому свій userId серед авторів пропускаємо.
+    val myUserId = state.currentUserId
     val groups = state.stories
+        .filter { it.author.userId != myUserId }
         .groupBy { it.author.userId }
         .map { it.value }
     androidx.compose.foundation.lazy.LazyRow(
@@ -453,22 +477,52 @@ private fun StoriesRow(
     ) {
         item {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                        .clickable { onAddStory() },
-                ) {
-                    if (state.storyUploading) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = "Додати сторіс",
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
+                if (state.myStories.isNotEmpty()) {
+                    // 1.2.0 (патч 24): у мене Є сторіс — «Моя» показує
+                    // аватарку і ВІДКРИВАЄ їх, як в Instagram; маленький
+                    // «+» на аватарці додає нову.
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .clickable { onOpenStory(state.myStories.first().id) },
+                    ) {
+                        StoryCircle(author = state.myStories.first().author, baseUrl = baseUrl)
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .clickable { onAddStory() },
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "Додати сторіс",
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
+                } else {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                            .clickable { onAddStory() },
+                    ) {
+                        if (state.storyUploading) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "Додати сторіс",
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.height(4.dp))

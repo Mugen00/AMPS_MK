@@ -42,10 +42,21 @@ data class CommunityUiState(
     val storyUploading: Boolean = false,
     /** Відкритий переглядач: id сторіс, яку показуємо (null — закрито). */
     val openStoryId: Int? = null,
+    /** 1.2.0 (патч 24): id поточного акаунта — щоб кружечок «Моя»
+     *  відкривав СВОЇ сторіс, як в Instagram (0 — гість). */
+    val currentUserId: Int = 0,
 ) {
     val canPublish: Boolean
         get() = !posting &&
             (composeText.isNotBlank() || attachedPhotoBytes != null || attachedVideoBytes != null)
+
+    /** 1.2.0 (патч 24): мої живі сторіс — для розумного кружечка «Моя». */
+    val myStories: List<dev.amps.app.data.remote.backend.dto.StoryDto>
+        get() = if (currentUserId > 0) {
+            stories.filter { it.author.userId == currentUserId }
+        } else {
+            emptyList()
+        }
 }
 
 class CommunityViewModel(
@@ -61,11 +72,15 @@ class CommunityViewModel(
 
     init {
         viewModelScope.launch {
-            backendSession.stored.collect { stored ->
+                backendSession.stored.collect { stored ->
                 val authorized = stored != null
                 val previous = lastAuthorized
                 lastAuthorized = authorized
-                _state.value = _state.value.copy(authorized = authorized)
+                _state.value = _state.value.copy(
+                    authorized = authorized,
+                    // 1.2.0 (патч 24): чию аватарку показувати в «Моя».
+                    currentUserId = stored?.userId ?: 0,
+                )
                 when {
                     // Перше завантаження — публічне або з токеном.
                     previous == null && _state.value.items.isEmpty() -> load()
