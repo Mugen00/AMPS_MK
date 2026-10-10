@@ -163,7 +163,7 @@ fun Application.module(
         }
     }
 
-    authRoutes(authService, twoFactorService, syncService)
+    authRoutes(authService, twoFactorService, syncService, media)
     // 1.1.2: спільнота, профіль і роздача медіа; 1.2.0: сторіс у тому ж блоці.
     feedRoutes(config, feedService, profileService, media, storyService)
     // 1.2.1: свої плейлісти акаунта — у базі, онлайн-слухання в застосунку.

@@ -31,6 +31,9 @@ class AppConfig(
      */
     val mediaDir: String = env("MEDIA_DIR") ?: defaultMediaDir(),
 
+    /** 1.2.1 (патч 27): шлях тому Railway, якщо том прикріплений. */
+    val railwayVolumeMountPath: String? = env("RAILWAY_VOLUME_MOUNT_PATH"),
+
     /**
      * 1.2.0: допустимі client ID для входу через Google. Список через
      * кому: Web-клієнт застосунку та, за потреби, Android-клієнти.
@@ -85,7 +88,14 @@ class AppConfig(
         private fun requireEnv(name: String): String =
             env(name) ?: error("Змінна оточення $name обов'язкова. Додайте її у налаштуваннях сервісу Railway.")
 
-        private fun defaultMediaDir(): String =
-            if (java.io.File("/data").canWrite()) "/data" else "data"
+        private fun defaultMediaDir(): String {
+            // 1.2.1 (патч 27): Railway монтує том у RAILWAY_VOLUME_MOUNT_PATH,
+            // коли том прикріплений у дашборді — тільки такий каталог переживає
+            // передеплої. /data всередині контейнера записуваний, але
+            // ефемерний: файли там зникали щоразу при деплої.
+            val volume = env("RAILWAY_VOLUME_MOUNT_PATH")
+            if (!volume.isNullOrBlank() && java.io.File(volume).canWrite()) return volume
+            return if (java.io.File("/data").canWrite()) "/data" else "data"
+        }
     }
 }

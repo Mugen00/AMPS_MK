@@ -754,6 +754,29 @@ class MusicRepository(
         ) {
             return true
         }
+        // 1.2.1 (патч 27): «OggS» — Ogg (og vorbis/opus), «fLaC» — FLAC,
+        // «ftyp» — MP4/M4A, EBML — WebM/Matroska. Без цього правильні
+        // .ogg/.m4a/.flac файли відбраковувались як «не аудіо».
+        if (this[0] == 'O'.code.toByte() && this[1] == 'g'.code.toByte() &&
+            this[2] == 'g'.code.toByte() && this[3] == 'S'.code.toByte()
+        ) {
+            return true
+        }
+        if (this[0] == 'f'.code.toByte() && this[1] == 'L'.code.toByte() &&
+            this[2] == 'a'.code.toByte() && this[3] == 'C'.code.toByte()
+        ) {
+            return true
+        }
+        if (this[0] == 'f'.code.toByte() && this[1] == 't'.code.toByte() &&
+            this[2] == 'y'.code.toByte() && this[3] == 'p'.code.toByte()
+        ) {
+            return true
+        }
+        if (size >= 4 && this[0] == 0x1A.toByte() && this[1] == 0x45.toByte() &&
+            this[2] == 0xDF.toByte() && this[3] == 0xA3.toByte()
+        ) {
+            return true // EBML — WebM/Matroska
+        }
         // MPEG-аудио начинается с 11-битного синхрословада: 0xFF, затем биты
         // слота 11, то есть маска 0xE0.
         if (this[0] == 0xFF.toByte()) {
@@ -953,8 +976,15 @@ class MusicRepository(
                 }
                 if (!head.looksLikeAudio()) {
                     partialFile.delete()
+                    val headText = String(head, Charsets.ISO_8859_1).trimStart().lowercase()
+                    val isHtml = headText.startsWith("<!do") || headText.startsWith("<htm") ||
+                        headText.startsWith("<head") || headText.startsWith("<body")
                     throw IOException(
-                        "Сервер отдал не аудио, а страницу с ошибкой — попробуйте ещё раз",
+                        if (isHtml) {
+                            "Це веб-сторінка, а не аудіофайл — потрібне пряме посилання на .mp3/.ogg/.m4a/.flac"
+                        } else {
+                            "Сервер отдал не аудио — попробуйте другую ссылку"
+                        },
                     )
                 }
                 // Расхождение с ожидаемым размером — тоже признак оборванной

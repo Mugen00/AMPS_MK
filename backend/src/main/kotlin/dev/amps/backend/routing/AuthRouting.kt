@@ -27,10 +27,23 @@ import io.ktor.server.routing.routing
  * Решта — під префіксом /auth: публічні (реєстрація, вхід, коди, скидання
  * пароля, оновлення токенів) і захищені JWT (профіль, 2FA, синхронізація).
  */
-fun Application.authRoutes(auth: AuthService, twoFactor: TwoFactorService, sync: SyncService) {
+fun Application.authRoutes(
+    auth: AuthService,
+    twoFactor: TwoFactorService,
+    sync: SyncService,
+    storage: dev.amps.backend.service.MediaStorage,
+) {
     routing {
         get("/health") {
-            call.respond(mapOf("status" to "ok", "version" to "1.2.1"))
+            // 1.2.1 (патч 27): volume = медіа переживають передеплої;
+            // ephemeral = файли зникнуть при деплої, поки не прикріплений том.
+            call.respond(
+                mapOf(
+                    "status" to "ok",
+                    "version" to "1.2.1",
+                    "storage" to storage.kind,
+                )
+            )
         }
 
         route("/auth") {

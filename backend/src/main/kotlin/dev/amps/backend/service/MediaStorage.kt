@@ -19,6 +19,19 @@ class MediaStorage(private val config: AppConfig) {
 
     private val root = File(config.mediaDir)
 
+    /**
+     * 1.2.1 (патч 27): "volume" — файл медіа лежить у прикріпленому томі
+     * Railway і переживає передеплої; "ephemeral" — том не прикріплений,
+     * каталог у контейнері зникає при кожному деплої (чесно віддається
+     * у /health, щоб це можна було перевірити без входу на сервер).
+     */
+    val kind: String =
+        if (!config.railwayVolumeMountPath.isNullOrBlank() && File(config.railwayVolumeMountPath).canWrite()) {
+            "volume"
+        } else {
+            "ephemeral"
+        }
+
     init {
         runCatching {
             dirFor(KIND_PHOTO).mkdirs()
