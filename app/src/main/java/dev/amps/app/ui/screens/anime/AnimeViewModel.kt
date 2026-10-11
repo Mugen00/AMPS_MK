@@ -79,12 +79,22 @@ class AnimeViewModel(
         _selected.value = card
     }
 
-    private fun load(block: suspend () -> List<AniListClient.AnimeCard>) {
+    /**
+     * 1.2.2 (патч 28): null від клієнта — AniList недоступний (мережа,
+     * Cloudflare), а порожній список — чесний «нічого не знайдено».
+     */
+    private fun load(block: suspend () -> List<AniListClient.AnimeCard>?) {
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
             try {
                 val cards = block()
-                _state.update { it.copy(loading = false, cards = cards) }
+                if (cards == null) {
+                    _state.update {
+                        it.copy(loading = false, error = "AniList недоступний — перевірте інтернет і спробуйте ще раз")
+                    }
+                } else {
+                    _state.update { it.copy(loading = false, cards = cards) }
+                }
             } catch (e: java.io.IOException) {
                 _state.update { it.copy(loading = false, error = "Мережа недоступна: ${e.message}") }
             } catch (e: Exception) {

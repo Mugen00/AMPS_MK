@@ -46,21 +46,25 @@ class AniListClient(private val client: OkHttpClient) {
     private val jsonParser = Json { ignoreUnknownKeys = true }
     private val jsonMediaType = "application/json".toMediaType()
 
-    /** Топ-24 за популярністю (усі часи); пошук без слова = топ. */
-    suspend fun top(): List<AnimeCard> = find("")
+    /** Топ-24 за популярністю (усі часи); null — AniList недоступний. */
+    suspend fun top(): List<AnimeCard>? = find("")
 
     /** Пошук за назвою (ромаджі/англійська); порожній рядок = топ усіх часів. */
-    suspend fun search(query: String): List<AnimeCard> = find(query)
+    suspend fun search(query: String): List<AnimeCard>? = find(query)
 
     /**
-     * Пошук або топ: [query] null/порожній — сортування за популярністю,
-     * непорожній — SEARCH_MATCH. isAdult: false — без 18+ у каталогу.
+     * Пошук або топ. 1.2.2 (патч 28): AniList на search: "" відповідає
+     * НУЛЬОВИМ списком (порожній рядок = пошук порожнього імені), тому
+     * для топу search-параметр взагалі не передається. isAdult: false —
+     * без 18+ у каталогу.
      */
-    suspend fun find(query: String): List<AnimeCard> {
-        val q = """
+    suspend fun find(query: String): List<AnimeCard>? {
+        val useSearch = query.isNotBlank()
+        val q = if (useSearch) {
+            """
             query (${'$'}page: Int, ${'$'}perPage: Int, ${'$'}search: String) {
               Page(page: ${'$'}page, perPage: ${'$'}perPage) {
-                media(type: ANIME, search: ${'$'}search, sort: POPULARITY_DESC, isAdult: false) {
+                media(type: ANIME, search: ${'$'}search, sort: SEARCH_MATCH, isAdult: false) {
                   id
                   title { romaji english }
                   coverImage { large }
@@ -74,16 +78,36 @@ class AniListClient(private val client: OkHttpClient) {
                 }
               }
             }
-        """.trimIndent()
+            """.trimIndent()
+        } else {
+            """
+            query (${'$'}page: Int, ${'$'}perPage: Int) {
+              Page(page: ${'$'}page, perPage: ${'$'}perPage) {
+                media(type: ANIME, sort: POPULARITY_DESC, isAdult: false) {
+                  id
+                  title { romaji english }
+                  coverImage { large }
+                  genres
+                  format
+                  episodes
+                  averageScore
+                  seasonYear
+                  status
+                  nextAiringEpisode { episode airingAt }
+                }
+              }
+            }
+            """.trimIndent()
+        }
         return mediaList(q, buildJsonObject {
             put("page", 1)
             put("perPage", 24)
-            put("search", query)
+            if (useSearch) put("search", query)
         })
     }
 
     /** Сезонні новинки: поточний сезон і рік за UTC. */
-    suspend fun season(): List<AnimeCard> {
+    suspend fun season(): List<AnimeCard>? {
         val now = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
         val season = when (now.monthValue) {
             1, 2, 3 -> "WINTER"
@@ -118,7 +142,7 @@ class AniListClient(private val client: OkHttpClient) {
     }
 
     /** За жанром — для вкладки «Жанри». */
-    suspend fun byGenre(genre: String): List<AnimeCard> {
+    suspend fun byGenre(genre: String): List<AnimeCard>? {
         val q = """
             query (${'$'}page: Int, ${'$'}perPage: Int, ${'$'}genre: String) {
               Page(page: ${'$'}page, perPage: ${'$'}perPage) {
@@ -176,6 +200,9 @@ class AniListClient(private val client: OkHttpClient) {
             .url("https://graphql.anilist.co")
             .post(payload.toRequestBody(jsonMediaType))
             .header("Content-Type", "application/json")
+            // Без UA частина Cloudflare-кордонів віддає 403 навіть легітимному
+            // запиту — ідентифікуємось застосунком, це коштує нічого.
+            .header("User-Agent", "AMPS/1.2.2 (Android; anime catalog)")
             .build()
         return try {
             client.newCall(request).execute().use { response ->
@@ -188,10 +215,10 @@ class AniListClient(private val client: OkHttpClient) {
         }
     }
 
-    /** data.Page.media → список карток; невалідні елементи пропускаються. */
-    private fun mediaList(query: String, variables: JsonObject): List<AnimeCard> {
-        val data = runQuery(query, variables) ?: return emptyList()
-        val media = (data["Page"] as? JsonObject)?.get("media") as? JsonArray ?: return emptyList()
+    /** data.Page.media → список карток; null — сервер недоступний/помилка. */
+    private fun mediaList(query: String, variables: JsonObject): List<AnimeCard>? {
+        val data = runQuery(query, variables) ?: return null
+        val media = (data["Page"] as? JsonObject)?.get("media") as? JsonArray ?: return null
         return media.mapNotNull { el ->
             val m = el as? JsonObject ?: return@mapNotNull null
             val id = m["id"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
