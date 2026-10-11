@@ -275,6 +275,18 @@ data class FollowToggleResponse(
     val followers: Int
 )
 
+/**
+ * 1.2.5: чужий профіль — базовий профіль + чи підписаний я, лічильники.
+ * postsCount — кількість власних постів (без репостів).
+ */
+@Serializable
+data class UserProfileResponse(
+    val profile: ProfileDto,
+    val isFollowing: Boolean = false,
+    val followers: Int = 0,
+    val postsCount: Int = 0,
+)
+
 // ===== Аніме-список акаунта (1.2.2) =====
 
 /** Один тайтл у списку акаунта. */

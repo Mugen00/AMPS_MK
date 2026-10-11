@@ -86,6 +86,8 @@ fun CommunityScreen(
     baseUrl: String,
     onOpenProfile: () -> Unit,
     onOpenAuth: () -> Unit,
+    /** 1.2.5: тап на автора поста → чужий профіль. */
+    onOpenUserProfile: (Int) -> Unit = {},
 ) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -370,6 +372,7 @@ fun CommunityScreen(
                         onFollow = { userId ->
                             if (state.authorized) viewModel.toggleFollow(userId) else onOpenAuth()
                         },
+                        onOpenAuthor = onOpenUserProfile,
                         onVotePoll = { postId, pollId, optionId ->
                             if (state.authorized) viewModel.votePoll(postId, pollId, optionId) else onOpenAuth()
                         },
@@ -936,6 +939,8 @@ private fun FeedItemCard(
     onSendComment: () -> Unit,
     onDeleteComment: (Int) -> Unit,
     onFollow: (Int) -> Unit,
+    /** 1.2.5: тап на автора — відкрити його профіль. */
+    onOpenAuthor: (Int) -> Unit = {},
     // 1.2.3: голосування в опитуванні поста.
     onVotePoll: (Int, Int, Int) -> Unit = { _, _, _ -> },
     pollBusy: Boolean = false,
@@ -966,7 +971,13 @@ private fun FeedItemCard(
                 }
                 Spacer(Modifier.height(6.dp))
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // 1.2.5: тап на аватар/ім'я автора відкриває його профіль.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenAuthor(post.author.userId) },
+            ) {
                 AuthorAvatar(post, baseUrl)
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {

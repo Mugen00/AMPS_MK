@@ -53,6 +53,7 @@ import dev.amps.app.ui.screens.framesearch.FrameSearchViewModel
 import dev.amps.app.ui.screens.history.HistoryScreen
 import dev.amps.app.ui.screens.profile.ProfileScreen
 import dev.amps.app.ui.screens.profile.ProfileViewModel
+import dev.amps.app.ui.screens.profile.UserProfileScreen
 import dev.amps.app.ui.screens.update.UpdateScreen
 import dev.amps.app.ui.screens.update.updateViewModel
 import dev.amps.app.ui.screens.music.MusicSearchScreen
@@ -125,6 +126,7 @@ private object Routes {
     const val AUTH = "auth"
     const val COMMUNITY = "community"
     const val PROFILE = "profile"
+    const val USER_PROFILE = "user/{userId}"
     const val ANIME = "anime"
     const val HISTORY = "history"
     const val UPDATE = "update"
@@ -239,12 +241,38 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                 )
             }
             // 1.1.2: Спільнота — стрічка, пости з фото/відео, лайки, репости.
+            // 1.1.2: Спільнота — стрічка, пости з фото/відео, лайки, репости.
             composable(Routes.COMMUNITY) {
                 CommunityScreen(
                     viewModel = communityViewModel,
                     baseUrl = container.backendApi.effectiveBaseUrl,
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenAuth = { navController.navigate(Routes.AUTH) },
+                    // 1.2.5: тап на автора → чужий профіль (пости, репости, підписка).
+                    onOpenUserProfile = { userId ->
+                        navController.navigate("user/$userId")
+                    },
+                )
+            }
+            // 1.2.5: чужий профіль — підписка, пости і репости користувача.
+            composable(
+                Routes.USER_PROFILE,
+                arguments = listOf(androidx.navigation.navArgument("userId") {
+                    type = androidx.navigation.NavType.IntType
+                }),
+            ) { entry ->
+                val targetUserId = entry.arguments?.getInt("userId") ?: 0
+                UserProfileScreen(
+                    viewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+                        key = "user-$targetUserId",
+                        factory = dev.amps.app.ui.screens.profile.UserProfileViewModel.Factory(
+                            backendApi = container.backendApi,
+                            backendSession = container.backendSession,
+                            userId = targetUserId,
+                        ),
+                    ),
+                    baseUrl = container.backendApi.effectiveBaseUrl,
+                    onBack = { navController.popBackStack() },
                 )
             }
             // 1.2.2: каталог аніме — AniList, мій список, нагадування серій.

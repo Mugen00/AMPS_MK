@@ -353,6 +353,15 @@ data class FollowToggleResponse(
     val followers: Int,
 )
 
+/** 1.2.5: чужий профіль — дані + чи підписаний я + лічильники. */
+@Serializable
+data class UserProfileResponse(
+    val profile: ProfileDto,
+    val isFollowing: Boolean = false,
+    val followers: Int = 0,
+    val postsCount: Int = 0,
+)
+
 // ===== Аніме-список акаунта (1.2.2) =====
 
 @Serializable

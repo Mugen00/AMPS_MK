@@ -276,6 +276,26 @@ class BackendApi private constructor(
             execute("POST", "follow/$userId", null, FollowToggleResponse.serializer(), authHeader)
         }
 
+    // ===== Чужий профіль (1.2.5) =====
+
+    /** Чужий профіль: дані + чи підписаний я + лічильники. */
+    suspend fun fetchUserProfile(authHeader: String, userId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "profile/$userId", null, UserProfileResponse.serializer(), authHeader)
+        }
+
+    /** Пости користувача (без репостів). */
+    suspend fun fetchUserPosts(authHeader: String, userId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "profile/$userId/posts", null, FeedResponse.serializer(), authHeader)
+        }
+
+    /** Репости користувача — оригінальні пости з позначкою «репост від». */
+    suspend fun fetchUserReposts(authHeader: String, userId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "profile/$userId/reposts", null, FeedResponse.serializer(), authHeader)
+        }
+
     // ===== Опитування (1.2.3) =====
 
     /** Прикріпити опитування до СВОГО поста (2–4 варіанти). */

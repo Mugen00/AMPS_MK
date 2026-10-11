@@ -254,6 +254,92 @@ fun Application.feedRoutes(
                 }
             }
 
+            // --- 1.2.5: підписка — toggle (клієнт шле POST follow/{userId}) ---
+            post("/follow/{userId}") {
+                val uid = call.requireUid() ?: return@post
+                val targetId = call.parameters["userId"]?.toIntOrNull()
+                if (targetId == null) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ApiError(error = "Невірний користувач", errorCode = "BAD_FOLLOW"),
+                    )
+                    return@post
+                }
+                val result = follows.toggle(uid, targetId)
+                if (result == null) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ApiError(error = "На себе підписатись не можна", errorCode = "BAD_FOLLOW"),
+                    )
+                } else {
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.FollowToggleResponse(following = result.first, followers = result.second)
+                    ))
+                }
+            }
+
+            // --- 1.2.5: чужий профіль — дані + чи підписаний + лічильники ---
+            get("/profile/{userId}") {
+                val uid = call.requireUid() ?: return@get
+                val targetId = call.parameters["userId"]?.toIntOrNull() ?: 0
+                val user = org.jetbrains.exposed.sql.transactions.transaction {
+                    dev.amps.backend.model.UserEntity.findById(targetId)
+                }
+                if (user == null) {
+                    call.respond(
+                        HttpStatusCode.NotFound,
+                        ApiError(error = "Профіль не знайдено", errorCode = "NO_PROFILE"),
+                    )
+                    return@get
+                }
+                val profileDto = profileService.get(targetId).data
+                if (profileDto == null) {
+                    call.respond(
+                        HttpStatusCode.NotFound,
+                        ApiError(error = "Профіль не знайдено", errorCode = "NO_PROFILE"),
+                    )
+                    return@get
+                }
+                call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                    dev.amps.backend.model.UserProfileResponse(
+                        profile = profileDto,
+                        isFollowing = follows.isFollowing(uid, targetId),
+                        followers = follows.followerCount(targetId),
+                        postsCount = org.jetbrains.exposed.sql.transactions.transaction {
+                            dev.amps.backend.model.PostEntity
+                                .find { dev.amps.backend.model.PostTable.userId eq targetId }
+                                .count().toInt()
+                        },
+                    )
+                ))
+            }
+
+            // --- 1.2.5: пости і репости користувача (чужий профіль) ---
+            get("/profile/{userId}/posts") {
+                val uid = call.requireUid() ?: return@get
+                val targetId = call.parameters["userId"]?.toIntOrNull() ?: 0
+                if (targetId <= 0) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ApiError(error = "Невірний користувач", errorCode = "BAD_PROFILE"),
+                    )
+                    return@get
+                }
+                call.respondApi(feedService.userPosts(targetId, uid))
+            }
+            get("/profile/{userId}/reposts") {
+                val uid = call.requireUid() ?: return@get
+                val targetId = call.parameters["userId"]?.toIntOrNull() ?: 0
+                if (targetId <= 0) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ApiError(error = "Невірний користувач", errorCode = "BAD_USER"),
+                    )
+                    return@get
+                }
+                call.respondApi(feedService.userReposts(targetId, uid))
+            }
+
             // --- 1.2.3: статистика профілю (пости / підписники / аніме) ---
             get("/profile/stats") {
                 val uid = call.requireUid() ?: return@get

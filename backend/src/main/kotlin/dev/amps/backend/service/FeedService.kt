@@ -205,6 +205,34 @@ class FeedService(
         ok(FeedResponse(items = posts.map { FeedItemDto(KIND_POST, postDto(it, userId), null, it.createdAt) }))
     }
 
+    /**
+     * 1.2.5: пости конкретного користувача — чужий профіль.
+     * [viewerId] потрібен, щоб у картках було видно власні лайки/голоси.
+     */
+    suspend fun userPosts(targetId: Int, viewerId: Int): ApiResponse<FeedResponse> = newSuspendedTransaction {
+        val posts = PostEntity.find { PostTable.userId eq targetId }
+            .orderBy(PostTable.createdAt to SortOrder.DESC)
+            .toList()
+        ok(FeedResponse(items = posts.map { FeedItemDto(KIND_POST, postDto(it, viewerId), null, it.createdAt) }))
+    }
+
+    /** 1.2.5: репости користувача — оригінальні пости з позначкою «репост від». */
+    suspend fun userReposts(targetId: Int, viewerId: Int): ApiResponse<FeedResponse> = newSuspendedTransaction {
+        val reposts = RepostEntity.find { RepostTable.userId eq targetId }
+            .orderBy(RepostTable.createdAt to SortOrder.DESC)
+            .toList()
+        val items = reposts.mapNotNull { repost ->
+            val original = PostEntity.findById(repost.postId) ?: return@mapNotNull null
+            FeedItemDto(
+                kind = KIND_REPOST,
+                post = postDto(original, viewerId),
+                repostBy = profiles.profileOf(profiles.ensureProfile(repost.userId)),
+                at = repost.createdAt,
+            )
+        }
+        ok(FeedResponse(items))
+    }
+
     // --- складання рядка стрічки --------------------------------------------
 
     /** DTO поста: автор-профіль, вкладення, лічильники і «моє чи ні». */
