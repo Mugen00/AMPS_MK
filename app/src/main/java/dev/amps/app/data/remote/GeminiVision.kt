@@ -179,6 +179,90 @@ object GeminiVision {
     }
 
     /**
+     * 1.3.0: мультитурн-чат про фото — ядро майбутнього ІІ-помічника.
+     * [turns] — повна історія переписки; ПЕРШЕ user-повідомлення несе
+     * зображення (inline_data). Повертає текст відповіді моделі.
+     */
+    data class ChatTurn(val role: String, val text: String) // role: "user" | "model"
+
+    suspend fun chat(
+        imageBytes: ByteArray,
+        apiKey: String,
+        turns: List<ChatTurn>,
+    ): String = withContext(Dispatchers.IO) {
+        val trimmed = apiKey.trim()
+        if (trimmed.isEmpty()) {
+            throw IllegalStateException("Ключ Gemini не заданий — додайте його в Налаштуваннях")
+        }
+        if (turns.isEmpty()) throw IllegalStateException("Порожнє повідомлення")
+        val compact = toJpegForApi(imageBytes)
+            ?: throw IllegalStateException("Не вдалося обробити зображення для AI")
+        val base64 = Base64.encodeToString(compact, Base64.NO_WRAP)
+        val contents = JsonArray(turns.mapIndexed { index, turn ->
+            buildJsonObject {
+                put("role", turn.role)
+                put("parts", JsonArray(buildList {
+                    if (index == 0 && turn.role == "user") {
+                        add(buildJsonObject {
+                            put("inline_data", buildJsonObject {
+                                put("mime_type", "image/jpeg")
+                                put("data", base64)
+                            })
+                        })
+                    }
+                    add(buildJsonObject { put("text", turn.text) })
+                }))
+            }
+        })
+        val root = buildJsonObject { put("contents", JsonArray(contents)) }
+        runWithFallback(root, trimmed)
+    }
+
+    /** Спільний виконавчий шлях: ланцюжок моделей + safety-варіанти + ретраї. */
+    private suspend fun runWithFallback(
+        contents: JsonObject,
+        apiKey: String,
+    ): String = withContext(Dispatchers.IO) {
+        val trimmed = apiKey.trim()
+        if (trimmed.isEmpty()) {
+            throw IllegalStateException("Ключ Gemini не заданий — додайте його в Налаштуваннях")
+        }
+        val models = FALLBACK_MODELS
+        var lastError: Exception? = null
+        for (candidate in models) {
+            val safetyVariants: List<Pair<List<String>, String?>> = listOf(
+                SAFETY_CATEGORIES to "BLOCK_NONE",
+                SAFETY_CATEGORIES to "BLOCK_ONLY_HIGH",
+                emptyList<String>() to null,
+            )
+            for ((categories, threshold) in safetyVariants) {
+                val payload = contents.addSafetySettings(categories, threshold).toString()
+                var (code, body) = postOnce(candidate, payload, trimmed)
+                if (code == 429 || code == 503) {
+                    delay(RETRY_PAUSE_MS)
+                    val retry = postOnce(candidate, payload, trimmed)
+                    code = retry.first
+                    body = retry.second
+                }
+                if (code == 404 || code == 503 || isModelNotFound(code, body)) {
+                    lastError = IllegalStateException("Модель $candidate недоступна (${describe(code, body)})")
+                    break
+                }
+                if (code == 400 && body.contains("BLOCK_NONE", ignoreCase = true)) {
+                    continue
+                }
+                if (code != 200) {
+                    throw IllegalStateException("Gemini: ${describe(code, body)}")
+                }
+                val text = extractText(body)
+                if (text != null) return@withContext text
+                throw IllegalStateException(emptyResponseReason(body))
+            }
+        }
+        throw lastError ?: IllegalStateException("Gemini: жодна модель не відповіла")
+    }
+
+    /**
      * Один HTTP-дзвінок. Мережеві збої (DNS, таймаут, обрив) — один ретрай:
      * мобільна мережа часто дає короткий обрив, який другий спроба долає.
      * SocketTimeout повідомляється чесно як «повільна мережа».

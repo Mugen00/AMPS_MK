@@ -5,134 +5,172 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import dev.amps.app.core.GeminiChatMessage
+import dev.amps.app.core.GeminiChatSession
+import dev.amps.app.core.GeminiChatStore
 import dev.amps.app.core.SettingsStore
-import dev.amps.app.data.model.AnimeWikiPage
-import dev.amps.app.data.model.EmptyResult
 import dev.amps.app.data.remote.GeminiVision
-import dev.amps.app.data.repo.FrameRepository
-import dev.amps.app.data.repo.Outcome
 import dev.amps.app.util.ImageLoader
 import dev.amps.app.util.PreparedImage
 import dev.amps.app.util.readableMessage
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** Одне повідомлення чату в UI. */
+data class ChatMsg(val role: String, val text: String) // "user" | "model"
 
 data class FrameSearchState(
     val image: PreparedImage? = null,
-    val stage: String? = null,
-    val page: AnimeWikiPage? = null,
-    val miss: EmptyResult? = null,
-    val error: String? = null,
-) {
-    val busy: Boolean get() = stage != null
-    val hasImage: Boolean get() = image != null
-}
-
-/** 1.1.3: стан AI-аналізу фото через Gemini — окремо від пошуку по базах. */
-data class GeminiState(
+    /** Переписка з Gemini по поточному фото. */
+    val messages: List<ChatMsg> = emptyList(),
+    val input: String = "",
     val busy: Boolean = false,
-    /** Відповідь моделі — Markdown, рендериться через Markwon. */
-    val result: String? = null,
     val error: String? = null,
+    /** id поточної сесії (після першої відповіді сесія зберігається). */
+    val sessionId: String? = null,
 )
 
+/**
+ * 1.3.0: Frame Search повністю переписаний на AI-чат: зворотний пошук
+ * по базах (IQDB/SauceNAO) прибрано — Gemini веде переписку про фото,
+ * кожен аналіз зберігається в історію на пристрої.
+ */
 class FrameSearchViewModel(
-    private val repository: FrameRepository,
     private val appContext: Context,
     private val settings: SettingsStore,
+    private val chatStore: GeminiChatStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(FrameSearchState())
     val state: StateFlow<FrameSearchState> = _state.asStateFlow()
 
-    private val _gemini = MutableStateFlow(GeminiState())
-    val gemini: StateFlow<GeminiState> = _gemini.asStateFlow()
-
-    private val _navigation = MutableStateFlow(false)
-    val navigation: StateFlow<Boolean> = _navigation.asStateFlow()
+    /** Історія збережених аналізів — свіжі зверху. */
+    val chats: StateFlow<List<GeminiChatSession>> = chatStore.chats.stateIn(
+        viewModelScope,
+        kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+        emptyList(),
+    )
 
     fun onImagePicked(uri: Uri) = viewModelScope.launch {
-        _state.value = _state.value.copy(error = null, miss = null, page = null)
         runCatching { ImageLoader.prepare(appContext, uri) }
-            .onSuccess { image -> _state.value = _state.value.copy(image = image) }
-            .onFailure { error -> _state.value = _state.value.copy(error = error.readableMessage()) }
+            .onSuccess { image -> _state.value = FrameSearchState(image = image) }
+            .onFailure { error -> _state.value = FrameSearchState(error = error.readableMessage()) }
     }
 
-    fun search() = viewModelScope.launch {
-        val image = _state.value.image ?: return@launch
-        // Стадии с 1.0.3 описывали запросы к трём разным сервисам. Теперь
-        // внешний источник один, поэтому текст должен называть именно его —
-        // иначе пользователь ждёт «проверку по 1,7 млрд сцен», которой больше нет.
-        _state.value = _state.value.copy(
-            stage = "Отправляю картинку в IQDB…",
-            error = null,
-            miss = null,
-            page = null,
-        )
-
-        runCatching {
-            _state.value = _state.value.copy(stage = "Жду совпадения от бо́ру-баз…")
-            // 1.2.3: NSFW-фільтр читається на кожен пошук — змінюється без перезапуску.
-            val hideNsfw = settings.settings.first().hideNsfw
-            repository.identify(image.bytes, image.fileName, image.mime, image.previewDataUrl, hideNsfw)
-        }
-            .onSuccess { result ->
-                when (result) {
-                    is Outcome.Found -> {
-                        _state.value = _state.value.copy(stage = null, page = result.page)
-                        _navigation.value = true
-                    }
-                    is Outcome.Miss ->
-                        _state.value = _state.value.copy(stage = null, miss = result.result)
-                }
-            }
-            .onFailure { error ->
-                _state.value = _state.value.copy(stage = null, error = error.readableMessage())
-            }
-    }
-
-    fun consumeNavigation() {
-        _navigation.value = false
+    fun setInput(value: String) {
+        _state.value = _state.value.copy(input = value)
     }
 
     /**
-     * 1.1.3: AI-аналіз вибраного фото через Gemini. Незалежний від пошуку
-     * по базах: працює і тоді, коли IQDB дав промах. Ключ читається з
-     * налаштувань на кожен виклик — змінюється без перезапуску.
+     * Надіслати повідомлення. Перше — несе фото (дефолтний промпт, якщо
+     * поле порожнє); далі — мультитурн з повною історією переписки.
      */
-    fun analyzeWithGemini() {
+    fun send() {
         val image = _state.value.image ?: return
-        if (_gemini.value.busy) return
+        if (_state.value.busy) return
+        val userText = _state.value.input.trim().ifBlank { DEFAULT_PROMPT }
+        val turns = _state.value.messages.map { GeminiVision.ChatTurn(it.role, it.text) } +
+            GeminiVision.ChatTurn("user", userText)
+        _state.value = _state.value.copy(
+            busy = true,
+            input = "",
+            messages = _state.value.messages + ChatMsg("user", userText),
+        )
         viewModelScope.launch {
-            _gemini.value = GeminiState(busy = true)
-            runCatching {
-                val key = settings.settings.first().geminiApiKey
-                GeminiVision.analyze(image.bytes, key)
-            }
-                .onSuccess { markdown -> _gemini.value = GeminiState(result = markdown) }
-                .onFailure { error -> _gemini.value = GeminiState(error = error.readableMessage()) }
+            val key = settings.settings.first().geminiApiKey
+            runCatching { GeminiVision.chat(image.bytes, key, turns) }
+                .onSuccess { answer ->
+                    _state.value = _state.value.copy(
+                        busy = false,
+                        error = null,
+                        messages = _state.value.messages + ChatMsg("model", answer),
+                    )
+                    persistSession()
+                }
+                .onFailure { failure ->
+                    _state.value = _state.value.copy(busy = false, error = failure.readableMessage())
+                }
         }
     }
 
-    fun clearGemini() {
-        _gemini.value = GeminiState()
+    /** Нове питання про те саме фото: переписка чиста, фото лишається. */
+    fun newChat() {
+        _state.value = _state.value.copy(messages = emptyList(), input = "", error = null)
+    }
+
+    /** Відкрити збережену сесію з історії: фото з файлу + переписка. */
+    fun openSession(session: GeminiChatSession) {
+        viewModelScope.launch {
+            val bytes = runCatching { File(session.photoPath).readBytes() }.getOrNull()
+            if (bytes == null) {
+                _state.value = _state.value.copy(error = "Фото цієї сесії видалено з пам'яті пристрою")
+                return@launch
+            }
+            val image = PreparedImage(
+                bytes = bytes,
+                mime = "image/jpeg",
+                fileName = "${session.id}.jpg",
+                previewDataUrl = "",
+                width = 0,
+                height = 0,
+            )
+            _state.value = FrameSearchState(
+                image = image,
+                sessionId = session.id,
+                messages = session.messages.map { ChatMsg(it.role, it.text) },
+            )
+        }
+    }
+
+    fun deleteSession(session: GeminiChatSession) = viewModelScope.launch {
+        chatStore.delete(session)
     }
 
     fun clear() {
         _state.value = FrameSearchState()
-        _gemini.value = GeminiState()
+    }
+
+    /** Автозбереження після кожної відповіді моделі. */
+    private fun persistSession() {
+        val snapshot = _state.value
+        val image = snapshot.image ?: return
+        val id = snapshot.sessionId ?: java.util.UUID.randomUUID().toString()
+        viewModelScope.launch {
+            val photoPath = chatStore.savePhoto(id, image.bytes)
+            val firstAnswer = snapshot.messages
+                .firstOrNull { it.role == "model" }?.text.orEmpty()
+            val title = firstAnswer.split("\n").first().take(64).ifBlank { "Аналіз фото" }
+            chatStore.upsert(
+                GeminiChatSession(
+                    id = id,
+                    createdAt = System.currentTimeMillis(),
+                    title = title,
+                    photoPath = photoPath,
+                    messages = snapshot.messages.map { GeminiChatMessage(it.role, it.text) },
+                ),
+            )
+        }
+    }
+
+    companion object {
+        /** Перша фраза, якщо користувач одразу тисне «надіслати». */
+        const val DEFAULT_PROMPT =
+            "Опиши це фото: що зображено, звідки це (аніме/манґа/гра), хто персонаж, які деталі впізнавані. Українською."
     }
 
     class Factory(
-        private val repository: FrameRepository,
         private val appContext: Context,
         private val settings: SettingsStore,
+        private val chatStore: GeminiChatStore,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            FrameSearchViewModel(repository, appContext, settings) as T
+            FrameSearchViewModel(appContext, settings, chatStore) as T
     }
 }

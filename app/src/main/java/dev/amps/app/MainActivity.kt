@@ -128,6 +128,8 @@ private object Routes {
     const val PROFILE = "profile"
     const val USER_PROFILE = "user/{userId}"
     const val ANIME = "anime"
+    const val ANIME_DETAIL = "anime/detail/{anilistId}"
+    const val WEB_VIEW = "web/{url}"
     const val HISTORY = "history"
     const val UPDATE = "update"
 }
@@ -143,9 +145,9 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
 
     val frameViewModel: FrameSearchViewModel = viewModel(
         factory = FrameSearchViewModel.Factory(
-            repository = container.frameRepository,
             appContext = context.applicationContext,
             settings = container.settings,
+            chatStore = container.geminiChatStore,
         )
     )
     val wikiViewModel: WikiViewModel = viewModel(factory = WikiViewModel.Factory(container.frameRepository))
@@ -179,13 +181,6 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
     val profileViewModel: ProfileViewModel = viewModel(
         factory = ProfileViewModel.Factory(container.backendApi, container.backendSession)
     )
-
-    val frameState by frameViewModel.state.collectAsStateWithLifecycle()
-
-    // Keep the wiki screen pointed at the most recent successful lookup.
-    LaunchedEffect(frameState.page) {
-        frameState.page?.let(wikiViewModel::show)
-    }
 
     // A frame shared from the gallery goes straight into the search screen.
     var shared by remember { mutableStateOf(initialSharedImage) }
@@ -226,12 +221,30 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
             navController = navController,
             startDestination = Routes.FRAME,
             modifier = Modifier.padding(padding),
+            // 1.3.0: плавні переходи між екранами — легкий fade + зсув.
+            enterTransition = {
+                androidx.compose.animation.fadeIn(
+                    androidx.compose.animation.core.tween(220)
+                ) + androidx.compose.animation.slideInHorizontally(
+                    androidx.compose.animation.core.tween(220)
+                ) { it / 12 }
+            },
+            exitTransition = {
+                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(180))
+            },
+            popEnterTransition = {
+                androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220))
+            },
+            popExitTransition = {
+                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(180)) +
+                    androidx.compose.animation.slideOutHorizontally(
+                        androidx.compose.animation.core.tween(220)
+                    ) { it / 12 }
+            },
         ) {
             composable(Routes.FRAME) {
                 FrameSearchScreen(
                     viewModel = frameViewModel,
-                    onOpenWiki = { navController.navigate(Routes.WIKI) },
-                    onOpenHistory = { navController.navigate(Routes.HISTORY) },
                 )
             }
             composable(Routes.WIKI) {
@@ -276,15 +289,77 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                 )
             }
             // 1.2.2: каталог аніме — AniList, мій список, нагадування серій.
+            // 1.3.0: тап на картку — сторінка тайтла (опис, трейлер, «Дивитись»).
             composable(Routes.ANIME) {
-                AnimeScreen(
-                    viewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+                val animeVm: dev.amps.app.ui.screens.anime.AnimeViewModel =
+                    androidx.lifecycle.viewmodel.compose.viewModel(
                         factory = dev.amps.app.ui.screens.anime.AnimeViewModel.Factory(
                             container.anilistClient,
                             container.backendApi,
                             container.backendSession,
                         ),
-                    ),
+                    )
+                AnimeScreen(
+                    viewModel = animeVm,
+                    onOpenDetails = { anilistId ->
+                        navController.navigate("anime/detail/$anilistId")
+                    },
+                )
+            }
+            composable(
+                Routes.ANIME_DETAIL,
+                arguments = listOf(
+                    androidx.navigation.navArgument("anilistId") {
+                        type = androidx.navigation.NavType.IntType
+                    },
+                ),
+            ) { entry ->
+                val anilistId = entry.arguments?.getInt("anilistId") ?: 0
+                val detailVm: dev.amps.app.ui.screens.anime.AnimeDetailViewModel =
+                    androidx.lifecycle.viewmodel.compose.viewModel(
+                        key = "anime-detail-$anilistId",
+                        factory = dev.amps.app.ui.screens.anime.AnimeDetailViewModel.Factory(
+                            container.aniList,
+                            anilistId,
+                        ),
+                    )
+                val animeVm: dev.amps.app.ui.screens.anime.AnimeViewModel =
+                    androidx.lifecycle.viewmodel.compose.viewModel(
+                        viewModelStoreOwner = androidx.compose.ui.platform.LocalContext.current as androidx.activity.ComponentActivity,
+                        factory = dev.amps.app.ui.screens.anime.AnimeViewModel.Factory(
+                            container.anilistClient,
+                            container.backendApi,
+                            container.backendSession,
+                        ),
+                    )
+                dev.amps.app.ui.screens.anime.AnimeDetailScreen(
+                    viewModel = detailVm,
+                    animeViewModel = animeVm,
+                    onWatch = { title ->
+                        val encoded = java.net.URLEncoder.encode(
+                            "https://old.yummyani.me/?s=" +
+                                java.net.URLEncoder.encode(title, "UTF-8").replace("+", "%20"),
+                            "UTF-8",
+                        )
+                        navController.navigate("web/$encoded")
+                    },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(
+                Routes.WEB_VIEW,
+                arguments = listOf(
+                    androidx.navigation.navArgument("url") {
+                        type = androidx.navigation.NavType.StringType
+                    },
+                ),
+            ) { entry ->
+                val rawUrl = entry.arguments?.getString("url").orEmpty()
+                val url = java.net.URLDecoder.decode(rawUrl, "UTF-8")
+                dev.amps.app.ui.screens.anime.WebViewScreen(
+                    url = url,
+                    title = "Перегляд сайту",
+                    onBack = { navController.popBackStack() },
                 )
             }
             // 1.1.2: профіль — ім'я, біо, аватар; редагуються лише тут.

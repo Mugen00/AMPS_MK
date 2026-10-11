@@ -54,6 +54,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -346,6 +349,8 @@ fun CommunityScreen(
                 }
                 items(state.items, key = { "${it.kind}-${it.post.id}-${it.at}" }) { item ->
                     // 1.2.2: коментарі й підписка — із стану ViewModel.
+                    // 1.3.0: плавна перестановка карток при додаванні/видаленні.
+                    Box(Modifier.animateItem()) {
                     FeedItemCard(
                         item = item,
                         baseUrl = baseUrl,
@@ -378,6 +383,7 @@ fun CommunityScreen(
                         },
                         pollBusy = item.post.poll?.pollId in state.busyPollIds,
                     )
+                    }
                 }
                 if (state.items.isNotEmpty() && !state.endReached) {
                     item {
@@ -1028,6 +1034,14 @@ private fun FeedItemCard(
                     if (busy) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                     } else {
+                        // 1.3.0: пружинка лайка — серце «стрибає» при натисканні.
+                        val likeScale = remember { Animatable(1f) }
+                        LaunchedEffect(post.likedByMe) {
+                            if (post.likedByMe) {
+                                likeScale.animateTo(1.35f, spring(dampingRatio = 0.35f, stiffness = 900f))
+                                likeScale.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 380f))
+                            }
+                        }
                         Icon(
                             if (post.likedByMe) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                             contentDescription = "Лайк",
@@ -1036,6 +1050,7 @@ private fun FeedItemCard(
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
+                            modifier = Modifier.scale(likeScale.value),
                         )
                     }
                 }

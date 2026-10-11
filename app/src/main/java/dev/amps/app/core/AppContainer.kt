@@ -205,6 +205,9 @@ class AppContainer(private val context: Context) {
     val animeTagger: AnimeTagger by lazy { AnimeTagger(context) }
     val contentAnalyzer: ContentAnalyzer by lazy { ContentAnalyzer(animeTagger) }
 
+    /** 1.3.0: сховище історії Gemini-чатів (лише на пристрої). */
+    val geminiChatStore: GeminiChatStore by lazy { GeminiChatStore(context) }
+
     val frameRepository: FrameRepository by lazy {
         FrameRepository(
             iqdb = iqdb,

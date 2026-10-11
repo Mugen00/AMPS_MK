@@ -1,6 +1,8 @@
 package dev.amps.app.ui.screens.anime
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,11 +64,17 @@ import dev.amps.app.data.remote.backend.dto.AnimeListDto
  * і пошук; тап на картку — діалог «у мій список»: статуси
  * (Дивлюсь / Планую / Переглянуто) і нагадування про нові серії.
  */
+/**
+ * 1.2.2: екран каталогу аніме. Вкладки «Топ / Сезон / Жанри / Моє аніме»
+ * і пошук. 1.3.0: тап на картку відкриває повну сторінку тайтла
+ * (опис, жанри, студія, «Дивитись»); статуси списку — на сторінці тайтла.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnimeScreen(
     viewModel: AnimeViewModel,
     onBack: (() -> Unit)? = null,
+    onOpenDetails: (Int) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
     val selected by viewModel.selected.collectAsState()
@@ -163,7 +171,7 @@ fun AnimeScreen(
                 ) { Text(state.error!!, color = MaterialTheme.colorScheme.error) }
 
                 tab == 3 -> MyAnimeList(state, viewModel)
-                else -> CatalogGrid(state.cards, viewModel)
+                else -> CatalogGrid(state.cards, viewModel, onOpenDetails)
             }
         }
     }
@@ -191,6 +199,7 @@ fun AnimeScreen(
 private fun CatalogGrid(
     cards: List<AniListClient.AnimeCard>,
     viewModel: AnimeViewModel,
+    onOpenDetails: (Int) -> Unit,
 ) {
     if (cards.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -207,26 +216,30 @@ private fun CatalogGrid(
     ) {
         gridItems(cards, key = { it.anilistId }) { card ->
             // 1.2.2: статус свого списку рахується тут і передається далі.
+            // 1.3.0: тап — сторінка тайтла; довгий тап — діалог «у мій список».
             AnimeCardView(
                 card = card,
                 statusLabel = viewModel.myStatus(card.anilistId)?.let {
                     AnimeViewModel.STATUS_LABELS[it.status] ?: it.status
                 },
-                onClick = { viewModel.openCard(card) },
+                onClick = { onOpenDetails(card.anilistId) },
+                onLongClick = { viewModel.openCard(card) },
             )
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun AnimeCardView(
     card: AniListClient.AnimeCard,
     statusLabel: String?,
     onClick: () -> Unit,
+    onLongClick: () -> Unit = {},
 ) {
     Card(modifier = Modifier
         .fillMaxWidth()
-        .clickable(onClick = onClick)) {
+        .combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         Column {
             AsyncImage(
                 model = card.coverUrl,
