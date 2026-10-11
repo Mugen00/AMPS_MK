@@ -190,33 +190,35 @@ class AniListClient(private val client: OkHttpClient) {
 
     // --- внутрішнє ----------------------------------------------------------
 
-    /** Виконує GraphQL-запит; повертає об'єкт data або null. */
-    private fun runQuery(query: String, variables: JsonObject): JsonObject? {
-        val payload = buildJsonObject {
-            put("query", query)
-            put("variables", variables)
-        }.toString()
-        val request = Request.Builder()
-            .url("https://graphql.anilist.co")
-            .post(payload.toRequestBody(jsonMediaType))
-            .header("Content-Type", "application/json")
-            // Без UA частина Cloudflare-кордонів віддає 403 навіть легітимному
-            // запиту — ідентифікуємось застосунком, це коштує нічого.
-            .header("User-Agent", "AMPS/1.2.2 (Android; anime catalog)")
-            .build()
-        return try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                val text = response.body?.string() ?: return@use null
-                (jsonParser.parseToJsonElement(text).jsonObject["data"] as? JsonObject)
+    /** Виконує GraphQL-запит у IO-потоку; повертає об'єкт data або null. */
+    private suspend fun runQuery(query: String, variables: JsonObject): JsonObject? =
+        withContext(Dispatchers.IO) {
+            val payload = buildJsonObject {
+                put("query", query)
+                put("variables", variables)
+            }.toString()
+            val request = Request.Builder()
+                .url("https://graphql.anilist.co")
+                .post(payload.toRequestBody(jsonMediaType))
+                .header("Content-Type", "application/json")
+                // Без UA частина Cloudflare-кордонів віддає 403 навіть легітимному
+                // запиту — ідентифікуємось застосунком, це коштує нічого.
+                .header("User-Agent", "AMPS/1.2.2 (Android; anime catalog)")
+                .build()
+            try {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext null
+                    val text = response.body?.string() ?: return@withContext null
+                    (jsonParser.parseToJsonElement(text).jsonObject["data"] as? JsonObject)
+                }
+            } catch (_: Exception) {
+                // Мережа або парсинг — клієнт повідомить «AniList недоступний».
+                null
             }
-        } catch (_: Exception) {
-            null
         }
-    }
 
     /** data.Page.media → список карток; null — сервер недоступний/помилка. */
-    private fun mediaList(query: String, variables: JsonObject): List<AnimeCard>? {
+    private suspend fun mediaList(query: String, variables: JsonObject): List<AnimeCard>? {
         val data = runQuery(query, variables) ?: return null
         val media = (data["Page"] as? JsonObject)?.get("media") as? JsonArray ?: return null
         return media.mapNotNull { el ->
