@@ -202,7 +202,9 @@ data class PostDto(
     val likeCount: Int,
     val repostCount: Int,
     val likedByMe: Boolean,
-    val repostedByMe: Boolean
+    val repostedByMe: Boolean,
+    /** 1.2.3: опитування, прикріплене до поста (null — його немає). */
+    val poll: PollDto? = null
 )
 
 /**
@@ -299,6 +301,45 @@ data class AnimeListUpsertRequest(
     val coverUrl: String = "",
     val status: String,
     val reminder: Boolean = true
+)
+
+// ===== Опитування (1.2.3) =====
+
+@Serializable
+data class PollOptionDto(
+    val id: Int,
+    val text: String,
+    val votes: Int
+)
+
+@Serializable
+data class PollDto(
+    val pollId: Int,
+    val question: String? = null,
+    val options: List<PollOptionDto>,
+    /** Варіант, за який голосував переглядач (null — ще не голосував). */
+    val myOptionId: Int? = null
+)
+
+@Serializable
+data class PollCreateRequest(
+    val question: String = "",
+    val options: List<String>
+)
+
+@Serializable
+data class PollResponse(
+    val poll: PollDto
+)
+
+@Serializable
+data class ProfileStatsDto(
+    val posts: Int,
+    val followers: Int,
+    /** Тайтлів зі статусом «дивлюсь» в аніме-списку. */
+    val watching: Int,
+    /** Назва найсвіжішого тайтла, який користувач дивиться (для «тепер дивлюсь»). */
+    val watchingTitle: String? = null
 )
 
 @Serializable

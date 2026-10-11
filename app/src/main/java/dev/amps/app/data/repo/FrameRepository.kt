@@ -87,6 +87,8 @@ class FrameRepository(
         fileName: String,
         mime: String,
         previewDataUrl: String? = null,
+        /** 1.2.3: ховати 18+ збіги (IQDB rating e/q) із результатів. */
+        hideNsfw: Boolean = false,
     ): Outcome {
         val digest = bytes.sha256()
         // Отпечаток остаётся полезным: он попадает в карточку и позволяет
@@ -108,7 +110,19 @@ class FrameRepository(
         }
 
         val iqdbCall = runCatching { iqdb?.search(bytes, fileName, mime) }
-        val found = iqdbCall.getOrNull()
+        val found = iqdbCall.getOrNull()?.let { result ->
+            // 1.2.3: NSFW-фільтр — прибрати збіги з рейтингом e/q.
+            // IQDB пише рейтинг у колонці результату: Safe/Questionable/Explicit
+            // або однолітерні скорочення; фільтруємо за першою літерою.
+            if (!hideNsfw) {
+                result
+            } else {
+                result.copy(hits = result.hits.filter { hit ->
+                    val r = hit.rating?.trim()?.lowercase() ?: ""
+                    !r.startsWith("e") && !r.startsWith("q")
+                })
+            }
+        }
         val iqdbError = iqdbCall.exceptionOrNull()?.readableMessage()?.takeIf { iqdb != null }
 
         // trace.moe и IQDB идут вместе, а не по очереди: оба смотрят на ту же

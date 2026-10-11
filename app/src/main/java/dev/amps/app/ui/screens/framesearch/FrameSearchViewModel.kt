@@ -75,7 +75,9 @@ class FrameSearchViewModel(
 
         runCatching {
             _state.value = _state.value.copy(stage = "Жду совпадения от бо́ру-баз…")
-            repository.identify(image.bytes, image.fileName, image.mime, image.previewDataUrl)
+            // 1.2.3: NSFW-фільтр читається на кожен пошук — змінюється без перезапуску.
+            val hideNsfw = settings.settings.first().hideNsfw
+            repository.identify(image.bytes, image.fileName, image.mime, image.previewDataUrl, hideNsfw)
         }
             .onSuccess { result ->
                 when (result) {

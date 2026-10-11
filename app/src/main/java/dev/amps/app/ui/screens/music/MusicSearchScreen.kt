@@ -589,6 +589,14 @@ private fun FreeTracksTab(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // 1.2.3: аніме-радіо — перший чіп, поза фільтрами.
+            item {
+                FilterChip(
+                    selected = false,
+                    onClick = viewModel::startAnimeRadio,
+                    label = { Text("📻 Радіо аніме") },
+                )
+            }
             items(FreeTrackFilter.entries) { filter ->
                 FilterChip(
                     selected = state.filter == filter,

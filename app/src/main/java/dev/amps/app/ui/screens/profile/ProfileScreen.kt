@@ -137,6 +137,25 @@ fun ProfileScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.height(12.dp))
+
+            // --- 1.2.3: статистика «анімешника» ---
+            Row(
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                StatCard("Пости", state.postsCount, Modifier.weight(1f))
+                StatCard("Підписників", state.followersCount, Modifier.weight(1f))
+                StatCard("Дивлюсь", state.watchingCount, Modifier.weight(1f))
+            }
+            state.watchingTitle?.let { title ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "📺 Тепер дивлюсь: $title",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Spacer(Modifier.height(16.dp))
 
             if (state.error != null) {
@@ -179,6 +198,28 @@ fun ProfileScreen(
             Text(
                 "Логін, пошта і пароль змінюються на екрані акаунта.",
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** 1.2.3: маленька картка-лічильник профіля. */
+@Composable
+private fun StatCard(label: String, value: Int, modifier: Modifier = Modifier) {
+    androidx.compose.material3.Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = modifier,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(vertical = 10.dp),
+        ) {
+            Text("$value", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

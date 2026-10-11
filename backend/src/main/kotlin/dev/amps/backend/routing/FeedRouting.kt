@@ -48,6 +48,8 @@ fun Application.feedRoutes(
     comments: dev.amps.backend.service.CommentService,
     follows: dev.amps.backend.service.FollowService,
     animeList: dev.amps.backend.service.AnimeListService,
+    // 1.2.3: опитування під постами.
+    polls: dev.amps.backend.service.PollService,
 ) {
     routing {
         // Роздача медіа — публічна: імена файлів — невгадувані UUID.
@@ -209,24 +211,66 @@ fun Application.feedRoutes(
                 }
             }
 
-            // --- 1.2.2: підписки ---
-            post("/follow/{id}") {
+            // --- 1.2.3: опитування ---
+            post("/posts/{id}/poll") {
                 val uid = call.requireUid() ?: return@post
-                val target = call.parameters["id"]?.toIntOrNull()
-                val result = target?.let { follows.toggle(uid, it) }
-                if (target == null || result == null) {
+                val postId = call.parameters["id"]?.toIntOrNull()
+                val body = call.receive<dev.amps.backend.model.PollCreateRequest>()
+                val createdPollId = if (postId != null) polls.createForPost(
+                    uid = uid,
+                    postId = postId,
+                    questionText = body.question,
+                    optionTexts = body.options,
+                ) else null
+                if (postId == null || createdPollId == null) {
                     call.respond(
                         HttpStatusCode.BadRequest,
-                        ApiError(error = "Не можна підписатись на себе або неіснуючого користувача", errorCode = "NO_TARGET"),
+                        ApiError(error = "Опитування: 2–4 варіанти, пост ваш", errorCode = "BAD_POLL"),
                     )
                 } else {
                     call.respondApi(dev.amps.backend.model.ApiResponse.ok(
-                        dev.amps.backend.model.FollowToggleResponse(
-                            following = result.first,
-                            followers = result.second,
+                        dev.amps.backend.model.PollResponse(
+                            poll = polls.forPost(postId, uid) ?: dev.amps.backend.model.PollDto(
+                                pollId = createdPollId, question = null, options = emptyList(),
+                            )
                         )
                     ))
                 }
+            }
+            post("/poll/{id}/vote/{optionId}") {
+                val uid = call.requireUid() ?: return@post
+                val pollId = call.parameters["id"]?.toIntOrNull()
+                val optionId = call.parameters["optionId"]?.toIntOrNull()
+                val poll = if (pollId != null && optionId != null) polls.vote(uid, pollId, optionId) else null
+                if (poll == null) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ApiError(error = "Опитування або варіант не знайдено", errorCode = "NO_POLL"),
+                    )
+                } else {
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.PollResponse(poll = poll)
+                    ))
+                }
+            }
+
+            // --- 1.2.3: статистика профілю (пости / підписники / аніме) ---
+            get("/profile/stats") {
+                val uid = call.requireUid() ?: return@get
+                val postsCount = org.jetbrains.exposed.sql.transactions.transaction {
+                    dev.amps.backend.model.PostEntity
+                        .find { dev.amps.backend.model.PostTable.userId eq uid }
+                        .count().toInt()
+                }
+                val watchingItems = animeList.list(uid).filter { it.status == "watching" }
+                call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                    dev.amps.backend.model.ProfileStatsDto(
+                        posts = postsCount,
+                        followers = follows.followerCount(uid),
+                        watching = watchingItems.size,
+                        watchingTitle = watchingItems.firstOrNull()?.title,
+                    )
+                ))
             }
 
             // --- 1.2.2: аніме-список акаунта ---

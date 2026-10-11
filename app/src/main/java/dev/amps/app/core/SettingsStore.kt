@@ -35,7 +35,18 @@ data class AppSettings(
      * GOOGLE_CLIENT_IDS на сервері. Порожній — кнопка «Увійти через Google»
      * захована. Публічний ідентифікатор клієнта, не секрет.
      */
+    /**
+     * 1.2.0: Google Client ID (Web-клієнт з Google Cloud Console). Він же —
+     * serverClientId для Credential Manager, і його ж треба вписати у
+     * GOOGLE_CLIENT_IDS на сервері. Порожній — кнопка «Увійти через Google»
+     * захована. Публічний ідентифікатор клієнта, не секрет.
+     */
     val googleWebClientId: String = "",
+    /**
+     * 1.2.3: приховувати 18+ у Frame Wiki (арти з рейтингом e/q IQDB) та
+     * тримати каталог без adult — типово УВІМКНЕНО.
+     */
+    val hideNsfw: Boolean = true,
 ) {
     companion object {
         /**
@@ -72,6 +83,7 @@ class SettingsStore(private val context: Context) {
         val backendBaseUrl = stringPreferencesKey("backend_base_url")
         val geminiApiKey = stringPreferencesKey("gemini_api_key")
         val googleWebClientId = stringPreferencesKey("google_web_client_id")
+        val hideNsfw = booleanPreferencesKey("hide_nsfw")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -86,6 +98,7 @@ class SettingsStore(private val context: Context) {
             backendBaseUrl = prefs[Keys.backendBaseUrl]?.takeIf { it.isNotBlank() } ?: "",
             geminiApiKey = prefs[Keys.geminiApiKey]?.takeIf { it.isNotBlank() } ?: "",
             googleWebClientId = prefs[Keys.googleWebClientId]?.takeIf { it.isNotBlank() } ?: "",
+            hideNsfw = prefs[Keys.hideNsfw] ?: true,
         )
     }
 
@@ -105,6 +118,9 @@ class SettingsStore(private val context: Context) {
 
     /** 1.2.0: Google Web Client ID для входу через Google. */
     suspend fun setGoogleWebClientId(id: String) = put(Keys.googleWebClientId, id.trim())
+
+    /** 1.2.3: приховувати 18+ у Frame Wiki. */
+    suspend fun setHideNsfw(value: Boolean) = put(Keys.hideNsfw, value)
 
     private suspend fun <T> put(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) {
         context.dataStore.edit { it[key] = value }

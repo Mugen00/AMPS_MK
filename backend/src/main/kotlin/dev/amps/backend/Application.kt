@@ -71,7 +71,9 @@ fun main() {
     val profileService = ProfileService(media)
     // 1.2.2: підписки + коментарі + аніме-список (коментарям і стрічці потрібен follow).
     val followService = FollowService()
-    val feedService = FeedService(media, profileService, followService)
+    // 1.2.3: опитування під постами.
+    val pollService = dev.amps.backend.service.PollService()
+    val feedService = FeedService(media, profileService, followService, pollService)
     // 1.2.0: сторіс — ті самі папки медіа і той самий профільний сервіс.
     val storyService = StoryService(config, media, profileService)
     // 1.2.1: свої плейлісти акаунта — живуть у базі.
@@ -86,7 +88,7 @@ fun main() {
         module(
             config, authService, twoFactorService, syncService,
             feedService, profileService, media, storyService, playlistService,
-            commentService, followService, animeListService,
+            commentService, followService, animeListService, pollService,
         )
     }.start(wait = true)
 }
@@ -121,6 +123,10 @@ private fun initDatabase(config: AppConfig) {
             dev.amps.backend.model.CommentTable,
             dev.amps.backend.model.FollowTable,
             dev.amps.backend.model.AnimeListTable,
+            // 1.2.3: опитування (голосування лінкується на опції).
+            dev.amps.backend.model.PollTable,
+            dev.amps.backend.model.PollOptionTable,
+            dev.amps.backend.model.PollVoteTable,
         )
     }
 }
@@ -138,6 +144,7 @@ fun Application.module(
     commentService: dev.amps.backend.service.CommentService,
     followService: dev.amps.backend.service.FollowService,
     animeListService: dev.amps.backend.service.AnimeListService,
+    pollService: dev.amps.backend.service.PollService,
 ) {
     install(ContentNegotiation) {
         json(kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
@@ -180,7 +187,7 @@ fun Application.module(
     authRoutes(authService, twoFactorService, syncService, media)
     // 1.1.2: спільнота, профіль і роздача медіа; 1.2.0: сторіс;
     // 1.2.2: коментарі, підписки, аніме-список.
-    feedRoutes(config, feedService, profileService, media, storyService, commentService, followService, animeListService)
+    feedRoutes(config, feedService, profileService, media, storyService, commentService, followService, animeListService, pollService)
     // 1.2.1: свої плейлісти акаунта — у базі, онлайн-слухання в застосунку.
     playlistRoutes(playlistService)
 }

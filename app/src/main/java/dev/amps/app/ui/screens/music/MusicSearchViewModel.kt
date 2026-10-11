@@ -280,6 +280,48 @@ class MusicSearchViewModel(
     fun previousTrack() = player?.previous()
     fun stopPlayer() = player?.stop()
 
+    /**
+     * 1.2.3: «Аніме-радіо» — безкінечна черга з вільних джерел за
+     * аніме-наближеними тегами (jpop/anime/soundtrack/gaming). Це не OST:
+     * чесний лейбл — «вільна музика за настроєм аніме». Джерела ті самі,
+     * ліцензії перевіряються тим самим шляхом, що й звичайний пошук.
+     */
+    fun startAnimeRadio() {
+        val p = player ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(loadingFree = true, tab = TAB_FREE) }
+            val collected = LinkedHashMap<String, FreeTrack>()
+            val queries = listOf("anime", "jpop", "soundtrack", "gaming", "kawaii")
+            for (query in queries) {
+                val outcome = try {
+                    repository.freeTracks(query, _state.value.filter, 12)
+                } catch (error: Throwable) {
+                    null
+                }
+                outcome?.results?.forEach { track ->
+                    if (!track.audioUrl.isNullOrBlank() && track.key !in collected) {
+                        collected[track.key] = track
+                    }
+                }
+                if (collected.size >= 30) break
+            }
+            val tracks = collected.values.toList()
+            _state.update {
+                it.copy(
+                    loadingFree = false,
+                    freeResults = tracks,
+                    freeSummary = MusicRanker.summarise(tracks.map(MusicRanker::fromFreeTrack)),
+                    message = if (tracks.isEmpty()) {
+                        "Радіо: вільні джерела не відповіли — спробуйте ще раз"
+                    } else {
+                        "📻 Аніме-радіо: ${tracks.size} треків у черзі"
+                    },
+                )
+            }
+            tracks.firstOrNull()?.let { first -> playTrack(first, tracks) }
+        }
+    }
+
     // --- плейлісти акаунта (1.2.1) -------------------------------------------
 
     /** Плейлісти живуть у базі на сервері — потрібен вхід. */

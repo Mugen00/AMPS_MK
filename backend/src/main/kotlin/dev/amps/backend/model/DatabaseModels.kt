@@ -341,3 +341,54 @@ class PlaylistTrackEntity(id: EntityID<Int>) : IntEntity(id) {
     var position by PlaylistTrackTable.position
     var addedAt by PlaylistTrackTable.addedAt
 }
+
+// ===== Опитування (1.2.3): одне опитування на пост =====
+object PollTable : IntIdTable("polls") {
+    val postId = integer("post_id").references(PostTable.id, ReferenceOption.CASCADE).uniqueIndex()
+    /** Запитання необов'язкове — часто вистачає тексту поста. */
+    val question = varchar("question", 200).nullable()
+}
+
+class PollEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<PollEntity>(PollTable)
+
+    var postId by PollTable.postId
+    var question by PollTable.question
+}
+
+object PollOptionTable : IntIdTable("poll_options") {
+    val pollId = integer("poll_id").references(PollTable.id, ReferenceOption.CASCADE)
+    val text = varchar("text", 100)
+    val position = integer("position")
+
+    init {
+        index(false, pollId, position)
+    }
+}
+
+class PollOptionEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<PollOptionEntity>(PollOptionTable)
+
+    var pollId by PollOptionTable.pollId
+    var text by PollOptionTable.text
+    var position by PollOptionTable.position
+}
+
+// Один голос на користувача на опитування; повторний голос перезаписується.
+object PollVoteTable : IntIdTable("poll_votes") {
+    val pollId = integer("poll_id").references(PollTable.id, ReferenceOption.CASCADE)
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val optionId = integer("option_id").references(PollOptionTable.id, ReferenceOption.CASCADE)
+
+    init {
+        uniqueIndex(pollId, userId)
+    }
+}
+
+class PollVoteEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<PollVoteEntity>(PollVoteTable)
+
+    var pollId by PollVoteTable.pollId
+    var userId by PollVoteTable.userId
+    var optionId by PollVoteTable.optionId
+}

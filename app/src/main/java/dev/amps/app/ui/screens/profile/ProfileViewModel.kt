@@ -32,6 +32,14 @@ data class ProfileUiState(
     /** Відносний шлях аватара ("/media/avatar/…") або null. */
     val avatarPath: String? = null,
     val dirty: Boolean = false,
+    // ===== Статистика «анімешника» (1.2.3) =====
+    val statsLoading: Boolean = false,
+    val postsCount: Int = 0,
+    val followersCount: Int = 0,
+    /** Тайтлів зі статусом «дивлюсь». */
+    val watchingCount: Int = 0,
+    /** Назва тайтла, який зараз дивлюсь — «Тепер дивлюсь: …». */
+    val watchingTitle: String? = null,
 )
 
 class ProfileViewModel(
@@ -44,6 +52,7 @@ class ProfileViewModel(
 
     init {
         load()
+        loadStats()
     }
 
     fun load() {
@@ -64,6 +73,30 @@ class ProfileViewModel(
                 }
                 is ApiResult.Failure -> _state.value = _state.value.copy(loading = false, error = result.error)
                 is ApiResult.NetworkError -> _state.value = _state.value.copy(loading = false, error = result.message)
+            }
+        }
+    }
+
+    /**
+     * 1.2.3: статистика «анімешника» — пости, підписники, аніме-список
+     * і «тепер дивлюсь». Помилки статистики не валять профіль.
+     */
+    fun loadStats() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(statsLoading = true)
+            val result = backendSession.authedCall { header -> backendApi.getProfileStats(header) }
+            when (result) {
+                is ApiResult.Success -> {
+                    val stats = result.data as dev.amps.app.data.remote.backend.dto.ProfileStatsDto
+                    _state.value = _state.value.copy(
+                        statsLoading = false,
+                        postsCount = stats.posts,
+                        followersCount = stats.followers,
+                        watchingCount = stats.watching,
+                        watchingTitle = stats.watchingTitle,
+                    )
+                }
+                else -> _state.value = _state.value.copy(statsLoading = false)
             }
         }
     }

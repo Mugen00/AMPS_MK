@@ -57,10 +57,21 @@ data class CommunityUiState(
     val followStates: Map<Int, Boolean> = emptyMap(),
     /** Чіп стрічки: "all" | "following". */
     val feedScope: String = "all",
+    // ===== Опитування (1.2.3) =====
+    /** Складальник: чи додано опитування до нового поста. */
+    val pollEnabled: Boolean = false,
+    /** Чернетка варіантів опитування (2–4 поля). */
+    val pollDraftOptions: List<String> = listOf("", ""),
+    /** pollId → голос зараз надсилається. */
+    val busyPollIds: Set<Int> = emptySet(),
 ) {
     val canPublish: Boolean
-        get() = !posting &&
-            (composeText.isNotBlank() || attachedPhotoBytes != null || attachedVideoBytes != null)
+        get() = !posting && (
+            composeText.isNotBlank() ||
+                attachedPhotoBytes != null ||
+                attachedVideoBytes != null ||
+                (pollEnabled && pollDraftOptions.count { it.isNotBlank() } >= 2)
+            )
 
     /** 1.2.0 (патч 24): мої живі сторіс — для розумного кружечка «Моя». */
     val myStories: List<dev.amps.app.data.remote.backend.dto.StoryDto>
@@ -188,12 +199,17 @@ class CommunityViewModel(
         }
     }
 
-    /** Публікація: текст (до 1000 символів) і щонайбільше одне вкладення. */
+    /** Публікація: текст (до 1000 символів), вкладення і/або опитування. */
     fun publish() {
         val current = _state.value
         if (!current.canPublish) return
         viewModelScope.launch {
             _state.value = current.copy(posting = true, error = null)
+            val pollOptions = if (current.pollEnabled) {
+                current.pollDraftOptions.map { it.trim() }.filter { it.isNotBlank() }
+            } else {
+                emptyList()
+            }
             val result = backendSession.authedCall { header ->
                 backendApi.createPost(
                     header,
@@ -202,14 +218,38 @@ class CommunityViewModel(
                     video = current.attachedVideoBytes,
                 )
             }
+            val createdPost = (result as? ApiResult.Success)
+                ?.data as? dev.amps.app.data.remote.backend.dto.PostCreatedResponse
+            // 1.2.3: опитування прикріплюється одразу після поста.
+            val pollResult = if (createdPost != null && current.pollEnabled &&
+                current.pollDraftOptions.count { it.isNotBlank() } >= 2
+            ) {
+                backendSession.authedCall { header ->
+                    backendApi.createPoll(
+                        header,
+                        postId = createdPost.postId,
+                        question = "",
+                        options = current.pollDraftOptions.map { it.trim() }.filter { it.isNotBlank() },
+                    )
+                }
+            } else {
+                null
+            }
             when (result) {
                 is ApiResult.Success -> {
+                    val pollFailed = pollResult is ApiResult.Failure || pollResult is ApiResult.NetworkError
                     _state.value = _state.value.copy(
                         posting = false,
                         composeText = "",
                         attachedPhotoBytes = null,
                         attachedVideoBytes = null,
-                        notice = "Опубліковано",
+                        pollEnabled = false,
+                        pollDraftOptions = listOf("", ""),
+                        notice = if (current.pollEnabled && pollFailed) {
+                            "Опубліковано, але опитування не прикріпилось"
+                        } else {
+                            "Опубліковано"
+                        },
                     )
                     load()
                 }
@@ -219,9 +259,74 @@ class CommunityViewModel(
         }
     }
 
-    // ===== Коментарі (1.2.2) =====
+    // ===== Опитування (1.2.3) =====
 
-    /** Відкрити коментарі поста: читає список із сервера. */
+    /** Увімкнути/вимкнути складальник опитування в діалозі публікації. */
+    fun togglePollComposer() {
+        _state.value = _state.value.copy(pollEnabled = !_state.value.pollEnabled)
+    }
+
+    fun setPollOption(index: Int, text: String) {
+        val opts = _state.value.pollDraftOptions.toMutableList()
+        if (index !in opts.indices) return
+        opts[index] = text.take(100)
+        _state.value = _state.value.copy(pollDraftOptions = opts)
+    }
+
+    /** Додати поле варіанта (щонайбільше 4). */
+    fun addPollOption() {
+        val current = _state.value
+        if (current.pollDraftOptions.size >= 4) return
+        _state.value = current.copy(pollDraftOptions = current.pollDraftOptions + "")
+    }
+
+    /** Прибрати поле варіанта (мінімум лишається 2). */
+    fun removePollOption(index: Int) {
+        val current = _state.value
+        if (index !in current.pollDraftOptions.indices || current.pollDraftOptions.size <= 2) return
+        val opts = current.pollDraftOptions.toMutableList()
+        opts.removeAt(index)
+        _state.value = current.copy(pollDraftOptions = opts)
+    }
+
+    /** Голосувати: повторний тап за той самий варіант знімає голос. */
+    fun votePoll(postId: Int, pollId: Int, optionId: Int) {
+        val current = _state.value
+        if (!current.authorized) {
+            _state.value = current.copy(notice = "Увійдіть, щоб голосувати")
+            return
+        }
+        if (pollId in current.busyPollIds) return
+        _state.value = current.copy(busyPollIds = current.busyPollIds + pollId)
+        viewModelScope.launch {
+            when (val result = backendSession.authedCall { header ->
+                backendApi.votePoll(header, pollId, optionId)
+            }) {
+                is ApiResult.Success -> {
+                    val poll = (result.data as dev.amps.app.data.remote.backend.dto.PollResponse).poll
+                    _state.value = _state.value.copy(
+                        busyPollIds = _state.value.busyPollIds - pollId,
+                        items = _state.value.items.map { item ->
+                            if (item.post.id == postId && item.post.poll?.pollId == pollId) {
+                                item.copy(post = item.post.copy(poll = poll))
+                            } else {
+                                item
+                            }
+                        },
+                    )
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(
+                    error = result.error,
+                    busyPollIds = _state.value.busyPollIds - pollId,
+                )
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(
+                    busyPollIds = _state.value.busyPollIds - pollId, error = result.message,
+                )
+            }
+        }
+    }
+
+    // ===== Коментарі (1.2.2) =====
     fun loadComments(postId: Int) {
         if (postId in _state.value.busyCommentPosts) return
         _state.value = _state.value.copy(busyCommentPosts = _state.value.busyCommentPosts + postId)

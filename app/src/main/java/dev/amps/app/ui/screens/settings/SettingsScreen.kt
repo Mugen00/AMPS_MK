@@ -219,6 +219,12 @@ fun SettingsScreen(
                     checked = state.keepHistory,
                     onChange = viewModel::setKeepHistory,
                 )
+                SwitchRow(
+                    title = "Приховувати 18+",
+                    subtitle = "Frame Wiki не показуватиме збіги з рейтингом e/q (1.2.3)",
+                    checked = state.hideNsfw,
+                    onChange = viewModel::setHideNsfw,
+                )
             }
 
             SectionCard(title = "Источники музыки", icon = Icons.Default.Info) {

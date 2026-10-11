@@ -276,6 +276,33 @@ class BackendApi private constructor(
             execute("POST", "follow/$userId", null, FollowToggleResponse.serializer(), authHeader)
         }
 
+    // ===== Опитування (1.2.3) =====
+
+    /** Прикріпити опитування до СВОГО поста (2–4 варіанти). */
+    suspend fun createPoll(
+        authHeader: String,
+        postId: Int,
+        question: String,
+        options: List<String>,
+    ): ApiResult = withContext(Dispatchers.IO) {
+        val body = json.encodeToString(
+            PollCreateRequest.serializer(),
+            PollCreateRequest(question = question, options = options),
+        )
+        execute("POST", "posts/$postId/poll", body, PollResponse.serializer(), authHeader)
+    }
+
+    /** Проголосувати (повторний тап за той самий варіант знімає голос). */
+    suspend fun votePoll(authHeader: String, pollId: Int, optionId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("POST", "poll/$pollId/vote/$optionId", null, PollResponse.serializer(), authHeader)
+        }
+
+    /** Статистика мого профілю: пости / підписники / аніме. */
+    suspend fun getProfileStats(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "profile/stats", null, ProfileStatsDto.serializer(), authHeader)
+    }
+
     // ===== Аніме-список акаунта (1.2.2) =====
 
     suspend fun getAnimeList(authHeader: String): ApiResult = withContext(Dispatchers.IO) {

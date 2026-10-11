@@ -281,6 +281,10 @@ fun CommunityScreen(
                         showCompose = false
                     },
                     onClose = { showCompose = false },
+                    onTogglePoll = viewModel::togglePollComposer,
+                    onPollOptionChange = viewModel::setPollOption,
+                    onAddPollOption = viewModel::addPollOption,
+                    onRemovePollOption = viewModel::removePollOption,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
                 Spacer(Modifier.height(8.dp))
@@ -366,6 +370,10 @@ fun CommunityScreen(
                         onFollow = { userId ->
                             if (state.authorized) viewModel.toggleFollow(userId) else onOpenAuth()
                         },
+                        onVotePoll = { postId, pollId, optionId ->
+                            if (state.authorized) viewModel.votePoll(postId, pollId, optionId) else onOpenAuth()
+                        },
+                        pollBusy = item.post.poll?.pollId in state.busyPollIds,
                     )
                 }
                 if (state.items.isNotEmpty() && !state.endReached) {
@@ -801,6 +809,11 @@ private fun ComposeBar(
     onClearAttachments: () -> Unit,
     onPublish: () -> Unit,
     onClose: () -> Unit = {},
+    // 1.2.3: складальник опитування.
+    onTogglePoll: () -> Unit = {},
+    onPollOptionChange: (Int, String) -> Unit = { _, _ -> },
+    onAddPollOption: () -> Unit = {},
+    onRemovePollOption: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -831,6 +844,35 @@ private fun ComposeBar(
                 minLines = 2,
             )
             Spacer(Modifier.height(8.dp))
+            // 1.2.3: складальник опитування — 2–4 варіанти.
+            if (state.pollEnabled) {
+                Text(
+                    "Опитування (2–4 варіанти)",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                state.pollDraftOptions.forEachIndexed { index, option ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = state.pollDraftOptions.getOrNull(index) ?: "",
+                            onValueChange = { onPollOptionChange(index, it) },
+                            placeholder = { Text("Варіант ${index + 1}") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                        )
+                        if (state.pollDraftOptions.size > 2) {
+                            IconButton(onClick = { onRemovePollOption(index) }) {
+                                Icon(Icons.Default.Close, contentDescription = "Прибрати варіант")
+                            }
+                        }
+                    }
+                }
+                if (state.pollDraftOptions.size < 4) {
+                    TextButton(onClick = onAddPollOption) { Text("+ варіант") }
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+            Spacer(Modifier.height(8.dp))
             if (state.attachedPhotoBytes != null || state.attachedVideoBytes != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -850,6 +892,13 @@ private fun ComposeBar(
                 }
                 IconButton(onClick = onPickVideo) {
                     Icon(Icons.Default.Videocam, contentDescription = "Прикріпити відео")
+                }
+                // 1.2.3: опитування.
+                TextButton(onClick = onTogglePoll) {
+                    Text(
+                        if (state.pollEnabled) "📊 Опитування ✓" else "📊 Опитування",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
                 }
                 Spacer(Modifier.weight(1f))
                 Button(onClick = onPublish, enabled = state.canPublish) {
@@ -887,6 +936,9 @@ private fun FeedItemCard(
     onSendComment: () -> Unit,
     onDeleteComment: (Int) -> Unit,
     onFollow: (Int) -> Unit,
+    // 1.2.3: голосування в опитуванні поста.
+    onVotePoll: (Int, Int, Int) -> Unit = { _, _, _ -> },
+    pollBusy: Boolean = false,
 ) {
     val post = item.post
     var commentsOpen by remember(item.post.id) { mutableStateOf(false) }
@@ -949,6 +1001,15 @@ private fun FeedItemCard(
             post.media.forEach { media ->
                 Spacer(Modifier.height(8.dp))
                 MediaView(media, baseUrl)
+            }
+            // --- 1.2.3: опитування поста ---
+            post.poll?.let { poll ->
+                Spacer(Modifier.height(10.dp))
+                PollBlock(
+                    poll = poll,
+                    enabled = !pollBusy,
+                    onVote = { optionId -> onVotePoll(post.id, poll.pollId, optionId) },
+                )
             }
             Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1128,6 +1189,67 @@ private fun MediaView(media: MediaDto, baseUrl: String) {
 /** Абсолютна адреса медіа: сервер віддає відносний шлях /media/… */
 private fun absoluteMediaUrl(baseUrl: String, path: String): String =
     if (path.startsWith("http")) path else baseUrl.trimEnd('/') + path
+
+/**
+ * 1.2.3: опитування поста — варіанти з часткою голосів. Мій вибір
+ * підсвічений; тап голосує/знімає голос.
+ */
+@Composable
+private fun PollBlock(
+    poll: dev.amps.app.data.remote.backend.dto.PollDto,
+    enabled: Boolean,
+    onVote: (Int) -> Unit,
+) {
+    val total = poll.options.sumOf { it.votes }
+    Column(Modifier.fillMaxWidth()) {
+        poll.question?.takeIf { it.isNotBlank() }?.let {
+            Text(it, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+        }
+        poll.options.forEach { option ->
+            val selected = poll.myOptionId == option.id
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                onClick = { if (enabled) onVote(option.id) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        if (selected) "●" else "○",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(option.text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(
+                        if (total > 0) "${option.votes} (${option.votes * 100 / total}%)" else "—",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        Text(
+            if (poll.myOptionId != null) {
+                "Голос враховано · усього голосів: $total"
+            } else {
+                "Тапни варіант, щоб проголосувати"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
 
 /** Дата публікації: «12 березня 2025, 18:40». */
 private fun formatDate(epochMillis: Long): String =

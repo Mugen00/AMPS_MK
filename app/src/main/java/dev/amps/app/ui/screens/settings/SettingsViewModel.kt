@@ -19,7 +19,10 @@ data class SettingsUiState(
     /** 1.1.3: ключ Gemini; порожній — AI-аналіз фото недоступний. */
     val geminiApiKey: String = "",
     /** 1.2.0: Google Web Client ID; порожній — кнопка Google захована. */
+    /** 1.2.0: Google Web Client ID; порожній — кнопка Google захована. */
     val googleWebClientId: String = "",
+    /** 1.2.3: приховувати 18+ у Frame Wiki. */
+    val hideNsfw: Boolean = true,
     val dirty: Boolean = false,
 )
 
@@ -46,6 +49,7 @@ class SettingsViewModel(
                 keepHistory = current.keepSearchHistory,
                 geminiApiKey = current.geminiApiKey,
                 googleWebClientId = current.googleWebClientId,
+                hideNsfw = current.hideNsfw,
             )
         }
     }
@@ -84,6 +88,12 @@ class SettingsViewModel(
     fun setKeepHistory(value: Boolean) = viewModelScope.launch {
         settings.setKeepHistory(value)
         _state.value = _state.value.copy(keepHistory = value)
+    }
+
+    /** 1.2.3: приховувати 18+ у Frame Wiki. */
+    fun setHideNsfw(value: Boolean) = viewModelScope.launch {
+        settings.setHideNsfw(value)
+        _state.value = _state.value.copy(hideNsfw = value)
     }
 
     class Factory(

@@ -36,6 +36,8 @@ class FeedService(
     private val media: MediaStorage,
     private val profiles: ProfileService,
     private val follows: FollowService? = null,
+    // 1.2.3: опитування під постами.
+    private val polls: PollService? = null,
 ) {
 
     /**
@@ -47,8 +49,11 @@ class FeedService(
         userId: Int,
         text: String,
         media: List<Pair<String, String>>,
+        pollOptions: List<String>? = null,
+        pollQuestion: String? = null,
     ): ApiResponse<PostCreatedResponse> = newSuspendedTransaction {
-        if (text.isBlank() && media.isEmpty()) {
+        val cleanPoll = pollOptions?.let { polls?.validateOptions(it) }
+        if (text.isBlank() && media.isEmpty() && cleanPoll == null) {
             return@newSuspendedTransaction ApiResponse.fail<PostCreatedResponse>(
                 "Пост не може бути порожнім", "EMPTY_POST")
         }
@@ -63,6 +68,10 @@ class FeedService(
                 this.kind = kind
                 this.fileName = fileName
             }
+        }
+        // 1.2.3: опитування створюється разом із постом.
+        if (cleanPoll != null) {
+            polls?.createForPost(userId, post.id.value, pollQuestion, cleanPoll)
         }
         // Профіль автора створюється разом із першим постом.
         profiles.ensureProfile(userId)
@@ -208,6 +217,8 @@ class FeedService(
             repostCount = repostCount,
             likedByMe = likedByMe,
             repostedByMe = repostedByMe,
+            // 1.2.3: опитування, якщо є.
+            poll = polls?.forPost(post.id.value, viewerId),
         )
     }
 
