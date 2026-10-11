@@ -84,16 +84,43 @@ private val AMPSTypography = Typography(
 @Composable
 fun AmpsTheme(
     themeMode: ThemeMode = ThemeMode.DARK,
+    /** 1.2.4: hue акценту (сезонна або згенерована тема); null — фірмовий фіолет. */
+    accentHue: Float? = null,
     content: @Composable () -> Unit,
 ) {
-    val colors = when (themeMode) {
+    var colors = when (themeMode) {
         ThemeMode.DARK -> DarkColors
         ThemeMode.LIGHT -> LightColors
         ThemeMode.SYSTEM -> if (androidx.compose.foundation.isSystemInDarkTheme()) DarkColors else LightColors
+    }
+    if (accentHue != null) {
+        val accent = androidx.compose.ui.graphics.Color.hsv(accentHue, 0.52f, 0.92f)
+        val accentDeep = androidx.compose.ui.graphics.Color.hsv(
+            normalizedHue(accentHue + 22f), 0.55f, if (themeMode == ThemeMode.LIGHT) 0.55f else 0.78f,
+        )
+        val secondary = androidx.compose.ui.graphics.Color.hsv(
+            normalizedHue(accentHue + 45f), 0.45f, 0.85f,
+        )
+        val tertiary = androidx.compose.ui.graphics.Color.hsv(
+            normalizedHue(accentHue + 180f), 0.55f, 0.9f,
+        )
+        colors = colors.copy(
+            primary = accent,
+            primaryContainer = accentDeep,
+            onPrimaryContainer = androidx.compose.ui.graphics.Color.White,
+            secondary = accentDeep,
+            onSecondary = androidx.compose.ui.graphics.Color.White,
+            tertiary = androidx.compose.ui.graphics.Color.hsv(normalizedHue(accentHue + 160f), 0.5f, 0.85f),
+        )
     }
     MaterialTheme(
         colorScheme = colors,
         typography = AMPSTypography,
         content = content,
     )
+}
+
+internal fun normalizedHue(h: Float): Float {
+    val m = h % 360f
+    return if (m < 0f) m + 360f else m
 }

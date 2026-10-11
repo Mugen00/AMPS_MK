@@ -39,6 +39,8 @@ class StoryService(
                 expiresAt = now + config.storyTtlMillis
             }
             profiles.ensureProfile(uid)
+            // 1.2.4: XP за сторіс.
+            dev.amps.backend.service.XpLedger.award(uid, dev.amps.backend.service.XpLedger.STORY)
             ApiResponse.ok(dto(story))
         }
 

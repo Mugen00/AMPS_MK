@@ -3,6 +3,7 @@ package dev.amps.app.core
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dev.amps.app.data.remote.JamendoClient
@@ -35,18 +36,22 @@ data class AppSettings(
      * GOOGLE_CLIENT_IDS на сервері. Порожній — кнопка «Увійти через Google»
      * захована. Публічний ідентифікатор клієнта, не секрет.
      */
-    /**
-     * 1.2.0: Google Client ID (Web-клієнт з Google Cloud Console). Він же —
-     * serverClientId для Credential Manager, і його ж треба вписати у
-     * GOOGLE_CLIENT_IDS на сервері. Порожній — кнопка «Увійти через Google»
-     * захована. Публічний ідентифікатор клієнта, не секрет.
-     */
     val googleWebClientId: String = "",
     /**
      * 1.2.3: приховувати 18+ у Frame Wiki (арти з рейтингом e/q IQDB) та
      * тримати каталог без adult — типово УВІМКНЕНО.
      */
     val hideNsfw: Boolean = true,
+    /**
+     * 1.2.4: сезонна тема за датою пристрою (синхронізація з часом/датою
+     * системи). Власна згенерована тема має пріоритет над сезонною.
+     */
+    val seasonalTheme: Boolean = true,
+    /**
+     * 1.2.4: hue власної згенерованої теми (0..360); null — не задана.
+     * Дата генерації теж зберігається: підпис «Тема дня».
+     */
+    val customHue: Float? = null,
 ) {
     companion object {
         /**
@@ -84,6 +89,8 @@ class SettingsStore(private val context: Context) {
         val geminiApiKey = stringPreferencesKey("gemini_api_key")
         val googleWebClientId = stringPreferencesKey("google_web_client_id")
         val hideNsfw = booleanPreferencesKey("hide_nsfw")
+        val seasonalTheme = booleanPreferencesKey("seasonal_theme")
+        val customHue = floatPreferencesKey("custom_theme_hue")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -99,6 +106,8 @@ class SettingsStore(private val context: Context) {
             geminiApiKey = prefs[Keys.geminiApiKey]?.takeIf { it.isNotBlank() } ?: "",
             googleWebClientId = prefs[Keys.googleWebClientId]?.takeIf { it.isNotBlank() } ?: "",
             hideNsfw = prefs[Keys.hideNsfw] ?: true,
+            seasonalTheme = prefs[Keys.seasonalTheme] ?: true,
+            customHue = prefs[Keys.customHue],
         )
     }
 
@@ -121,6 +130,14 @@ class SettingsStore(private val context: Context) {
 
     /** 1.2.3: приховувати 18+ у Frame Wiki. */
     suspend fun setHideNsfw(value: Boolean) = put(Keys.hideNsfw, value)
+
+    /** 1.2.4: сезонні теми за датою пристрою. */
+    suspend fun setSeasonalTheme(value: Boolean) = put(Keys.seasonalTheme, value)
+
+    /** 1.2.4: hue власної теми (0..360) або null — скинути. */
+    suspend fun setCustomHue(value: Float?) = context.dataStore.edit {
+        if (value == null) it.remove(Keys.customHue) else it[Keys.customHue] = value
+    }
 
     private suspend fun <T> put(key: androidx.datastore.preferences.core.Preferences.Key<T>, value: T) {
         context.dataStore.edit { it[key] = value }

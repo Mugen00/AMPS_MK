@@ -37,9 +37,15 @@ data class ProfileUiState(
     val postsCount: Int = 0,
     val followersCount: Int = 0,
     /** Тайтлів зі статусом «дивлюсь». */
+    /** Тайтлів зі статусом «дивлюсь». */
     val watchingCount: Int = 0,
     /** Назва тайтла, який зараз дивлюсь — «Тепер дивлюсь: …». */
     val watchingTitle: String? = null,
+    // ===== Рівні і XP (1.2.4) =====
+    val xp: Int = 0,
+    val level: Int = 1,
+    /** Скільки XP лишилось до наступного рівня (0 — максимальний). */
+    val xpToNext: Int = 0,
 )
 
 class ProfileViewModel(
@@ -94,6 +100,9 @@ class ProfileViewModel(
                         followersCount = stats.followers,
                         watchingCount = stats.watching,
                         watchingTitle = stats.watchingTitle,
+                        xp = stats.xp,
+                        level = stats.level,
+                        xpToNext = stats.xpToNext,
                     )
                 }
                 else -> _state.value = _state.value.copy(statsLoading = false)

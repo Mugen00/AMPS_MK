@@ -127,6 +127,8 @@ private fun initDatabase(config: AppConfig) {
             dev.amps.backend.model.PollTable,
             dev.amps.backend.model.PollOptionTable,
             dev.amps.backend.model.PollVoteTable,
+            // 1.2.4: XP і рівні.
+            dev.amps.backend.model.XpTable,
         )
     }
 }

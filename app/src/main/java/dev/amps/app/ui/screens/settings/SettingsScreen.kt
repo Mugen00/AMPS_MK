@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.OutlinedTextField
@@ -225,6 +227,55 @@ fun SettingsScreen(
                     checked = state.hideNsfw,
                     onChange = viewModel::setHideNsfw,
                 )
+                Spacer(Modifier.height(12.dp))
+
+                // --- 1.2.4: сезонні теми і генератор унікальних тем ---
+                SwitchRow(
+                    title = "Сезонні теми",
+                    subtitle = "Палітра змінюється сама за датою пристрою: зараз — " +
+                        dev.amps.app.ui.theme.SeasonTheme.seasonName(java.time.LocalDate.now()).lowercase(),
+                    checked = state.seasonalTheme,
+                    onChange = viewModel::setSeasonalTheme,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = viewModel::generateTheme) {
+                        Text("🎲 Згенерувати тему")
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    if (state.customHue != null) {
+                        TextButton(onClick = viewModel::resetCustomTheme) {
+                            Text("Скинути")
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                // Прев'ю палітри: основний / другорядний / контрастний відтінки.
+                val hue = state.customHue
+                    ?: dev.amps.app.ui.theme.SeasonTheme.hueFor(java.time.LocalDate.now())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    listOf(0f, 45f, 180f).forEach { shift ->
+                        androidx.compose.material3.Surface(
+                            shape = CircleShape,
+                            color = androidx.compose.ui.graphics.Color.hsv(
+                                (hue + shift + 360f) % 360f,
+                                0.52f,
+                                0.9f,
+                            ),
+                            modifier = Modifier.size(22.dp),
+                        ) {}
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (state.customHue != null) "Власна тема активна — переважає сезонну"
+                        else if (state.seasonalTheme)
+                            "Сезонна: " + dev.amps.app.ui.theme.SeasonTheme.seasonName(java.time.LocalDate.now())
+                        else "Фірмовий фіолет",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             SectionCard(title = "Источники музыки", icon = Icons.Default.Info) {

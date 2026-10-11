@@ -86,7 +86,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
-            AmpsTheme(themeMode = settings.themeMode) {
+            // 1.2.4: тема дня — власна згенерована має пріоритет; інакше
+            // сезонна за датою пристрою (синхронізація з часом системи).
+            val accentHue = settings.customHue
+                ?: (if (settings.seasonalTheme) dev.amps.app.ui.theme.SeasonTheme.hueFor(java.time.LocalDate.now()) else null)
+            AmpsTheme(themeMode = settings.themeMode, accentHue = accentHue) {
                 AmpsRoot(container = container, initialSharedImage = sharedImage)
             }
         }

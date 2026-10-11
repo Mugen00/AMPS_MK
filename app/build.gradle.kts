@@ -78,8 +78,8 @@ android {
 // всё приложение. Теперь Android убьёт только процесс `:tagger`.
 // Также largeHeap, проверка свободной памяти до загрузки модели и
 // Throwable вместо Exception в разборе кадра.
-        versionCode = 31
-        versionName = "1.2.3"
+        versionCode = 32
+        versionName = "1.2.4"
         resourceConfigurations += listOf("ru", "en")
 
         ndk {

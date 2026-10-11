@@ -52,6 +52,8 @@ class PollService {
                 this.position = index
             }
         }
+        // 1.2.4: XP за створення опитування.
+        dev.amps.backend.service.XpLedger.award(uid, dev.amps.backend.service.XpLedger.POLL_CREATE)
         poll.id.value
     }
 
@@ -74,6 +76,8 @@ class PollService {
                     this.userId = uid
                     this.optionId = optionId
                 }
+                // 1.2.4: XP за голос.
+                dev.amps.backend.service.XpLedger.award(uid, dev.amps.backend.service.XpLedger.POLL_VOTE)
             }
             existing.optionId == optionId -> existing.delete()
             else -> existing.optionId = optionId

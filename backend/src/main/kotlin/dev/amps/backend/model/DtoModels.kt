@@ -339,7 +339,12 @@ data class ProfileStatsDto(
     /** Тайтлів зі статусом «дивлюсь» в аніме-списку. */
     val watching: Int,
     /** Назва найсвіжішого тайтла, який користувач дивиться (для «тепер дивлюсь»). */
-    val watchingTitle: String? = null
+    val watchingTitle: String? = null,
+    // 1.2.4: рівні і XP.
+    val xp: Int = 0,
+    val level: Int = 1,
+    /** XP до наступного рівня (0 — максимальний). */
+    val xpToNext: Int = 0
 )
 
 @Serializable

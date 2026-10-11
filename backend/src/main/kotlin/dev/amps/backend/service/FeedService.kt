@@ -73,6 +73,8 @@ class FeedService(
         if (cleanPoll != null) {
             polls?.createForPost(userId, post.id.value, pollQuestion, cleanPoll)
         }
+        // 1.2.4: XP за пост.
+        dev.amps.backend.service.XpLedger.award(userId, dev.amps.backend.service.XpLedger.POST)
         // Профіль автора створюється разом із першим постом.
         profiles.ensureProfile(userId)
         ApiResponse.ok(PostCreatedResponse(postId = post.id.value))
@@ -156,6 +158,14 @@ class FeedService(
                 }
             }
             val count = LikeEntity.find { LikeTable.postId eq postId }.count().toInt()
+            if (existing == null) {
+                // 1.2.4: XP за лайк — тому, хто лайкнув, і автору поста.
+                val author = PostEntity.findById(postId)?.userId
+                dev.amps.backend.service.XpLedger.award(userId, dev.amps.backend.service.XpLedger.LIKE_GIVEN)
+                if (author != null && author != userId) {
+                    dev.amps.backend.service.XpLedger.award(author, dev.amps.backend.service.XpLedger.LIKE_RECEIVED)
+                }
+            }
             ApiResponse.ok(LikeToggleResponse(liked = existing == null, likeCount = count))
         }
 
@@ -181,6 +191,9 @@ class FeedService(
                 }
             }
             val count = RepostEntity.find { RepostTable.postId eq postId }.count().toInt()
+            if (existing == null) {
+                dev.amps.backend.service.XpLedger.award(userId, dev.amps.backend.service.XpLedger.REPOST)
+            }
             ApiResponse.ok(RepostResponse(reposted = existing == null, repostCount = count))
         }
 

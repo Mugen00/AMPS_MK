@@ -40,12 +40,15 @@ class CommentService(private val profiles: ProfileService) {
         if (trimmed.isEmpty()) return null
         return transaction {
             PostEntity.findById(postId) ?: return@transaction null
-            CommentEntity.new {
+            val id = CommentEntity.new {
                 userId = uid
                 this.postId = postId
                 this.text = trimmed
                 createdAt = System.currentTimeMillis()
             }.id.value
+            // 1.2.4: XP за коментар.
+            dev.amps.backend.service.XpLedger.award(uid, dev.amps.backend.service.XpLedger.COMMENT)
+            id
         }
     }
 

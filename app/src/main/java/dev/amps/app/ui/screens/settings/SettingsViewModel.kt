@@ -23,6 +23,11 @@ data class SettingsUiState(
     val googleWebClientId: String = "",
     /** 1.2.3: приховувати 18+ у Frame Wiki. */
     val hideNsfw: Boolean = true,
+    // ===== Теми (1.2.4) =====
+    /** Сезонна тема за датою пристрою. */
+    val seasonalTheme: Boolean = true,
+    /** Hue власної згенерованої теми; null — фірмовий фіолет. */
+    val customHue: Float? = null,
     val dirty: Boolean = false,
 )
 
@@ -50,6 +55,8 @@ class SettingsViewModel(
                 geminiApiKey = current.geminiApiKey,
                 googleWebClientId = current.googleWebClientId,
                 hideNsfw = current.hideNsfw,
+                seasonalTheme = current.seasonalTheme,
+                customHue = current.customHue,
             )
         }
     }
@@ -94,6 +101,25 @@ class SettingsViewModel(
     fun setHideNsfw(value: Boolean) = viewModelScope.launch {
         settings.setHideNsfw(value)
         _state.value = _state.value.copy(hideNsfw = value)
+    }
+
+    /** 1.2.4: сезонні теми — застосовуються одразу, зберігання миттєве. */
+    fun setSeasonalTheme(value: Boolean) = viewModelScope.launch {
+        settings.setSeasonalTheme(value)
+        _state.value = _state.value.copy(seasonalTheme = value)
+    }
+
+    /** 1.2.4: згенерувати унікальну тему — випадковий hue 0..360. */
+    fun generateTheme() = viewModelScope.launch {
+        val hue = kotlin.random.Random.nextFloat() * 360f
+        settings.setCustomHue(hue)
+        _state.value = _state.value.copy(customHue = hue)
+    }
+
+    /** 1.2.4: повернутись до фірмового фіолету (сезонна тема знову активна). */
+    fun resetCustomTheme() = viewModelScope.launch {
+        settings.setCustomHue(null)
+        _state.value = _state.value.copy(customHue = null)
     }
 
     class Factory(

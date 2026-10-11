@@ -263,12 +263,18 @@ fun Application.feedRoutes(
                         .count().toInt()
                 }
                 val watchingItems = animeList.list(uid).filter { it.status == "watching" }
+                // 1.2.4: XP і рівень.
+                val xp = dev.amps.backend.service.XpLedger.xpOf(uid)
+                val level = dev.amps.backend.service.XpLedger.levelFor(xp)
                 call.respondApi(dev.amps.backend.model.ApiResponse.ok(
                     dev.amps.backend.model.ProfileStatsDto(
                         posts = postsCount,
                         followers = follows.followerCount(uid),
                         watching = watchingItems.size,
                         watchingTitle = watchingItems.firstOrNull()?.title,
+                        xp = xp,
+                        level = level,
+                        xpToNext = if (level >= 100) 0 else dev.amps.backend.service.XpLedger.xpForLevel(level + 1) - xp,
                     )
                 ))
             }

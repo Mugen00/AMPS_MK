@@ -203,7 +203,11 @@ data class ProfileStatsDto(
     val posts: Int,
     val followers: Int,
     val watching: Int,
-    val watchingTitle: String? = null
+    val watchingTitle: String? = null,
+    // 1.2.4: XP і рівень 1–100 (старий сервер шле без них — дефолти).
+    val xp: Int = 0,
+    val level: Int = 1,
+    val xpToNext: Int = 0
 )
 
 /**

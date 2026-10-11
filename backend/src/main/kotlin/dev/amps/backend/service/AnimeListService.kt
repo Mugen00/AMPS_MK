@@ -52,7 +52,7 @@ class AnimeListService {
                 existing.updatedAt = System.currentTimeMillis()
                 existing.id.value
             } else {
-                dev.amps.backend.model.AnimeListEntity.new {
+                val newId = dev.amps.backend.model.AnimeListEntity.new {
                     userId = uid
                     this.anilistId = anilistId
                     title = animeTitle.take(250)
@@ -61,6 +61,9 @@ class AnimeListService {
                     reminder = withReminder
                     updatedAt = System.currentTimeMillis()
                 }.id.value
+                // 1.2.4: XP — лише за НОВИЙ тайтл, редагування статусу без XP.
+                dev.amps.backend.service.XpLedger.award(uid, dev.amps.backend.service.XpLedger.ANIME_ADD)
+                newId
             }
         }
     }

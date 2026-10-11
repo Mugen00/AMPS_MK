@@ -20,7 +20,9 @@ import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -139,6 +141,14 @@ fun ProfileScreen(
             )
             Spacer(Modifier.height(12.dp))
 
+            // --- 1.2.4: банер рівня і титулу ---
+            LevelBanner(
+                level = state.level,
+                xp = state.xp,
+                xpToNext = state.xpToNext,
+            )
+            Spacer(Modifier.height(12.dp))
+
             // --- 1.2.3: статистика «анімешника» ---
             Row(
                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
@@ -222,6 +232,66 @@ private fun StatCard(label: String, value: Int, modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * 1.2.4: банер рівня — «Рівень N — Титул», блок десятка і прогрес
+ * до наступного рівня (XP вимагає рівна сотня на рівень).
+ */
+@Composable
+private fun LevelBanner(level: Int, xp: Int, xpToNext: Int) {
+    val title = dev.amps.app.ui.theme.TitleCatalog.titleFor(level)
+    val block = dev.amps.app.ui.theme.TitleCatalog.blockName(level)
+    androidx.compose.material3.Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(end = 10.dp),
+                ) {
+                    Text(
+                        "Lv $level",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
+                Column {
+                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        block,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            if (level >= 100) {
+                Text(
+                    "Максимальний рівень · $xp XP",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                val inLevel = xp - (level - 1) * 100
+                LinearProgressIndicator(
+                    progress = { (inLevel.coerceIn(0, 100)) / 100f },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "$xpToNext XP до рівня ${level + 1} · разом $xp XP",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
