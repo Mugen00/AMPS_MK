@@ -78,6 +78,14 @@ class AmpsNotifier(private val context: Context) {
         notify(channel = CHANNEL_COMMUNITY, id = 2100, title = title, text = text)
     }
 
+    /**
+     * 1.2.2: «нові серії аніме». id залежний від тайтла: різні тайтли
+     * не зливаються в одну шторку.
+     */
+    fun notifyAnimeEpisode(title: String, text: String, anilistId: Int = 0) {
+        notify(channel = CHANNEL_COMMUNITY, id = 4000 + (anilistId % 500), title = title, text = text)
+    }
+
     /** Чи має застосунок право показувати сповіщення. */
     fun canPostNotifications(): Boolean {
         if (Build.VERSION.SDK_INT >= 33) {

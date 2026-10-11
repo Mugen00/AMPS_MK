@@ -45,6 +45,18 @@ data class CommunityUiState(
     /** 1.2.0 (патч 24): id поточного акаунта — щоб кружечок «Моя»
      *  відкривав СВОЇ сторіс, як в Instagram (0 — гість). */
     val currentUserId: Int = 0,
+    // ===== Коментарі (1.2.2) =====
+    /** postId → коментарі (свіжі зверху, як віддає сервер). */
+    val comments: Map<Int, List<dev.amps.app.data.remote.backend.dto.CommentDto>> = emptyMap(),
+    /** postId → чернетка поля «написати коментар». */
+    val commentDrafts: Map<Int, String> = emptyMap(),
+    /** postId → коментар зараз завантажується/надсилається. */
+    val busyCommentPosts: Set<Int> = emptySet(),
+    // ===== Підписки (1.2.2) =====
+    /** userId → підписаний чи ні (стан після toggle). */
+    val followStates: Map<Int, Boolean> = emptyMap(),
+    /** Чіп стрічки: "all" | "following". */
+    val feedScope: String = "all",
 ) {
     val canPublish: Boolean
         get() = !posting &&
@@ -116,11 +128,19 @@ class CommunityViewModel(
      * Завантаження стрічки: акаунт — з токеном (сервер повертає і його
      * лайки), гість — публічний запит із чистими лічильниками.
      */
+    /**
+     * Завантаження стрічки: акаунт — з токеном (сервер повертає і його
+     * лайки), гість — публічний запит із чистими лічильниками.
+     * 1.2.2: feedScope = "following" — тільки підписки (потрібен вхід).
+     */
     fun load() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
+            val scopeParam = _state.value.feedScope
             val result = if (_state.value.authorized) {
-                backendSession.authedCall { header -> backendApi.getFeed(header) }
+                backendSession.authedCall { header ->
+                    backendApi.getFeed(header, scope = scopeParam)
+                }
             } else {
                 backendApi.getFeedPublic()
             }
@@ -137,6 +157,13 @@ class CommunityViewModel(
                 is ApiResult.NetworkError -> _state.value = _state.value.copy(loading = false, error = result.message)
             }
         }
+    }
+
+    /** 1.2.2: перемикання стрічки «Всі ⇄ Підписки». */
+    fun setFeedScope(scope: String) {
+        if (_state.value.feedScope == scope) return
+        _state.value = _state.value.copy(feedScope = scope)
+        load()
     }
 
     /** Наступна сторінка стрічки: зсув = кількість уже завантажених рядків. */
@@ -188,6 +215,104 @@ class CommunityViewModel(
                 }
                 is ApiResult.Failure -> _state.value = _state.value.copy(posting = false, error = result.error)
                 is ApiResult.NetworkError -> _state.value = _state.value.copy(posting = false, error = result.message)
+            }
+        }
+    }
+
+    // ===== Коментарі (1.2.2) =====
+
+    /** Відкрити коментарі поста: читає список із сервера. */
+    fun loadComments(postId: Int) {
+        if (postId in _state.value.busyCommentPosts) return
+        _state.value = _state.value.copy(busyCommentPosts = _state.value.busyCommentPosts + postId)
+        viewModelScope.launch {
+            when (val result = backendApi.getComments(postId)) {
+                is ApiResult.Success -> {
+                    val comments = (result.data as dev.amps.app.data.remote.backend.dto.CommentsResponse).comments
+                    _state.value = _state.value.copy(
+                        comments = _state.value.comments + (postId to comments),
+                        busyCommentPosts = _state.value.busyCommentPosts - postId,
+                    )
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(
+                    error = result.error,
+                    busyCommentPosts = _state.value.busyCommentPosts - postId,
+                )
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(
+                    busyCommentPosts = _state.value.busyCommentPosts - postId,
+                    error = result.message,
+                )
+            }
+        }
+    }
+
+    fun setCommentDraft(postId: Int, text: String) {
+        _state.value = _state.value.copy(
+            commentDrafts = _state.value.commentDrafts + (postId to text.take(1000)),
+        )
+    }
+
+    /** Надіслати чернетку коментаря; після успіху — перечитати список. */
+    fun addComment(postId: Int) {
+        val current = _state.value
+        if (!current.authorized) {
+            _state.value = current.copy(notice = "Увійдіть, щоб коментувати")
+            return
+        }
+        val text = current.commentDrafts[postId]?.trim().orEmpty()
+        if (text.isBlank()) return
+        if (postId in current.busyCommentPosts) return
+        _state.value = current.copy(busyCommentPosts = current.busyCommentPosts + postId)
+        viewModelScope.launch {
+            when (val result = backendSession.authedCall { header ->
+                backendApi.addComment(header, postId, text)
+            }) {
+                is ApiResult.Success -> {
+                    _state.value = _state.value.copy(
+                        busyCommentPosts = _state.value.busyCommentPosts - postId,
+                        commentDrafts = _state.value.commentDrafts + (postId to ""),
+                    )
+                    loadComments(postId)
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(
+                    busyCommentPosts = _state.value.busyCommentPosts - postId,
+                    error = result.error,
+                )
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(
+                    busyCommentPosts = _state.value.busyCommentPosts - postId,
+                    error = result.message,
+                )
+            }
+        }
+    }
+
+    /** Видалити свій коментар і перечитати список поста. */
+    fun deleteComment(postId: Int, commentId: Int) {
+        viewModelScope.launch {
+            backendSession.authedCall { header ->
+                backendApi.deleteComment(authHeader = header, commentId = commentId)
+            }
+            loadComments(postId)
+        }
+    }
+
+    /** Підписатись/відписатись на автора поста. */
+    fun toggleFollow(userId: Int) {
+        if (_state.value.currentUserId == userId) return
+        viewModelScope.launch {
+            when (val result = backendSession.authedCall { header ->
+                backendApi.toggleFollow(header, userId)
+            }) {
+                is ApiResult.Success -> {
+                    val response = result.data as dev.amps.app.data.remote.backend.dto.FollowToggleResponse
+                    _state.value = _state.value.copy(
+                        followStates = _state.value.followStates + (userId to response.following),
+                        notice = if (response.following) "Підписано" else "Підписку знято",
+                    )
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(error = result.error)
+                is ApiResult.NetworkError ->
+                    _state.value = _state.value.copy(error = result.message)
             }
         }
     }

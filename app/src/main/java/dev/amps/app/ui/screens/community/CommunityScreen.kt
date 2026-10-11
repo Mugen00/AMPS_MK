@@ -286,6 +286,31 @@ fun CommunityScreen(
                 Spacer(Modifier.height(8.dp))
             }
 
+            // 1.2.2: перемикач стрічки «Всі ⇄ Підписки».
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                androidx.compose.material3.FilterChip(
+                    selected = state.feedScope == "all",
+                    onClick = { viewModel.setFeedScope("all") },
+                    label = { Text("Всі") },
+                )
+                androidx.compose.material3.AssistChip(
+                    onClick = {
+                        if (!state.authorized) onOpenAuth() else viewModel.setFeedScope("following")
+                    },
+                    label = {
+                        Text(
+                            if (state.feedScope == "following") "✓ Підписки" else "Підписки",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    },
+                )
+            }
+
             // --- стрічка ---
             LazyColumn(
                 state = listState,
@@ -314,16 +339,32 @@ fun CommunityScreen(
                     }
                 }
                 items(state.items, key = { "${it.kind}-${it.post.id}-${it.at}" }) { item ->
+                    // 1.2.2: коментарі й підписка — із стану ViewModel.
                     FeedItemCard(
                         item = item,
                         baseUrl = baseUrl,
                         busy = item.post.id in state.busyPostIds,
+                        isOwn = item.post.author.userId == state.currentUserId,
+                        ownUserId = state.currentUserId,
+                        following = state.followStates[item.post.author.userId],
+                        comments = state.comments[item.post.id],
+                        commentsLoading = item.post.id in state.busyCommentPosts,
+                        commentDraft = state.commentDrafts[item.post.id].orEmpty(),
                         // 1.1.3: гість, натиснувши лайк/репост, попадає на вхід.
                         onLike = {
                             if (state.authorized) viewModel.toggleLike(item.post.id) else onOpenAuth()
                         },
                         onRepost = {
                             if (state.authorized) viewModel.toggleRepost(item.post.id) else onOpenAuth()
+                        },
+                        onOpenComments = { viewModel.loadComments(item.post.id) },
+                        onCommentDraft = { text -> viewModel.setCommentDraft(item.post.id, text) },
+                        onSendComment = { viewModel.addComment(item.post.id) },
+                        onDeleteComment = { commentId ->
+                            viewModel.deleteComment(item.post.id, commentId)
+                        },
+                        onFollow = { userId ->
+                            if (state.authorized) viewModel.toggleFollow(userId) else onOpenAuth()
                         },
                     )
                 }
@@ -823,16 +864,32 @@ private fun ComposeBar(
     }
 }
 
-/** Один рядок стрічки: пост або репост із позначкою, хто поширив. */
+/** Один рядок стрічки: пост або репост із позначкою, хто поширив.
+ *
+ * 1.2.2: кнопка «Підписатись» біля автора (тільки на чужий профіль) і
+ * блок коментарів: список + поле введення, видалення свого коментаря.
+ */
 @Composable
 private fun FeedItemCard(
     item: FeedItemDto,
     baseUrl: String,
     busy: Boolean,
+    isOwn: Boolean,
+    ownUserId: Int,
+    following: Boolean?,
+    comments: List<dev.amps.app.data.remote.backend.dto.CommentDto>?,
+    commentsLoading: Boolean,
+    commentDraft: String,
     onLike: () -> Unit,
     onRepost: () -> Unit,
+    onOpenComments: () -> Unit,
+    onCommentDraft: (String) -> Unit,
+    onSendComment: () -> Unit,
+    onDeleteComment: (Int) -> Unit,
+    onFollow: (Int) -> Unit,
 ) {
     val post = item.post
+    var commentsOpen by remember(item.post.id) { mutableStateOf(false) }
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surface,
@@ -870,6 +927,18 @@ private fun FeedItemCard(
                         "@${post.author.login} · ${formatDate(item.at)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // 1.2.2: підписка на автора — тільки на чужий профіль.
+                if (!isOwn && post.author.userId > 0) {
+                    androidx.compose.material3.AssistChip(
+                        onClick = { onFollow(post.author.userId) },
+                        label = {
+                            Text(
+                                if (following == true) "Ви підписані" else "+ Підписатись",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        },
                     )
                 }
             }
@@ -912,7 +981,81 @@ private fun FeedItemCard(
                     )
                 }
                 Text("${post.repostCount}", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.width(8.dp))
+                // 1.2.2: розгорнути коментарі — без extended-icons, текстова кнопка.
+                TextButton(onClick = {
+                    commentsOpen = !commentsOpen
+                    if (commentsOpen) onOpenComments()
+                }) {
+                    Text(
+                        "💬 ${comments?.size ?: 0}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (commentsOpen) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
                 Spacer(Modifier.weight(1f))
+            }
+            // --- 1.2.2: блок коментарів ---
+            if (commentsOpen) {
+                Spacer(Modifier.height(8.dp))
+                if (commentsLoading && comments.isNullOrEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    }
+                }
+                comments.orEmpty().forEach { comment ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                comment.author.displayName,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                comment.text,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        // Видалення доступне лише власному коментарю.
+                        if (comment.author.userId == ownUserId) {
+                            IconButton(onClick = { onDeleteComment(comment.id) }, modifier = Modifier.size(28.dp)) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Видалити коментар",
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = commentDraft,
+                        onValueChange = onCommentDraft,
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("Ваш коментар…", style = MaterialTheme.typography.bodySmall) },
+                        singleLine = true,
+                    )
+                    TextButton(onClick = onSendComment, enabled = commentDraft.isNotBlank() && !commentsLoading) {
+                        Text("Надіслати")
+                    }
+                }
             }
         }
     }

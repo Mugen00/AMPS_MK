@@ -176,6 +176,25 @@ class AppContainer(private val context: Context) {
     }
 
     /**
+     * 1.2.2: нагадувач нових серій аніме — раз на 6 годин; тайтли
+     * з увімкненим нагадуванням беруться з аніме-списку акаунта.
+     */
+    val animeWatcher: dev.amps.app.core.AnimeAiringNotifier by lazy {
+        dev.amps.app.core.AnimeAiringNotifier(
+            context, backendApi, backendSession, anilistClient, notifier,
+        )
+    }
+
+    /** 1.2.2: клієнт каталогу AniList — свій OkHttp з таймаутами. */
+    val anilistClient: dev.amps.app.data.remote.anilist.AniListClient by lazy {
+        val http = OkHttpClient.Builder()
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        dev.amps.app.data.remote.anilist.AniListClient(http)
+    }
+
+    /**
      * 1.0.6: аниме-тегер вместо ML Kit.
      *
      * Контекст у него обязателен: модель лежит в assets, а ONNX Runtime

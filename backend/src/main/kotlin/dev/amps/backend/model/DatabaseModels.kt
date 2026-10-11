@@ -187,6 +187,75 @@ class RepostEntity(id: EntityID<Int>) : IntEntity(id) {
     var createdAt by RepostTable.createdAt
 }
 
+// ===== Коментарі (1.2.2): обговорення під постами =====
+object CommentTable : IntIdTable("comments") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val postId = integer("post_id").references(PostTable.id, ReferenceOption.CASCADE)
+    val text = text("text")
+    val createdAt = long("created_at")
+
+    init {
+        index(false, postId, createdAt)
+    }
+}
+
+class CommentEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<CommentEntity>(CommentTable)
+
+    var userId by CommentTable.userId
+    var postId by CommentTable.postId
+    var text by CommentTable.text
+    var createdAt by CommentTable.createdAt
+}
+
+// ===== Підписки (1.2.2): хто на кого =====
+object FollowTable : IntIdTable("follows") {
+    val followerId = integer("follower_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val followedId = integer("followed_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val createdAt = long("created_at")
+
+    init {
+        uniqueIndex(followerId, followedId)
+    }
+}
+
+class FollowEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<FollowEntity>(FollowTable)
+
+    var followerId by FollowTable.followerId
+    var followedId by FollowTable.followedId
+    var createdAt by FollowTable.createdAt
+}
+
+// ===== Аніме-список акаунта (1.2.2): дивлюсь / планую / переглянуто =====
+object AnimeListTable : IntIdTable("anime_list") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val anilistId = integer("anilist_id")
+    val title = varchar("title", 250)
+    val coverUrl = varchar("cover_url", 500)
+    // "watching" | "planned" | "watched"
+    val status = varchar("status", 16)
+    // 1 = нагадувати про нову серію, 0 = ні.
+    val reminder = bool("reminder").default(true)
+    val updatedAt = long("updated_at")
+
+    init {
+        uniqueIndex(userId, anilistId)
+    }
+}
+
+class AnimeListEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<AnimeListEntity>(AnimeListTable)
+
+    var userId by AnimeListTable.userId
+    var anilistId by AnimeListTable.anilistId
+    var title by AnimeListTable.title
+    var coverUrl by AnimeListTable.coverUrl
+    var status by AnimeListTable.status
+    var reminder by AnimeListTable.reminder
+    var updatedAt by AnimeListTable.updatedAt
+}
+
 // ===== Сторіс (1.2.0): фото/відео на 24 години =====
 object StoryTable : IntIdTable("stories") {
     val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)

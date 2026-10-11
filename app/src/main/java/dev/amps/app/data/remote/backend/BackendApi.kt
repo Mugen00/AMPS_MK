@@ -188,10 +188,21 @@ class BackendApi private constructor(
         )
     }
 
-    /** Стрічка спільноти; limit 1..50, offset — зсув пагінації. */
-    suspend fun getFeed(authHeader: String, limit: Int = 20, offset: Long = 0): ApiResult =
+    /** Стрічка спільноти; limit 1..50, offset — зсув пагінації.
+     *
+     * 1.2.2: scope = "following" — стрічка лише підписок (потрібен токен).
+     */
+    suspend fun getFeed(
+        authHeader: String,
+        limit: Int = 20,
+        offset: Long = 0,
+        scope: String = "all",
+    ): ApiResult =
         withContext(Dispatchers.IO) {
-            execute("GET", "feed?limit=$limit&offset=$offset", null, FeedResponse.serializer(), authHeader)
+            execute(
+                "GET", "feed?limit=$limit&offset=$offset&scope=$scope", null,
+                FeedResponse.serializer(), authHeader,
+            )
         }
 
     /**
@@ -233,6 +244,71 @@ class BackendApi private constructor(
     suspend fun toggleRepost(authHeader: String, postId: Int): ApiResult = withContext(Dispatchers.IO) {
         execute("POST", "feed/$postId/repost", null, RepostResponse.serializer(), authHeader)
     }
+
+    // ===== Коментарі (1.2.2) =====
+
+    /** Коментарі поста (публічно читання, як і стрічка). */
+    suspend fun getComments(postId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "posts/$postId/comments", null, CommentsResponse.serializer(), null)
+    }
+
+    /** Написати коментар (потрібен вхід). */
+    suspend fun addComment(authHeader: String, postId: Int, text: String): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(
+                CommentCreateRequest.serializer(),
+                CommentCreateRequest(text = text),
+            )
+            execute("POST", "posts/$postId/comments", body, CommentCreatedResponse.serializer(), authHeader)
+        }
+
+    /** Видалити свій коментар. */
+    suspend fun deleteComment(authHeader: String, commentId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("DELETE", "comments/$commentId", null, CommentsResponse.serializer(), authHeader)
+        }
+
+    // ===== Підписки (1.2.2) =====
+
+    /** Підписатись/відписатись: toggle, як лайк. */
+    suspend fun toggleFollow(authHeader: String, userId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("POST", "follow/$userId", null, FollowToggleResponse.serializer(), authHeader)
+        }
+
+    // ===== Аніме-список акаунта (1.2.2) =====
+
+    suspend fun getAnimeList(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "anime/list", null, AnimeListResponse.serializer(), authHeader)
+    }
+
+    /** Додати/оновити тайтл у списку (статус + нагадування). */
+    suspend fun upsertAnimeList(
+        authHeader: String,
+        anilistId: Int,
+        title: String,
+        coverUrl: String,
+        status: String,
+        reminder: Boolean,
+    ): ApiResult = withContext(Dispatchers.IO) {
+        val body = json.encodeToString(
+            AnimeListUpsertRequest.serializer(),
+            AnimeListUpsertRequest(
+                anilistId = anilistId,
+                title = title,
+                coverUrl = coverUrl,
+                status = status,
+                reminder = reminder,
+            ),
+        )
+        execute("PUT", "anime/list", body, AnimeListResponse.serializer(), authHeader)
+    }
+
+    /** Прибрати тайтл зі списку. */
+    suspend fun deleteAnimeList(authHeader: String, anilistId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("DELETE", "anime/list/$anilistId", null, AnimeListResponse.serializer(), authHeader)
+        }
 
     // ===== Сторіс (1.2.0) =====
 
@@ -346,6 +422,9 @@ class BackendApi private constructor(
         when (method) {
             "POST" -> requestBuilder.post((bodyJson ?: "").toRequestBody(jsonMediaType))
             "PUT" -> requestBuilder.put((bodyJson ?: "").toRequestBody(jsonMediaType))
+            // 1.2.2: DELETE раніше не був оброблений — запит ішов як GET,
+            // і сервер відповідав 405; видалення не спрацьовувало.
+            "DELETE" -> requestBuilder.delete()
             "GET" -> requestBuilder.get()
         }
         authHeader?.let { requestBuilder.addHeader("Authorization", it) }

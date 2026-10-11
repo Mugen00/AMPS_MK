@@ -44,6 +44,10 @@ fun Application.feedRoutes(
     profileService: ProfileService,
     media: MediaStorage,
     stories: dev.amps.backend.service.StoryService,
+    // 1.2.2: коментарі, підписки, аніме-список.
+    comments: dev.amps.backend.service.CommentService,
+    follows: dev.amps.backend.service.FollowService,
+    animeList: dev.amps.backend.service.AnimeListService,
 ) {
     routing {
         // Роздача медіа — публічна: імена файлів — невгадувані UUID.
@@ -137,17 +141,15 @@ fun Application.feedRoutes(
             }
         }
 
-        // 1.1.3: гостевий режим — читання стрічки публічне. З валідним
-        // токеном сервер іще й повертає «лайкнуто мною»/«репостнув мною»,
-        // без токена — гість бачить чисті лічильники (viewerId = 0).
-        // Лайк, репост і публікація лишаються лише для аутентифікованих.
         authenticate("auth-jwt", optional = true) {
             get("/feed") {
                 val limit = (call.request.queryParameters["limit"]?.toIntOrNull() ?: 20)
                     .coerceIn(1, 50)
                 val offset = (call.request.queryParameters["offset"]?.toLongOrNull() ?: 0L)
                     .coerceAtLeast(0)
-                call.respondApi(feedService.feed(call.optionalUid() ?: 0, limit, offset))
+                // 1.2.2: scope=following — стрічка лише підписок (потрібен токен).
+                val scope = call.request.queryParameters["scope"] ?: "all"
+                call.respondApi(feedService.feed(call.optionalUid() ?: 0, limit, offset, scope))
             }
 
             // 1.2.0: сторіс видно всім — як і стрічку; лише живі, свіжі зверху.
@@ -155,6 +157,120 @@ fun Application.feedRoutes(
                 call.respondApi(dev.amps.backend.model.ApiResponse.ok(
                     dev.amps.backend.model.StoriesResponse(stories.list())
                 ))
+            }
+
+            // 1.2.2: коментарі читаються публічно, як і стрічка.
+            get("/posts/{id}/comments") {
+                val id = call.parameters["id"]?.toIntOrNull()
+                if (id == null) {
+                    call.respond(HttpStatusCode.BadRequest, ApiError(error = "Невірний id поста"))
+                } else {
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.CommentsResponse(comments = comments.list(id))
+                    ))
+                }
+            }
+        }
+
+        authenticate("auth-jwt") {
+            // --- 1.2.2: коментарі ---
+            post("/posts/{id}/comments") {
+                val uid = call.requireUid() ?: return@post
+                val id = call.parameters["id"]?.toIntOrNull()
+                if (id == null) {
+                    call.respond(HttpStatusCode.BadRequest, ApiError(error = "Невірний id поста"))
+                } else {
+                    val body = call.receive<dev.amps.backend.model.CommentCreateRequest>()
+                    val id = comments.add(uid, id, body.text)
+                    if (id == null) {
+                        call.respond(
+                            HttpStatusCode.BadRequest,
+                            ApiError(error = "Коментар порожній або поста немає", errorCode = "BAD_COMMENT"),
+                        )
+                    } else {
+                        call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                            dev.amps.backend.model.CommentCreatedResponse(commentId = id)
+                        ))
+                    }
+                }
+            }
+            delete("/comments/{id}") {
+                val uid = call.requireUid() ?: return@delete
+                val id = call.parameters["id"]?.toIntOrNull()
+                if (id == null || !comments.delete(uid, id)) {
+                    call.respond(
+                        HttpStatusCode.NotFound,
+                        ApiError(error = "Коментар не знайдено (або це не ваш)", errorCode = "NO_COMMENT"),
+                    )
+                } else {
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.CommentsResponse(comments = emptyList())
+                    ))
+                }
+            }
+
+            // --- 1.2.2: підписки ---
+            post("/follow/{id}") {
+                val uid = call.requireUid() ?: return@post
+                val target = call.parameters["id"]?.toIntOrNull()
+                val result = target?.let { follows.toggle(uid, it) }
+                if (target == null || result == null) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ApiError(error = "Не можна підписатись на себе або неіснуючого користувача", errorCode = "NO_TARGET"),
+                    )
+                } else {
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.FollowToggleResponse(
+                            following = result.first,
+                            followers = result.second,
+                        )
+                    ))
+                }
+            }
+
+            // --- 1.2.2: аніме-список акаунта ---
+            get("/anime/list") {
+                val uid = call.requireUid() ?: return@get
+                call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                    dev.amps.backend.model.AnimeListResponse(animeList.list(uid))
+                ))
+            }
+            put("/anime/list") {
+                val uid = call.requireUid() ?: return@put
+                val body = call.receive<dev.amps.backend.model.AnimeListUpsertRequest>()
+                val saved = animeList.upsert(
+                    uid = uid,
+                    anilistId = body.anilistId,
+                    animeTitle = body.title,
+                    cover = body.coverUrl,
+                    animeStatus = body.status,
+                    withReminder = body.reminder,
+                )
+                if (saved == null) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        ApiError(error = "Невірні дані тайтла", errorCode = "BAD_ANIME"),
+                    )
+                } else {
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.AnimeListResponse(animeList.list(uid))
+                    ))
+                }
+            }
+            delete("/anime/list/{anilistId}") {
+                val uid = call.requireUid() ?: return@delete
+                val aid = call.parameters["anilistId"]?.toIntOrNull()
+                if (aid == null || !animeList.delete(uid, aid)) {
+                    call.respond(
+                        HttpStatusCode.NotFound,
+                        ApiError(error = "Тайтл не знайдено у списку", errorCode = "NO_ANIME"),
+                    )
+                } else {
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.AnimeListResponse(animeList.list(uid))
+                    ))
+                }
             }
         }
     }

@@ -239,6 +239,68 @@ data class PostCreatedResponse(
     val postId: Int
 )
 
+// ===== Коментарі (1.2.2) =====
+
+@Serializable
+data class CommentDto(
+    val id: Int,
+    val author: ProfileDto,
+    val postId: Int,
+    val text: String,
+    val createdAt: Long
+)
+
+@Serializable
+data class CommentsResponse(
+    val comments: List<CommentDto>
+)
+
+@Serializable
+data class CommentCreateRequest(
+    val text: String
+)
+
+@Serializable
+data class CommentCreatedResponse(
+    val commentId: Int
+)
+
+// ===== Підписки (1.2.2) =====
+
+@Serializable
+data class FollowToggleResponse(
+    val following: Boolean,
+    val followers: Int
+)
+
+// ===== Аніме-список акаунта (1.2.2) =====
+
+/** Один тайтл у списку акаунта. */
+@Serializable
+data class AnimeListDto(
+    val anilistId: Int,
+    val title: String,
+    val coverUrl: String,
+    /** "watching" | "planned" | "watched" */
+    val status: String,
+    val reminder: Boolean,
+    val updatedAt: Long
+)
+
+@Serializable
+data class AnimeListResponse(
+    val items: List<AnimeListDto>
+)
+
+@Serializable
+data class AnimeListUpsertRequest(
+    val anilistId: Int,
+    val title: String,
+    val coverUrl: String = "",
+    val status: String,
+    val reminder: Boolean = true
+)
+
 @Serializable
 data class StoriesResponse(
     val stories: List<StoryDto>

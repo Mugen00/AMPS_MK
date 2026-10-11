@@ -24,6 +24,7 @@ import dev.amps.backend.routing.playlistRoutes
 import dev.amps.backend.service.AuthService
 import dev.amps.backend.service.EmailService
 import dev.amps.backend.service.FeedService
+import dev.amps.backend.service.FollowService
 import dev.amps.backend.service.MediaStorage
 import dev.amps.backend.service.PlaylistService
 import dev.amps.backend.service.ProfileService
@@ -68,11 +69,16 @@ fun main() {
     // 1.1.2: спільнота і профіль — сховище медіа спільне для всіх трьох.
     val media = MediaStorage(config)
     val profileService = ProfileService(media)
-    val feedService = FeedService(media, profileService)
+    // 1.2.2: підписки + коментарі + аніме-список (коментарям і стрічці потрібен follow).
+    val followService = FollowService()
+    val feedService = FeedService(media, profileService, followService)
     // 1.2.0: сторіс — ті самі папки медіа і той самий профільний сервіс.
     val storyService = StoryService(config, media, profileService)
     // 1.2.1: свої плейлісти акаунта — живуть у базі.
     val playlistService = PlaylistService(config)
+    // 1.2.2: коментарі та аніме-список акаунта.
+    val commentService = dev.amps.backend.service.CommentService(profileService)
+    val animeListService = dev.amps.backend.service.AnimeListService()
 
     initDatabase(config)
 
@@ -80,6 +86,7 @@ fun main() {
         module(
             config, authService, twoFactorService, syncService,
             feedService, profileService, media, storyService, playlistService,
+            commentService, followService, animeListService,
         )
     }.start(wait = true)
 }
@@ -110,6 +117,10 @@ private fun initDatabase(config: AppConfig) {
             StoryTable,
             PlaylistTable,
             PlaylistTrackTable,
+            // 1.2.2: коментарі, підписки, аніме-список акаунта.
+            dev.amps.backend.model.CommentTable,
+            dev.amps.backend.model.FollowTable,
+            dev.amps.backend.model.AnimeListTable,
         )
     }
 }
@@ -124,6 +135,9 @@ fun Application.module(
     media: MediaStorage,
     storyService: StoryService,
     playlistService: dev.amps.backend.service.PlaylistService,
+    commentService: dev.amps.backend.service.CommentService,
+    followService: dev.amps.backend.service.FollowService,
+    animeListService: dev.amps.backend.service.AnimeListService,
 ) {
     install(ContentNegotiation) {
         json(kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
@@ -164,8 +178,9 @@ fun Application.module(
     }
 
     authRoutes(authService, twoFactorService, syncService, media)
-    // 1.1.2: спільнота, профіль і роздача медіа; 1.2.0: сторіс у тому ж блоці.
-    feedRoutes(config, feedService, profileService, media, storyService)
+    // 1.1.2: спільнота, профіль і роздача медіа; 1.2.0: сторіс;
+    // 1.2.2: коментарі, підписки, аніме-список.
+    feedRoutes(config, feedService, profileService, media, storyService, commentService, followService, animeListService)
     // 1.2.1: свої плейлісти акаунта — у базі, онлайн-слухання в застосунку.
     playlistRoutes(playlistService)
 }

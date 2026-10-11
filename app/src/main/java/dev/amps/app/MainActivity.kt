@@ -12,7 +12,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.ImageSearch
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import dev.amps.app.ui.screens.anime.AnimeScreen
+import dev.amps.app.ui.screens.auth.AuthScreen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -118,6 +121,7 @@ private object Routes {
     const val AUTH = "auth"
     const val COMMUNITY = "community"
     const val PROFILE = "profile"
+    const val ANIME = "anime"
     const val HISTORY = "history"
     const val UPDATE = "update"
 }
@@ -191,6 +195,7 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
         TabItem(Routes.FRAME, "Картинка", Icons.Default.ImageSearch),
         TabItem(Routes.MUSIC, "Музыка", Icons.Default.MusicNote),
         TabItem(Routes.COMMUNITY, "Спільнота", Icons.Default.Groups),
+        TabItem(Routes.ANIME, "Аніме", Icons.Default.PlayArrow),
         TabItem(Routes.SETTINGS, "Настройки", Icons.Default.Settings),
     )
 
@@ -236,6 +241,18 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                     baseUrl = container.backendApi.effectiveBaseUrl,
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenAuth = { navController.navigate(Routes.AUTH) },
+                )
+            }
+            // 1.2.2: каталог аніме — AniList, мій список, нагадування серій.
+            composable(Routes.ANIME) {
+                AnimeScreen(
+                    viewModel = androidx.lifecycle.viewmodel.compose.viewModel(
+                        factory = dev.amps.app.ui.screens.anime.AnimeViewModel.Factory(
+                            container.anilistClient,
+                            container.backendApi,
+                            container.backendSession,
+                        ),
+                    ),
                 )
             }
             // 1.1.2: профіль — ім'я, біо, аватар; редагуються лише тут.

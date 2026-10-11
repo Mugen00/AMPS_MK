@@ -35,6 +35,7 @@ import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransacti
 class FeedService(
     private val media: MediaStorage,
     private val profiles: ProfileService,
+    private val follows: FollowService? = null,
 ) {
 
     /**
@@ -68,20 +69,45 @@ class FeedService(
         ApiResponse.ok(PostCreatedResponse(postId = post.id.value))
     }
 
-    /** Стрічка: пости та репости впереміш, свіжі зверху, зі зсувом для пагінації. */
-    suspend fun feed(viewerId: Int, limit: Int, offset: Long): ApiResponse<FeedResponse> =
+    /** Стрічка: пости та репости впереміш, свіжі зверху, зі зсувом для пагінації.
+     *
+     * 1.2.2: [scope] = "following" — тільки пости/репости тих, на кого
+     * підписаний [viewerId] (власні пости теж видимі — так зручно).
+     */
+    suspend fun feed(
+        viewerId: Int,
+        limit: Int,
+        offset: Long,
+        scope: String = "all",
+    ): ApiResponse<FeedResponse> =
         newSuspendedTransaction {
+            val followingIds: Set<Int>? = if (scope == "following" && follows != null) {
+                follows.followingIds(viewerId).toSet() + viewerId
+            } else {
+                null
+            }
             // Охоплюємо на третину більше записів, ніж потрібно: частина
             // піде на злиття з репостами, і відрізання робиться після сортування.
             val fetch = (limit.toLong() * 2 + offset + 32L).coerceAtMost(Int.MAX_VALUE.toLong())
-            val posts = PostEntity.all()
+            val allPosts = PostEntity.all()
                 .orderBy(PostTable.createdAt to SortOrder.DESC)
                 .limit(fetch.toInt(), offset = 0)
                 .toList()
-            val reposts = RepostEntity.all()
+            // 1.2.2: режим «підписки» — тільки свої й тих, на кого підписаний.
+            val posts = if (followingIds != null) {
+                allPosts.filter { it.userId in followingIds }
+            } else {
+                allPosts
+            }
+            val allReposts = RepostEntity.all()
                 .orderBy(RepostTable.createdAt to SortOrder.DESC)
                 .limit(fetch.toInt(), offset = 0)
                 .toList()
+            val reposts = if (followingIds != null) {
+                allReposts.filter { it.userId in followingIds }
+            } else {
+                allReposts
+            }
 
             val items = buildList {
                 posts.forEach { add(FeedItemDto(KIND_POST, postDto(it, viewerId), null, it.createdAt)) }
