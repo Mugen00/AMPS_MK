@@ -35,6 +35,15 @@ data class CommunityUiState(
     /** 1.5.1: формат показу фото в стрічці — як в Instagram
      *  ("original"|"1:1"|"4:5"|"16:9"). Діє, доки прикріплене фото. */
     val attachAspect: String = "original",
+    // ===== 1.5.3: режим множинного постинга фото =====
+    /** Режим вкладень: "single" (одне фото) | "carousel" (1–30 фото) | "collage" (3–4). */
+    val attachMode: String = "single",
+    /** Фото каруселі (1–30 штук). */
+    val attachedPhotos: List<ByteArray> = emptyList(),
+    /** Готовий колаж (JPEG з 3–4 фото) — публікується як одне фото. */
+    val collageBytes: ByteArray? = null,
+    /** Колаж зараз збирається. */
+    val collageBuilding: Boolean = false,
     /** Пости, у яких зараз перемикається лайк або репост. */
     val busyPostIds: Set<Int> = emptySet(),
     val loadingMore: Boolean = false,
@@ -75,6 +84,8 @@ data class CommunityUiState(
             composeText.isNotBlank() ||
                 attachedPhotoBytes != null ||
                 attachedVideoBytes != null ||
+                attachedPhotos.isNotEmpty() ||
+                (attachMode == "collage" && collageBytes != null) ||
                 (pollEnabled && pollDraftOptions.count { it.isNotBlank() } >= 2)
             )
 
@@ -145,9 +156,77 @@ class CommunityViewModel(
         _state.value = _state.value.copy(attachAspect = aspect)
     }
 
+    /**
+     * 1.5.3: перемикання режиму постинга фото ("single"|"carousel"|"collage").
+     * Вкладення іншого режиму очищаються — без сюрпризів.
+     */
+    fun setAttachMode(mode: String) {
+        val cur = _state.value
+        if (cur.attachMode == mode) return
+        _state.value = cur.copy(
+            attachMode = mode,
+            attachedPhotoBytes = null,
+            attachedVideoBytes = null,
+            attachedPhotos = emptyList(),
+            collageBytes = null,
+            collageBuilding = false,
+            attachAspect = "original",
+        )
+    }
+
+    /**
+     * 1.5.3: вкладення кількох фото. Карусель — 1–30 фото; колаж —
+     * рівно 3–4, з яких одразу збирається готовий квадратний JPEG.
+     */
+    fun attachPhotos(bytesList: List<ByteArray>) {
+        if (bytesList.isEmpty()) return
+        val mode = _state.value.attachMode
+        when (mode) {
+            "collage" -> {
+                if (bytesList.size !in 3..4) {
+                    _state.value = _state.value.copy(
+                        error = dev.amps.app.core.Loc.translate("Для колажу потрібно 3–4 фото"),
+                    )
+                    return
+                }
+                _state.value = _state.value.copy(
+                    attachedPhotos = bytesList, collageBytes = null, collageBuilding = true,
+                )
+                viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                    val collage = dev.amps.app.core.CollageBuilder.buildCollage(bytesList)
+                    _state.value = _state.value.copy(
+                        collageBytes = collage,
+                        collageBuilding = false,
+                        error = if (collage == null) {
+                            dev.amps.app.core.Loc.translate("Не вдалося зібрати колаж")
+                        } else {
+                            null
+                        },
+                    )
+                }
+            }
+            // Карусель: до 30 фото.
+            else -> _state.value = _state.value.copy(attachedPhotos = bytesList.take(30))
+        }
+    }
+
+    /** 1.5.3: прибрати одне фото з каруселі в композері. */
+    fun removeCarouselPhoto(index: Int) {
+        val list = _state.value.attachedPhotos.toMutableList()
+        if (index in list.indices) {
+            list.removeAt(index)
+            _state.value = _state.value.copy(attachedPhotos = list)
+        }
+    }
+
     fun clearAttachments() {
         _state.value = _state.value.copy(
-            attachedPhotoBytes = null, attachedVideoBytes = null, attachAspect = "original",
+            attachedPhotoBytes = null,
+            attachedVideoBytes = null,
+            attachedPhotos = emptyList(),
+            collageBytes = null,
+            collageBuilding = false,
+            attachAspect = "original",
         )
     }
 
@@ -233,6 +312,8 @@ class CommunityViewModel(
     fun publish() {
         val current = _state.value
         if (!current.canPublish) return
+        // 1.5.3: колаж надсилається лише коли вже зібраний.
+        if (current.attachMode == "collage" && current.collageBytes == null) return
         viewModelScope.launch {
             _state.value = current.copy(posting = true, error = null)
             val pollOptions = if (current.pollEnabled) {
@@ -240,14 +321,24 @@ class CommunityViewModel(
             } else {
                 emptyList()
             }
+            // 1.5.3: список фото залежить від режиму постинга.
+            val photos = when (current.attachMode) {
+                "carousel" -> current.attachedPhotos
+                "collage" -> listOfNotNull(current.collageBytes)
+                else -> listOfNotNull(current.attachedPhotoBytes)
+            }
+            // Колаж завжди квадратний — формат показу примусово 1:1.
+            val imageAspect = when (current.attachMode) {
+                "collage" -> "1:1"
+                else -> current.attachAspect
+            }.takeIf { photos.isNotEmpty() }
             val result = backendSession.authedCall { header ->
                 backendApi.createPost(
                     header,
                     text = current.composeText.trim(),
-                    photo = current.attachedPhotoBytes,
-                    video = current.attachedVideoBytes,
-                    // 1.5.1: формат показу фото — тільки коли фото прикріплене.
-                    imageAspect = current.attachAspect.takeIf { current.attachedPhotoBytes != null },
+                    photos = photos,
+                    video = current.attachedVideoBytes.takeIf { current.attachMode == "single" },
+                    imageAspect = imageAspect,
                 )
             }
             val createdPost = (result as? ApiResult.Success)
@@ -275,6 +366,9 @@ class CommunityViewModel(
                         composeText = "",
                         attachedPhotoBytes = null,
                         attachedVideoBytes = null,
+                        attachedPhotos = emptyList(),
+                        collageBytes = null,
+                        collageBuilding = false,
                         attachAspect = "original",
                         pollEnabled = false,
                         pollDraftOptions = listOf("", ""),

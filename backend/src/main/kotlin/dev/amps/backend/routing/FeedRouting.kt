@@ -518,7 +518,8 @@ private suspend fun ApplicationCall.receivePost(media: MediaStorage): PostUpload
                         "video" -> MediaStorage.KIND_VIDEO
                         else -> null
                     }
-                    if (kind != null && !tooLarge && !failed && files.size < 6) {
+                    // 1.5.3: карусель — до 30 фото на пост (раніше 6).
+                    if (kind != null && !tooLarge && !failed && files.size < 30) {
                         val cap = if (kind == MediaStorage.KIND_VIDEO) {
                             AppConfig.MAX_VIDEO_BYTES
                         } else {

@@ -21,7 +21,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -72,6 +75,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import coil.compose.AsyncImage
@@ -133,6 +137,17 @@ fun CommunityScreen(
         if (uri != null) {
             readBytesCapped(context, uri, maxBytes = 50L * 1024 * 1024)
                 ?.let(viewModel::attachVideo)
+        }
+    }
+    // 1.5.3: мультівибір фото — карусель (1–30) і колаж (3–4).
+    val multiPhotoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            val list = uris.mapNotNull { uri ->
+                readBytesCapped(context, uri, maxBytes = 10L * 1024 * 1024)
+            }
+            viewModel.attachPhotos(list)
         }
     }
 
@@ -286,7 +301,12 @@ fun CommunityScreen(
                     state = state,
                     onTextChange = viewModel::setComposeText,
                     onPickPhoto = {
-                        photoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp", "image/gif"))
+                        // 1.5.3: карусель і колаж — мультівибір, одиночне — як раніше.
+                        if (state.attachMode == "single") {
+                            photoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp", "image/gif"))
+                        } else {
+                            multiPhotoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp"))
+                        }
                     },
                     onPickVideo = { videoPicker.launch(arrayOf("video/mp4", "video/webm", "video/quicktime")) },
                     onClearAttachments = viewModel::clearAttachments,
@@ -301,6 +321,9 @@ fun CommunityScreen(
                     onRemovePollOption = viewModel::removePollOption,
                     // 1.5.1: формат показу фото (Instagram-стиль).
                     onAspectChange = viewModel::setAttachAspect,
+                    // 1.5.3: режим постинга фото + видалення фото з каруселі.
+                    onModeChange = viewModel::setAttachMode,
+                    onRemoveCarouselPhoto = viewModel::removeCarouselPhoto,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
                 Spacer(Modifier.height(8.dp))
@@ -843,6 +866,10 @@ private fun ComposeBar(
     onRemovePollOption: (Int) -> Unit = {},
     // 1.5.1: вибір формату показу фото, як в Instagram.
     onAspectChange: (String) -> Unit = {},
+    // 1.5.3: режим множинного постинга ("single"|"carousel"|"collage").
+    onModeChange: (String) -> Unit = {},
+    // 1.5.3: прибрати одне фото з каруселі.
+    onRemoveCarouselPhoto: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -880,6 +907,23 @@ private fun ComposeBar(
                     .heightIn(max = maxContentHeight)
                     .verticalScroll(rememberScrollState()),
             ) {
+                // 1.5.3: режим множинного постинга фото.
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    listOf(
+                        "single" to "Фото",
+                        "carousel" to "Карусель",
+                        "collage" to "Колаж",
+                    ).forEach { (mode, label) ->
+                        FilterChip(
+                            selected = state.attachMode == mode,
+                            onClick = { onModeChange(mode) },
+                            label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = state.composeText,
                     onValueChange = onTextChange,
@@ -914,11 +958,9 @@ private fun ComposeBar(
                         TextButton(onClick = onAddPollOption) { Text(t("+ варіант")) }
                     }
                 }
-                if (state.attachedPhotoBytes != null) {
-                    // 1.5.1: прев'ю в обраному форматі + чипи формату —
-                    // як в Instagram: що обрав, так і в стрічці покажеться.
-                    // 1.5.2: фіксована КОМПАКТНА висота прев'ю за форматом —
-                    // панель більше не розтягується за межі екрана.
+                // 1.5.3: прев'ю залежить від режиму постинга.
+                if (state.attachMode == "single" && state.attachedPhotoBytes != null) {
+                    // Одиночне фото: прев'ю в обраному форматі + чипи формату.
                     AsyncImage(
                         model = state.attachedPhotoBytes,
                         contentDescription = t("Вибране зображення"),
@@ -945,10 +987,118 @@ private fun ComposeBar(
                         }
                     }
                 }
-                if (state.attachedPhotoBytes != null || state.attachedVideoBytes != null) {
+                if (state.attachMode == "carousel" && state.attachedPhotos.isNotEmpty()) {
+                    // 1.5.3: карусель — прев'ю першого фото + мініатюри з видаленням.
+                    Text(
+                        "${state.attachedPhotos.size} фото · карусель (до 30)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    AsyncImage(
+                        model = state.attachedPhotos.first(),
+                        contentDescription = t("Вибране зображення"),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(previewHeightDp(state.attachAspect))
+                            .clip(RoundedCornerShape(10.dp)),
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(state.attachedPhotos.size) { index ->
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                            ) {
+                                AsyncImage(
+                                    model = state.attachedPhotos[index],
+                                    contentDescription = "Фото ${index + 1}",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                                // Хрестик — прибрати фото з каруселі.
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(2.dp)
+                                        .size(18.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f))
+                                        .clickable { onRemoveCarouselPhoto(index) },
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Прибрати фото ${index + 1}",
+                                        tint = androidx.compose.ui.graphics.Color.White,
+                                        modifier = Modifier.size(12.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        listOf(
+                            "original" to "Оригінальне",
+                            "1:1" to "1:1",
+                            "4:5" to "4:5",
+                            "16:9" to "16:9",
+                        ).forEach { (code, label) ->
+                            FilterChip(
+                                selected = state.attachAspect == code,
+                                onClick = { onAspectChange(code) },
+                                label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                            )
+                        }
+                    }
+                }
+                if (state.attachMode == "collage") {
+                    // 1.5.3: колаж — готовий квадратний JPEG із 3–4 фото.
+                    when {
+                        state.collageBytes != null -> {
+                            Text(
+                                "Колаж з ${state.attachedPhotos.size} фото · формат 1:1",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            AsyncImage(
+                                model = state.collageBytes,
+                                contentDescription = t("Колаж"),
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(280.dp)
+                                    .clip(RoundedCornerShape(10.dp)),
+                            )
+                        }
+                        state.collageBuilding -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Text(
+                                    "Збираю колаж…",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    }
+                }
+                if (
+                    state.attachedPhotoBytes != null || state.attachedVideoBytes != null ||
+                    state.attachedPhotos.isNotEmpty()
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            if (state.attachedPhotoBytes != null) "Фото прикріплено" else "Відео прикріплено",
+                            when {
+                                state.attachMode == "collage" -> "Колаж з ${state.attachedPhotos.size} фото"
+                                state.attachMode == "carousel" -> "Карусель: ${state.attachedPhotos.size} фото"
+                                state.attachedPhotoBytes != null -> "Фото прикріплено"
+                                else -> "Відео прикріплено"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f),
@@ -965,8 +1115,17 @@ private fun ComposeBar(
                 IconButton(onClick = onPickPhoto) {
                     Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Прикріпити фото")
                 }
-                IconButton(onClick = onPickVideo) {
-                    Icon(Icons.Default.Videocam, contentDescription = "Прикріпити відео")
+                // 1.5.3: відео — тільки в режимі одиночного фото.
+                IconButton(onClick = onPickVideo, enabled = state.attachMode == "single") {
+                    Icon(
+                        Icons.Default.Videocam,
+                        contentDescription = "Прикріпити відео",
+                        tint = if (state.attachMode == "single") {
+                            LocalContentColor.current
+                        } else {
+                            LocalContentColor.current.copy(alpha = 0.38f)
+                        },
+                    )
                 }
                 // 1.2.3: опитування.
                 TextButton(onClick = onTogglePoll) {
@@ -1081,9 +1240,23 @@ private fun FeedItemCard(
                 Spacer(Modifier.height(8.dp))
                 Text(post.text, style = MaterialTheme.typography.bodyMedium)
             }
-            post.media.forEach { media ->
+            // 1.5.3: 2+ фото — КАРУСЕЛЬ (горизонтальний пейджер, бейдж «i/N»);
+            // одне фото або відео — як раніше.
+            val photoMedia = post.media.filter { it.kind == "photo" }
+            val videoMedia = post.media.filter { it.kind == "video" }
+            if (photoMedia.size > 1) {
                 Spacer(Modifier.height(8.dp))
-                // 1.5.1: показ фото в обраному при постингу форматі.
+                CarouselView(photoMedia, baseUrl, post.imageAspect)
+            } else {
+                post.media.forEach { media ->
+                    Spacer(Modifier.height(8.dp))
+                    // 1.5.1: показ фото в обраному при постингу форматі.
+                    MediaView(media, baseUrl, post.imageAspect)
+                }
+            }
+            // Відео в каруселі не бере участі — покажеться окремо (рідкісний кейс).
+            videoMedia.forEach { media ->
+                Spacer(Modifier.height(8.dp))
                 MediaView(media, baseUrl, post.imageAspect)
             }
             // --- 1.2.3: опитування поста ---
@@ -1284,7 +1457,7 @@ private fun MediaView(media: MediaDto, baseUrl: String, aspectCode: String? = nu
 }
 
 /**
- * 1.5.1: співвідношення сторін для формату показу фото
+ * 1.5.3: співвідношення сторін для формату показу фото
  * ("original"|"1:1"|"4:5"|"16:9"); невідоме значення → оригінальний показ.
  */
 private fun aspectRatioOf(code: String?): Float? = when (code) {
@@ -1292,6 +1465,57 @@ private fun aspectRatioOf(code: String?): Float? = when (code) {
     "4:5" -> 4f / 5f
     "16:9" -> 16f / 9f
     else -> null
+}
+
+/**
+ * 1.5.3: карусель фото в стрічці — горизонтальний пейджер (свайп),
+ * бейдж «поточна/усього», формат показу — як в Instagram за [aspectCode].
+ * Тап на фото — відкрити зовні.
+ */
+@Composable
+private fun CarouselView(photos: List<MediaDto>, baseUrl: String, aspectCode: String?) {
+    val context = LocalContext.current
+    val pagerState = rememberPagerState(pageCount = { photos.size })
+    val ratio = aspectRatioOf(aspectCode)
+    Box(modifier = Modifier.fillMaxWidth()) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (ratio != null) Modifier.aspectRatio(ratio)
+                    else Modifier.height(220.dp)
+                )
+                .clip(RoundedCornerShape(10.dp)),
+        ) { page ->
+            val media = photos[page]
+            val url = absoluteMediaUrl(baseUrl, media.url)
+            AsyncImage(
+                model = url,
+                contentDescription = "Фото ${page + 1}",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { openExternally(context, url, "image/*") },
+            )
+        }
+        // Бейдж «i/N» — лічильник сторінок, як в Instagram.
+        if (photos.size > 1) {
+            Text(
+                "${pagerState.currentPage + 1}/${photos.size}",
+                style = MaterialTheme.typography.labelSmall,
+                color = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .background(
+                        androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f),
+                        RoundedCornerShape(50),
+                    )
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+        }
+    }
 }
 
 /**

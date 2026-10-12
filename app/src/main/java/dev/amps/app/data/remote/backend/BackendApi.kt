@@ -222,15 +222,17 @@ class BackendApi private constructor(
 
     /**
      * Публікація поста: текст і вкладення multipart'ом. Вкладення —
-     * частини з іменами "photo" (jpg/png/webp/gif, ≤10 МБ) або "video"
-     * (mp4/webm/mov, ≤50 МБ); сервер береже розмір ще при читанні.
+     * частини з іменами "photo" (jpg/png/webp/gif, ≤10 МБ, 1.5.3: до 30
+     * для каруселі) або "video" (mp4/webm/mov, ≤50 МБ); сервер береже
+     * розмір ще при читанні.
      * 1.5.1: [imageAspect] — формат показу фото в стрічці ("original",
      * "1:1", "4:5", "16:9"), як в Instagram.
+     * 1.5.3: [photos] — кілька фото для каруселі (або один — готовий колаж).
      */
     suspend fun createPost(
         authHeader: String,
         text: String,
-        photo: ByteArray? = null,
+        photos: List<ByteArray> = emptyList(),
         video: ByteArray? = null,
         imageAspect: String? = null,
     ): ApiResult = withContext(Dispatchers.IO) {
@@ -239,8 +241,15 @@ class BackendApi private constructor(
             if (imageAspect != null) {
                 add(MultipartPart(name = "imageAspect", value = imageAspect))
             }
-            if (photo != null) {
-                add(MultipartPart(name = "photo", filename = "photo.jpg", contentType = "image/jpeg", bytes = photo))
+            photos.forEachIndexed { index, bytes ->
+                add(
+                    MultipartPart(
+                        name = "photo",
+                        filename = "photo$index.jpg",
+                        contentType = "image/jpeg",
+                        bytes = bytes,
+                    )
+                )
             }
             if (video != null) {
                 add(MultipartPart(name = "video", filename = "video.mp4", contentType = "video/mp4", bytes = video))
