@@ -118,8 +118,6 @@ data class SyncConflictResponse(
     val serverData: Map<String, String>
 )
 
-// ===== Профіль (1.1.2) =====
-
 /** Профіль користувача: показуване ім'я, біо, аватар. */
 @Serializable
 data class ProfileDto(
@@ -128,13 +126,34 @@ data class ProfileDto(
     val displayName: String,
     val bio: String? = null,
     /** Відносний шлях аватара ("/media/avatar/…") або null. */
-    val avatarPath: String? = null
+    val avatarPath: String? = null,
+    // 1.4.0: улюблені жанри й аніме — шапка профілю в стилі Instagram.
+    val favoriteGenres: List<String> = emptyList(),
+    val favoriteAnime: List<FavoriteAnimeDto> = emptyList()
+)
+
+/** Улюблений тайтл у профілі: id AniList + назва + обкладинка. */
+@Serializable
+data class FavoriteAnimeDto(
+    val anilistId: Int,
+    val title: String,
+    val cover: String? = null
 )
 
 @Serializable
 data class ProfileUpdateRequest(
     val displayName: String,
-    val bio: String? = null
+    val bio: String? = null,
+    /** null — не змінювати; список (можливо порожній) — замінити. */
+    val favoriteGenres: List<String>? = null,
+    val favoriteAnime: List<FavoriteAnimeDto>? = null
+)
+
+/** 1.4.0: сторінка тайтла на yummyani.me для кнопки «Дивитись». */
+@Serializable
+data class WatchUrlResponse(
+    val url: String,
+    val foundTitle: String? = null
 )
 
 @Serializable

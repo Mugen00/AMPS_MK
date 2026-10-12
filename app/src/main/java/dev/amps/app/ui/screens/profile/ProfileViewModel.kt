@@ -24,6 +24,7 @@ data class ProfileUiState(
     val loading: Boolean = false,
     val saving: Boolean = false,
     val uploadingAvatar: Boolean = false,
+    val refreshing: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
     val login: String = "",
@@ -32,11 +33,16 @@ data class ProfileUiState(
     /** Відносний шлях аватара ("/media/avatar/…") або null. */
     val avatarPath: String? = null,
     val dirty: Boolean = false,
+    // 1.4.0: улюблені жанри й аніме профілю.
+    val favoriteGenres: List<String> = emptyList(),
+    val favoriteAnime: List<dev.amps.app.data.remote.backend.dto.FavoriteAnimeDto> = emptyList(),
+    // ===== Сітка постів (1.4.0, Instagram-стиль) =====
+    val postsGrid: List<dev.amps.app.data.remote.backend.dto.PostDto> = emptyList(),
+    val gridLoading: Boolean = false,
     // ===== Статистика «анімешника» (1.2.3) =====
     val statsLoading: Boolean = false,
     val postsCount: Int = 0,
     val followersCount: Int = 0,
-    /** Тайтлів зі статусом «дивлюсь». */
     /** Тайтлів зі статусом «дивлюсь». */
     val watchingCount: Int = 0,
     /** Назва тайтла, який зараз дивлюсь — «Тепер дивлюсь: …». */
@@ -56,56 +62,209 @@ class ProfileViewModel(
     private val _state = MutableStateFlow(ProfileUiState())
     val state: StateFlow<ProfileUiState> = _state.asStateFlow()
 
+    /** Мій userId (для сітки власних постів через /profile/{id}/posts). */
+    private var myUserId: Int? = null
+
     init {
-        load()
-        loadStats()
+        viewModelScope.launch {
+            loadInternal()
+            loadStatsInternal()
+            loadPostsInternal()
+        }
+    }
+
+    /** Свайп-перезагрузка (1.4.0): профіль + статистика + сітка постів. */
+    fun refresh() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(refreshing = true)
+            loadInternal()
+            loadStatsInternal()
+            loadPostsInternal()
+            _state.value = _state.value.copy(refreshing = false)
+        }
     }
 
     fun load() {
+        viewModelScope.launch { loadInternal() }
+    }
+
+    private suspend fun loadInternal() {
+        _state.value = _state.value.copy(loading = true, error = null)
+        val result = backendSession.authedCall { header -> backendApi.fetchProfile(header) }
+        when (result) {
+            is ApiResult.Success -> {
+                val profile = result.data as ProfileDto
+                myUserId = profile.userId
+                _state.value = _state.value.copy(
+                    loading = false,
+                    login = profile.login,
+                    displayName = profile.displayName,
+                    bio = profile.bio.orEmpty(),
+                    avatarPath = profile.avatarPath,
+                    favoriteGenres = profile.favoriteGenres,
+                    favoriteAnime = profile.favoriteAnime,
+                    dirty = false,
+                )
+            }
+            is ApiResult.Failure -> _state.value = _state.value.copy(loading = false, error = result.error)
+            is ApiResult.NetworkError -> _state.value = _state.value.copy(loading = false, error = result.message)
+        }
+    }
+
+    /** 1.2.3: статистика «анімешника» — пости, підписники, аніме-список і «тепер дивлюсь». */
+    fun loadStats() {
+        viewModelScope.launch { loadStatsInternal() }
+    }
+
+    private suspend fun loadStatsInternal() {
+        _state.value = _state.value.copy(statsLoading = true)
+        val result = backendSession.authedCall { header -> backendApi.getProfileStats(header) }
+        when (result) {
+            is ApiResult.Success -> {
+                val stats = result.data as dev.amps.app.data.remote.backend.dto.ProfileStatsDto
+                _state.value = _state.value.copy(
+                    statsLoading = false,
+                    postsCount = stats.posts,
+                    followersCount = stats.followers,
+                    watchingCount = stats.watching,
+                    watchingTitle = stats.watchingTitle,
+                    xp = stats.xp,
+                    level = stats.level,
+                    xpToNext = stats.xpToNext,
+                )
+            }
+            else -> _state.value = _state.value.copy(statsLoading = false)
+        }
+    }
+
+    /** Сітка власних постів (1.4.0): мініатюри як в Instagram. */
+    fun loadMyPosts() {
+        val uid = myUserId ?: return
         viewModelScope.launch {
-            _state.value = _state.value.copy(loading = true, error = null)
-            val result = backendSession.authedCall { header -> backendApi.fetchProfile(header) }
+            _state.value = _state.value.copy(gridLoading = true)
+            val result = backendSession.authedCall { header -> backendApi.fetchUserPosts(header, uid) }
             when (result) {
                 is ApiResult.Success -> {
-                    val profile = result.data as ProfileDto
+                    val feed = result.data as dev.amps.app.data.remote.backend.dto.FeedResponse
                     _state.value = _state.value.copy(
-                        loading = false,
-                        login = profile.login,
-                        displayName = profile.displayName,
-                        bio = profile.bio.orEmpty(),
-                        avatarPath = profile.avatarPath,
-                        dirty = false,
+                        gridLoading = false,
+                        postsGrid = feed.items.mapNotNull { item -> item.post },
                     )
                 }
-                is ApiResult.Failure -> _state.value = _state.value.copy(loading = false, error = result.error)
-                is ApiResult.NetworkError -> _state.value = _state.value.copy(loading = false, error = result.message)
+                else -> _state.value = _state.value.copy(gridLoading = false)
             }
         }
     }
 
-    /**
-     * 1.2.3: статистика «анімешника» — пости, підписники, аніме-список
-     * і «тепер дивлюсь». Помилки статистики не валять профіль.
-     */
-    fun loadStats() {
+    private suspend fun loadPostsInternal() {
+        val uid = myUserId ?: return
+        val result = backendSession.authedCall { header -> backendApi.fetchUserPosts(header, uid) }
+        when (result) {
+            is ApiResult.Success -> {
+                val feed = result.data as dev.amps.app.data.remote.backend.dto.FeedResponse
+                _state.value = _state.value.copy(
+                    gridLoading = false,
+                    postsGrid = feed.items.mapNotNull { item -> item.post },
+                )
+            }
+            else -> _state.value = _state.value.copy(gridLoading = false)
+        }
+    }
+
+    // --- Улюблене (1.4.0) ----------------------------------------------------
+
+    /** Перемкнути жанр і одразу зберегти. */
+    fun toggleFavoriteGenre(genre: String) {
+        val current = _state.value
+        val updated = if (current.favoriteGenres.contains(genre)) {
+            current.favoriteGenres - genre
+        } else {
+            current.favoriteGenres + genre
+        }
+        saveFavoritesAnime(updated, current.favoriteAnime)
+    }
+
+    /** Додати улюблений тайтл (максимум 12). */
+    fun addFavoriteAnime(item: dev.amps.app.data.remote.backend.dto.FavoriteAnimeDto) {
+        val current = _state.value
+        if (current.favoriteAnime.any { it.anilistId == item.anilistId }) return
+        if (current.favoriteAnime.size >= 12) {
+            _state.value = _state.value.copy(notice = "Максимум 12 улюблених аніме")
+            return
+        }
+        saveFavoritesAnime(current.favoriteGenres, current.favoriteAnime + item)
+    }
+
+    /** Прибрати тайтл з улюблених. */
+    fun removeFavoriteAnime(anilistId: Int) {
+        val current = _state.value
+        saveFavoritesAnime(
+            current.favoriteGenres,
+            current.favoriteAnime.filterNot { it.anilistId == anilistId },
+        )
+    }
+
+    /** Зберегти обидва списки одним PUT /profile. */
+    fun saveFavoritesAnime(genres: List<String>, anime: List<dev.amps.app.data.remote.backend.dto.FavoriteAnimeDto>) {
+        val current = _state.value
+        if (current.saving) return
         viewModelScope.launch {
-            _state.value = _state.value.copy(statsLoading = true)
-            val result = backendSession.authedCall { header -> backendApi.getProfileStats(header) }
+            _state.value = _state.value.copy(saving = true, error = null)
+            val result = backendSession.authedCall { header ->
+                backendApi.updateProfile(
+                    header,
+                    ProfileUpdateRequest(
+                        displayName = current.displayName.trim(),
+                        bio = current.bio.trim().takeIf { it.isNotEmpty() },
+                        favoriteGenres = genres,
+                        favoriteAnime = anime,
+                    ),
+                )
+            }
             when (result) {
                 is ApiResult.Success -> {
-                    val stats = result.data as dev.amps.app.data.remote.backend.dto.ProfileStatsDto
+                    val profile = result.data as ProfileDto
                     _state.value = _state.value.copy(
-                        statsLoading = false,
-                        postsCount = stats.posts,
-                        followersCount = stats.followers,
-                        watchingCount = stats.watching,
-                        watchingTitle = stats.watchingTitle,
-                        xp = stats.xp,
-                        level = stats.level,
-                        xpToNext = stats.xpToNext,
+                        saving = false,
+                        favoriteGenres = profile.favoriteGenres,
+                        favoriteAnime = profile.favoriteAnime,
+                        notice = null,
                     )
                 }
-                else -> _state.value = _state.value.copy(statsLoading = false)
+                is ApiResult.Failure -> _state.value = _state.value.copy(saving = false, error = result.error)
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(saving = false, error = result.message)
+            }
+        }
+    }
+
+    /** Зберегти жанри одним списком (аніме не чіпаємо). */
+    fun saveFavoriteGenres(genres: List<String>) {
+        val current = _state.value
+        if (current.saving) return
+        viewModelScope.launch {
+            _state.value = current.copy(saving = true, error = null)
+            val result = backendSession.authedCall { header ->
+                backendApi.updateProfile(
+                    header,
+                    ProfileUpdateRequest(
+                        displayName = current.displayName.trim(),
+                        bio = current.bio.trim().takeIf { it.isNotEmpty() },
+                        favoriteGenres = genres,
+                        favoriteAnime = null,
+                    ),
+                )
+            }
+            when (result) {
+                is ApiResult.Success -> {
+                    val profile = result.data as ProfileDto
+                    _state.value = _state.value.copy(
+                        saving = false,
+                        favoriteGenres = profile.favoriteGenres,
+                        favoriteAnime = profile.favoriteAnime,
+                    )
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(saving = false, error = result.error)
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(saving = false, error = result.message)
             }
         }
     }
@@ -118,7 +277,7 @@ class ProfileViewModel(
         _state.value = _state.value.copy(bio = text.take(280), dirty = true)
     }
 
-    /** Зберігає ім'я та біо; порожнє біо означає «без біо». */
+    /** Зберігає ім'я та біо; порожнє біо означає «без біо». Улюблене не змінюється. */
     fun save() {
         val current = _state.value
         if (current.saving) return
@@ -130,6 +289,8 @@ class ProfileViewModel(
                     ProfileUpdateRequest(
                         displayName = current.displayName.trim(),
                         bio = current.bio.trim().takeIf { it.isNotEmpty() },
+                        favoriteGenres = current.favoriteGenres,
+                        favoriteAnime = current.favoriteAnime,
                     ),
                 )
             }
@@ -141,6 +302,8 @@ class ProfileViewModel(
                         displayName = profile.displayName,
                         bio = profile.bio.orEmpty(),
                         avatarPath = profile.avatarPath,
+                        favoriteGenres = profile.favoriteGenres,
+                        favoriteAnime = profile.favoriteAnime,
                         dirty = false,
                         notice = "Профіль збережено",
                     )

@@ -106,6 +106,9 @@ object ProfileTable : IntIdTable("profiles") {
     val bio = varchar("bio", 280).nullable()
     /** Ім'я файлу аватара у сховищі медіа; UUID, без шляху. */
     val avatarFile = varchar("avatar_file", 100).nullable()
+    // 1.4.0: улюблені жанри (JSON-масив рядків) і улюблені аніме (JSON-список).
+    val favGenres = varchar("fav_genres", 500).nullable()
+    val favAnime = varchar("fav_anime", 2500).nullable()
     val updatedAt = long("updated_at")
 }
 
@@ -116,6 +119,8 @@ class ProfileEntity(id: EntityID<Int>) : IntEntity(id) {
     var displayName by ProfileTable.displayName
     var bio by ProfileTable.bio
     var avatarFile by ProfileTable.avatarFile
+    var favGenres by ProfileTable.favGenres
+    var favAnime by ProfileTable.favAnime
     var updatedAt by ProfileTable.updatedAt
 }
 

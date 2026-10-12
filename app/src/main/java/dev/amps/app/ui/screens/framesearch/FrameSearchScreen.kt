@@ -69,6 +69,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
 import coil.compose.AsyncImage
 import dev.amps.app.core.GeminiChatSession
 import dev.amps.app.ui.theme.AmpsColors
@@ -174,7 +177,7 @@ private fun ChatBody(
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         FramePreviewCard(
-            previewDataUrl = state.image?.previewDataUrl.orEmpty(),
+            imageBytes = state.image?.bytes,
             dimensions = state.image?.let { img ->
                 if (img.width > 0) "${img.width}×${img.height}" else ""
             }.orEmpty(),
@@ -461,7 +464,7 @@ private fun DropZone(onPick: () -> Unit) {
 
 @Composable
 private fun FramePreviewCard(
-    previewDataUrl: String,
+    imageBytes: ByteArray?,
     dimensions: String,
     enabled: Boolean,
     onReplace: () -> Unit,
@@ -479,12 +482,26 @@ private fun FramePreviewCard(
                     .height(160.dp)
                     .clip(RoundedCornerShape(14.dp))
             ) {
-                AsyncImage(
-                    model = previewDataUrl,
-                    contentDescription = "Вибране зображення",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                // 1.4.0: прев'ю малюється прямо з байтів (BitmapFactory),
+                // а не через data-URL у Coil — Coil не вміє data: URI, тому
+                // прикріплене фото раніше взагалі не показувалось.
+                val bitmap = remember(imageBytes) { decodePreview(imageBytes) }
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "Вибране зображення",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            "Немає попереднього перегляду",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -506,4 +523,10 @@ private fun FramePreviewCard(
             }
         }
     }
+}
+
+/** Декодує прев'ю з байтів (обмеження пам'яті лишається на повний кадр). */
+private fun decodePreview(bytes: ByteArray?): android.graphics.Bitmap? {
+    if (bytes == null || bytes.isEmpty()) return null
+    return runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull()
 }

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -94,6 +95,7 @@ fun UserProfileScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileHeader(state: UserProfileUiState, baseUrl: String, viewModel: UserProfileViewModel) {
     val profile = state.profile ?: return
@@ -125,6 +127,61 @@ private fun ProfileHeader(state: UserProfileUiState, baseUrl: String, viewModel:
         profile.bio?.takeIf { it.isNotBlank() }?.let { bio ->
             Spacer(Modifier.height(8.dp))
             Text(bio, style = MaterialTheme.typography.bodyMedium)
+        }
+        // 1.4.0: улюблені жанри й аніме — read-only у чужому профілі.
+        if (profile.favoriteGenres.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text("Улюблені жанри", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                profile.favoriteGenres.forEach { genre ->
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                    ) {
+                        Text(
+                            genre,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
+        if (profile.favoriteAnime.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text("Улюблене аніме", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            androidx.compose.foundation.lazy.LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(profile.favoriteAnime.size) { idx ->
+                    val fav = profile.favoriteAnime[idx]
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.width(80.dp),
+                    ) {
+                        AsyncImage(
+                            model = fav.cover,
+                            contentDescription = fav.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(0.7f)
+                                .clip(MaterialTheme.shapes.small),
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            fav.title,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

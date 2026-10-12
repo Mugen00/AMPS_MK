@@ -50,8 +50,23 @@ fun Application.feedRoutes(
     animeList: dev.amps.backend.service.AnimeListService,
     // 1.2.3: опитування під постами.
     polls: dev.amps.backend.service.PollService,
+    // 1.4.0: резолвер «Дивитись» — сторінка тайтла на yummyani.
+    animeWatch: dev.amps.backend.service.AnimeWatchService,
 ) {
     routing {
+        // 1.4.0: публічний резолвер — знаходить сторінку тайтла на
+        // yummyani.me за назвою (їхній відкритий пошуковий API + кеш).
+        get("/anime/watch") {
+            val q = call.parameters["q"].orEmpty()
+            if (q.isBlank()) {
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    ApiError(error = "Потрібна назва тайтла (?q=...)"),
+                )
+            } else {
+                call.respondApi(animeWatch.resolve(q))
+            }
+        }
         // Роздача медіа — публічна: імена файлів — невгадувані UUID.
         get("/media/{kind}/{file}") {
             val kind = call.parameters["kind"].orEmpty()
@@ -72,7 +87,15 @@ fun Application.feedRoutes(
             put("/profile") {
                 val body = call.receive<ProfileUpdateRequest>()
                 call.requireUid()?.let { uid ->
-                    call.respondApi(profileService.update(uid, body.displayName, body.bio))
+                    call.respondApi(
+                        profileService.update(
+                            uid,
+                            body.displayName,
+                            body.bio,
+                            body.favoriteGenres,
+                            body.favoriteAnime,
+                        )
+                    )
                 }
             }
             post("/profile/avatar") {

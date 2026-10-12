@@ -23,6 +23,8 @@ import kotlinx.coroutines.launch
 data class CommunityUiState(
     val authorized: Boolean = false,
     val loading: Boolean = false,
+    /** 1.4.0: свайп-перезагрузка стрічки. */
+    val refreshing: Boolean = false,
     val posting: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
@@ -144,29 +146,29 @@ class CommunityViewModel(
      * лайки), гість — публічний запит із чистими лічильниками.
      * 1.2.2: feedScope = "following" — тільки підписки (потрібен вхід).
      */
-    fun load() {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(loading = true, error = null)
-            val scopeParam = _state.value.feedScope
-            val result = if (_state.value.authorized) {
-                backendSession.authedCall { header ->
-                    backendApi.getFeed(header, scope = scopeParam)
-                }
-            } else {
-                backendApi.getFeedPublic()
+    fun load() = viewModelScope.launch { loadInternal() }
+
+    private suspend fun loadInternal() {
+        _state.value = _state.value.copy(loading = true, error = null)
+        val scopeParam = _state.value.feedScope
+        val result = if (_state.value.authorized) {
+            backendSession.authedCall { header ->
+                backendApi.getFeed(header, scope = scopeParam)
             }
-            when (result) {
-                is ApiResult.Success -> {
-                    val feed = result.data as FeedResponse
-                    _state.value = _state.value.copy(
-                        loading = false,
-                        items = feed.items,
-                        endReached = feed.items.isEmpty(),
-                    )
-                }
-                is ApiResult.Failure -> _state.value = _state.value.copy(loading = false, error = result.error)
-                is ApiResult.NetworkError -> _state.value = _state.value.copy(loading = false, error = result.message)
+        } else {
+            backendApi.getFeedPublic()
+        }
+        when (result) {
+            is ApiResult.Success -> {
+                val feed = result.data as FeedResponse
+                _state.value = _state.value.copy(
+                    loading = false,
+                    items = feed.items,
+                    endReached = feed.items.isEmpty(),
+                )
             }
+            is ApiResult.Failure -> _state.value = _state.value.copy(loading = false, error = result.error)
+            is ApiResult.NetworkError -> _state.value = _state.value.copy(loading = false, error = result.message)
         }
     }
 
@@ -175,6 +177,16 @@ class CommunityViewModel(
         if (_state.value.feedScope == scope) return
         _state.value = _state.value.copy(feedScope = scope)
         load()
+    }
+
+    /** 1.4.0: свайп-перезагрузка стрічки — свіжа сторінка + сторіс. */
+    fun refresh() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(refreshing = true)
+            loadInternal()
+            refreshStories()
+            _state.value = _state.value.copy(refreshing = false)
+        }
     }
 
     /** Наступна сторінка стрічки: зсув = кількість уже завантажених рядків. */

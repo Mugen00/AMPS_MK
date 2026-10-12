@@ -167,13 +167,35 @@ data class ProfileDto(
     val displayName: String,
     val bio: String? = null,
     /** Відносний шлях аватара або null; клієнт додає адресу сервера. */
-    val avatarPath: String? = null
+    val avatarPath: String? = null,
+    // 1.4.0: улюблені жанри та аніме — речі профілю в стилі Instagram-шапки.
+    val favoriteGenres: List<String> = emptyList(),
+    val favoriteAnime: List<FavoriteAnimeDto> = emptyList()
+)
+
+/** Улюблений тайтл у профілі: зберігаємо id AniList + назву + обкладинку. */
+@Serializable
+data class FavoriteAnimeDto(
+    val anilistId: Int,
+    val title: String,
+    val cover: String? = null
 )
 
 @Serializable
 data class ProfileUpdateRequest(
     val displayName: String,
-    val bio: String? = null
+    val bio: String? = null,
+    /** 1.4.0: null — не змінювати поле; список (можливо порожній) — замінити. */
+    val favoriteGenres: List<String>? = null,
+    val favoriteAnime: List<FavoriteAnimeDto>? = null
+)
+
+/** 1.4.0: відповідь резолвера yummyani — сторінка тайтла для «Дивитись». */
+@Serializable
+data class WatchUrlResponse(
+    val url: String,
+    /** Знайдений тайтл на їхньому сайті (для показу в UI). */
+    val foundTitle: String? = null
 )
 
 @Serializable

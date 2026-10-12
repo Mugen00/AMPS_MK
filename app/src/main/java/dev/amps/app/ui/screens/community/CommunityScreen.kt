@@ -83,6 +83,7 @@ import java.util.Locale
  * невгадувані UUID. Авто-видалення постів немає — на кожному пості дата
  * публікації.
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun CommunityScreen(
     viewModel: CommunityViewModel,
@@ -320,10 +321,15 @@ fun CommunityScreen(
                 )
             }
 
-            // --- стрічка ---
+            // --- стрічка; 1.4.0: свайп зверху — перезагрузка ---
+            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                isRefreshing = state.refreshing,
+                onRefresh = { viewModel.refresh() },
+                modifier = Modifier.weight(1f),
+            ) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     horizontal = 16.dp, vertical = 8.dp,
                 ),
@@ -396,6 +402,7 @@ fun CommunityScreen(
                         }
                     }
                 }
+            }
             }
         }
 

@@ -66,7 +66,9 @@ import dev.amps.app.ui.screens.settings.SettingsScreen
 import dev.amps.app.ui.screens.settings.SettingsViewModel
 import dev.amps.app.ui.screens.wiki.WikiScreen
 import dev.amps.app.update.UpdateUiState
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import dev.amps.app.ui.screens.wiki.WikiViewModel
 import dev.amps.app.ui.theme.AmpsTheme
 
@@ -332,16 +334,29 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                             container.backendSession,
                         ),
                     )
+                // 1.4.0: scope для резолвера «Дивитись» — з контексту екрана.
+                val activity = androidx.compose.ui.platform.LocalContext.current
+                    as androidx.activity.ComponentActivity
                 dev.amps.app.ui.screens.anime.AnimeDetailScreen(
                     viewModel = detailVm,
                     animeViewModel = animeVm,
+                    // 1.4.0: «Дивитись» → резолвер бекенда знаходить сторінку
+                    // тайтла на yummyani.me (їхній пошуковий API + кеш);
+                    // fallback — звичайний пошук сайту у тому ж WebView.
                     onWatch = { title ->
-                        val encoded = java.net.URLEncoder.encode(
-                            "https://old.yummyani.me/?s=" +
-                                java.net.URLEncoder.encode(title, "UTF-8").replace("+", "%20"),
-                            "UTF-8",
-                        )
-                        navController.navigate("web/$encoded")
+                        activity.lifecycleScope.launch {
+                            val resolved = when (
+                                val r = container.backendApi.fetchWatchUrl(title)
+                            ) {
+                                is dev.amps.app.data.remote.backend.ApiResult.Success ->
+                                    (r.data as? dev.amps.app.data.remote.backend.dto.WatchUrlResponse)?.url
+                                else -> null
+                            }
+                            val target = resolved
+                                ?: "https://old.yummyani.me/?s=${java.net.URLEncoder.encode(title, "UTF-8")}"
+                            val encoded = java.net.URLEncoder.encode(target, "UTF-8")
+                            navController.navigate("web/$encoded")
+                        }
                     },
                     onBack = { navController.popBackStack() },
                 )
@@ -363,11 +378,16 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                 )
             }
             // 1.1.2: профіль — ім'я, біо, аватар; редагуються лише тут.
+            // 1.4.0: Instagram-профіль — улюблене з AniList + сітка постів.
             composable(Routes.PROFILE) {
                 ProfileScreen(
                     viewModel = profileViewModel,
                     baseUrl = container.backendApi.effectiveBaseUrl,
                     onBack = { navController.popBackStack() },
+                    onOpenAnime = { anilistId ->
+                        navController.navigate("anime/detail/$anilistId")
+                    },
+                    anilist = container.anilistClient,
                 )
             }
             composable(Routes.SETTINGS) {

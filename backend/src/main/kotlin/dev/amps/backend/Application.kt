@@ -73,6 +73,7 @@ fun main() {
     val followService = FollowService()
     // 1.2.3: опитування під постами.
     val pollService = dev.amps.backend.service.PollService()
+    val animeWatchService = dev.amps.backend.service.AnimeWatchService()
     val feedService = FeedService(media, profileService, followService, pollService)
     // 1.2.0: сторіс — ті самі папки медіа і той самий профільний сервіс.
     val storyService = StoryService(config, media, profileService)
@@ -89,6 +90,7 @@ fun main() {
             config, authService, twoFactorService, syncService,
             feedService, profileService, media, storyService, playlistService,
             commentService, followService, animeListService, pollService,
+            animeWatchService,
         )
     }.start(wait = true)
 }
@@ -104,9 +106,11 @@ private fun initDatabase(config: AppConfig) {
     }
     Database.connect(HikariDataSource(hikari))
     transaction {
-        // Схема створюється за відсутності — міграційний фреймворк для
-        // десятка таблиць особистого проєкту був би надлишковістю.
-        SchemaUtils.create(
+        // Схема створюється за відсутності; 1.4.0: createMissingTablesAndColumns
+        // додає нові колонки (улюблене в профілі) до вже наявних таблиць —
+        // міграційний фреймворк для десятка таблиць особистого проєкту
+        // був би надлишковістю.
+        SchemaUtils.createMissingTablesAndColumns(
             UserTable,
             VerificationCodeTable,
             SyncDataTable,
@@ -147,6 +151,7 @@ fun Application.module(
     followService: dev.amps.backend.service.FollowService,
     animeListService: dev.amps.backend.service.AnimeListService,
     pollService: dev.amps.backend.service.PollService,
+    animeWatchService: dev.amps.backend.service.AnimeWatchService,
 ) {
     install(ContentNegotiation) {
         json(kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
@@ -189,7 +194,7 @@ fun Application.module(
     authRoutes(authService, twoFactorService, syncService, media)
     // 1.1.2: спільнота, профіль і роздача медіа; 1.2.0: сторіс;
     // 1.2.2: коментарі, підписки, аніме-список.
-    feedRoutes(config, feedService, profileService, media, storyService, commentService, followService, animeListService, pollService)
+    feedRoutes(config, feedService, profileService, media, storyService, commentService, followService, animeListService, pollService, animeWatchService)
     // 1.2.1: свої плейлісти акаунта — у базі, онлайн-слухання в застосунку.
     playlistRoutes(playlistService)
 }

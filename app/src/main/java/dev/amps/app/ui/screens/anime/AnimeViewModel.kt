@@ -75,6 +75,14 @@ class AnimeViewModel(
     fun loadGenre(genre: String) = load { anilist.byGenre(genre) }
     fun search(query: String) = load { anilist.search(query) }
 
+    /** Останній завантажувач — для свайп-перезагрузки (1.4.0). */
+    private var lastLoader: (suspend () -> List<AniListClient.AnimeCard>?)? = null
+
+    /** Свайп-перезагрузка: повторює останній запит каталогу. */
+    fun refresh() {
+        lastLoader?.let { load(it) }
+    }
+
     fun openCard(card: AniListClient.AnimeCard?) {
         _selected.value = card
     }
@@ -84,6 +92,7 @@ class AnimeViewModel(
      * Cloudflare), а порожній список — чесний «нічого не знайдено».
      */
     private fun load(block: suspend () -> List<AniListClient.AnimeCard>?) {
+        lastLoader = block
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
             try {

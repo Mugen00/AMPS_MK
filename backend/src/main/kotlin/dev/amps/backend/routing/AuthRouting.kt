@@ -40,7 +40,7 @@ fun Application.authRoutes(
             call.respond(
                 mapOf(
                     "status" to "ok",
-                    "version" to "1.3.0",
+                    "version" to "1.4.0",
                     "storage" to storage.kind,
                 )
             )

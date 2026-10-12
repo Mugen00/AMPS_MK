@@ -41,5 +41,19 @@ class AmpsApp : Application(), coil.ImageLoaderFactory {
                     add(coil.decode.GifDecoder.Factory())
                 }
             }
+            // 1.4.0: стабільність медіа — картинки при переходах між
+            // екранами не перезавантажуються з мережі, а беруться з кешів.
+            .memoryCache {
+                coil.memory.MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .diskCache {
+                coil.disk.DiskCache.Builder()
+                    .directory(java.io.File(cacheDir, "coil_image_cache"))
+                    .maxSizeBytes(150L * 1024 * 1024)
+                    .build()
+            }
+            .crossfade(true)
             .build()
 }

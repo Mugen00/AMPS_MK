@@ -179,6 +179,12 @@ class BackendApi private constructor(
             )
         }
 
+    /** 1.4.0: сторінка тайтла на yummyani.me (публічний резолвер бекенда). */
+    suspend fun fetchWatchUrl(title: String): ApiResult = withContext(Dispatchers.IO) {
+        val encoded = java.net.URLEncoder.encode(title, "UTF-8")
+        execute("GET", "anime/watch?q=$encoded", null, WatchUrlResponse.serializer(), null)
+    }
+
     /** Аватар: multipart з одним файлом "avatar" (jpeg). */
     suspend fun uploadAvatar(authHeader: String, bytes: ByteArray): ApiResult = withContext(Dispatchers.IO) {
         executeMultipart(

@@ -159,19 +159,26 @@ fun AnimeScreen(
                 }
             }
 
-            when {
-                state.loading -> Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) { CircularProgressIndicator() }
+            // 1.4.0: свайп-перезагрузка каталогу — повторює останній запит.
+            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                isRefreshing = state.loading && state.cards.isNotEmpty(),
+                onRefresh = { viewModel.refresh() },
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                when {
+                    state.loading && state.cards.isEmpty() -> Box(
+                        Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) { CircularProgressIndicator() }
 
-                state.error != null -> Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) { Text(state.error!!, color = MaterialTheme.colorScheme.error) }
+                    state.error != null && state.cards.isEmpty() -> Box(
+                        Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) { Text(state.error!!, color = MaterialTheme.colorScheme.error) }
 
-                tab == 3 -> MyAnimeList(state, viewModel)
-                else -> CatalogGrid(state.cards, viewModel, onOpenDetails)
+                    tab == 3 -> MyAnimeList(state, viewModel)
+                    else -> CatalogGrid(state.cards, viewModel, onOpenDetails)
+                }
             }
         }
     }
