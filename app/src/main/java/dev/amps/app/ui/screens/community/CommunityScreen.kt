@@ -68,7 +68,12 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.FilterChip
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.Dp
 import coil.compose.AsyncImage
 import dev.amps.app.data.remote.backend.dto.FeedItemDto
 import dev.amps.app.data.remote.backend.dto.MediaDto
@@ -845,6 +850,12 @@ private fun ComposeBar(
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = modifier.fillMaxWidth(),
     ) {
+        // 1.5.2 (факап-фікси): прев'ю фото у великому форматі розтягувало
+        // панель за межі екрана — кнопка «Опублікувати» зникала, свайп
+        // блокувався, опитування ставало недосяжним. Тепер контент панелі
+        // скролиться в обмеженій висоті, а нижній ряд із кнопками — ЗАВЖДИ
+        // видимий внизу, поза скролом.
+        val maxContentHeight = (LocalConfiguration.current.screenHeightDp * 0.52f).dp
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -860,91 +871,96 @@ private fun ComposeBar(
                     }
                 }
             }
-            OutlinedTextField(
-                value = state.composeText,
-                onValueChange = onTextChange,
-                placeholder = { Text(t("Що нового?")) },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-            )
             Spacer(Modifier.height(8.dp))
-            // 1.2.3: складальник опитування — 2–4 варіанти.
-            if (state.pollEnabled) {
-                Text(
-                    "Опитування (2–4 варіанти)",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
+            // Скрольний контент: текст, опитування, прев'ю, вкладення.
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = maxContentHeight)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                OutlinedTextField(
+                    value = state.composeText,
+                    onValueChange = onTextChange,
+                    placeholder = { Text(t("Що нового?")) },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
                 )
-                state.pollDraftOptions.forEachIndexed { index, option ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = state.pollDraftOptions.getOrNull(index) ?: "",
-                            onValueChange = { onPollOptionChange(index, it) },
-                            placeholder = { Text("Варіант ${index + 1}") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                        )
-                        if (state.pollDraftOptions.size > 2) {
-                            IconButton(onClick = { onRemovePollOption(index) }) {
-                                Icon(Icons.Default.Close, contentDescription = "Прибрати варіант")
+                // 1.2.3: складальник опитування — 2–4 варіанти.
+                if (state.pollEnabled) {
+                    Text(
+                        "Опитування (2–4 варіанти)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    state.pollDraftOptions.forEachIndexed { index, option ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = state.pollDraftOptions.getOrNull(index) ?: "",
+                                onValueChange = { onPollOptionChange(index, it) },
+                                placeholder = { Text("Варіант ${index + 1}") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                            )
+                            if (state.pollDraftOptions.size > 2) {
+                                IconButton(onClick = { onRemovePollOption(index) }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Прибрати варіант")
+                                }
                             }
                         }
                     }
-                }
-                if (state.pollDraftOptions.size < 4) {
-                    TextButton(onClick = onAddPollOption) { Text(t("+ варіант")) }
-                }
-                Spacer(Modifier.height(4.dp))
-            }
-            Spacer(Modifier.height(8.dp))
-            if (state.attachedPhotoBytes != null) {
-                // 1.5.1: прев'ю в обраному форматі + чипи формату —
-                // як в Instagram: що обрав, так і в стрічці покажеться.
-                val ratio = aspectRatioOf(state.attachAspect)
-                AsyncImage(
-                    model = state.attachedPhotoBytes,
-                    contentDescription = t("Вибране зображення"),
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .then(
-                            if (ratio != null) Modifier.aspectRatio(ratio)
-                            else Modifier.height(220.dp)
-                        )
-                        .clip(RoundedCornerShape(10.dp)),
-                )
-                Spacer(Modifier.height(6.dp))
-                androidx.compose.foundation.layout.FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    listOf(
-                        "original" to "Оригінальне",
-                        "1:1" to "1:1",
-                        "4:5" to "4:5",
-                        "16:9" to "16:9",
-                    ).forEach { (code, label) ->
-                        FilterChip(
-                            selected = state.attachAspect == code,
-                            onClick = { onAspectChange(code) },
-                            label = { Text(label, style = MaterialTheme.typography.labelSmall) },
-                        )
+                    if (state.pollDraftOptions.size < 4) {
+                        TextButton(onClick = onAddPollOption) { Text(t("+ варіант")) }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-            }
-            if (state.attachedPhotoBytes != null || state.attachedVideoBytes != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (state.attachedPhotoBytes != null) "Фото прикріплено" else "Відео прикріплено",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f),
+                if (state.attachedPhotoBytes != null) {
+                    // 1.5.1: прев'ю в обраному форматі + чипи формату —
+                    // як в Instagram: що обрав, так і в стрічці покажеться.
+                    // 1.5.2: фіксована КОМПАКТНА висота прев'ю за форматом —
+                    // панель більше не розтягується за межі екрана.
+                    AsyncImage(
+                        model = state.attachedPhotoBytes,
+                        contentDescription = t("Вибране зображення"),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(previewHeightDp(state.attachAspect))
+                            .clip(RoundedCornerShape(10.dp)),
                     )
-                    IconButton(onClick = onClearAttachments) {
-                        Icon(Icons.Default.Close, contentDescription = "Прибрати вкладення")
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        listOf(
+                            "original" to "Оригінальне",
+                            "1:1" to "1:1",
+                            "4:5" to "4:5",
+                            "16:9" to "16:9",
+                        ).forEach { (code, label) ->
+                            FilterChip(
+                                selected = state.attachAspect == code,
+                                onClick = { onAspectChange(code) },
+                                label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                            )
+                        }
+                    }
+                }
+                if (state.attachedPhotoBytes != null || state.attachedVideoBytes != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (state.attachedPhotoBytes != null) "Фото прикріплено" else "Відео прикріплено",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = onClearAttachments) {
+                            Icon(Icons.Default.Close, contentDescription = "Прибрати вкладення")
+                        }
                     }
                 }
             }
+            Spacer(Modifier.height(6.dp))
+            // Нижній ряд — ПОЗА скролом: кнопка «Опублікувати» завжди видима.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onPickPhoto) {
                     Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Прикріпити фото")
@@ -1276,6 +1292,18 @@ private fun aspectRatioOf(code: String?): Float? = when (code) {
     "4:5" -> 4f / 5f
     "16:9" -> 16f / 9f
     else -> null
+}
+
+/**
+ * 1.5.2: КОМПАКТНА висота прев'ю в композері за обраним форматом.
+ * Пропорції тут умовні — справжній формат відрендериться в стрічці;
+ * головне, щоб панель поста не виростала за межі екрана.
+ */
+private fun previewHeightDp(aspect: String): Dp = when (aspect) {
+    "1:1" -> 260.dp
+    "4:5" -> 300.dp
+    "16:9" -> 170.dp
+    else -> 220.dp
 }
 
 // --- допоміжне --------------------------------------------------------------
