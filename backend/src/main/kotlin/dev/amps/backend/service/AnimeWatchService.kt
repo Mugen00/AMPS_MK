@@ -89,7 +89,14 @@ class AnimeWatchService {
             .header("Accept", "application/json")
             // Обов'язковий header їхнього API: без нього віддає HTML-заглушку.
             .header("X-Requested-With", "XMLHttpRequest")
-            .header("User-Agent", "AMPS-App/1.4 (https://github.com/Mugen00/AMPS_MK)")
+            .header("Referer", "https://old.yummyani.me/")
+            // Cloudflare пропускає лише звичайні браузерні UA — свій
+            // "AMPS-App/..." вони відсікають як бота.
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            )
             .build()
         http.newCall(request).execute().use { resp ->
             if (resp.code != 200) return null
