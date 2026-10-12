@@ -67,6 +67,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.material3.FilterChip
 import coil.compose.AsyncImage
 import dev.amps.app.data.remote.backend.dto.FeedItemDto
 import dev.amps.app.data.remote.backend.dto.MediaDto
@@ -292,6 +294,8 @@ fun CommunityScreen(
                     onPollOptionChange = viewModel::setPollOption,
                     onAddPollOption = viewModel::addPollOption,
                     onRemovePollOption = viewModel::removePollOption,
+                    // 1.5.1: формат показу фото (Instagram-стиль).
+                    onAspectChange = viewModel::setAttachAspect,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
                 Spacer(Modifier.height(8.dp))
@@ -817,6 +821,7 @@ private fun StoriesViewer(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun ComposeBar(
     state: CommunityUiState,
@@ -831,6 +836,8 @@ private fun ComposeBar(
     onPollOptionChange: (Int, String) -> Unit = { _, _ -> },
     onAddPollOption: () -> Unit = {},
     onRemovePollOption: (Int) -> Unit = {},
+    // 1.5.1: вибір формату показу фото, як в Instagram.
+    onAspectChange: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -890,6 +897,41 @@ private fun ComposeBar(
                 Spacer(Modifier.height(4.dp))
             }
             Spacer(Modifier.height(8.dp))
+            if (state.attachedPhotoBytes != null) {
+                // 1.5.1: прев'ю в обраному форматі + чипи формату —
+                // як в Instagram: що обрав, так і в стрічці покажеться.
+                val ratio = aspectRatioOf(state.attachAspect)
+                AsyncImage(
+                    model = state.attachedPhotoBytes,
+                    contentDescription = t("Вибране зображення"),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (ratio != null) Modifier.aspectRatio(ratio)
+                            else Modifier.height(220.dp)
+                        )
+                        .clip(RoundedCornerShape(10.dp)),
+                )
+                Spacer(Modifier.height(6.dp))
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf(
+                        "original" to "Оригінальне",
+                        "1:1" to "1:1",
+                        "4:5" to "4:5",
+                        "16:9" to "16:9",
+                    ).forEach { (code, label) ->
+                        FilterChip(
+                            selected = state.attachAspect == code,
+                            onClick = { onAspectChange(code) },
+                            label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+            }
             if (state.attachedPhotoBytes != null || state.attachedVideoBytes != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -1025,7 +1067,8 @@ private fun FeedItemCard(
             }
             post.media.forEach { media ->
                 Spacer(Modifier.height(8.dp))
-                MediaView(media, baseUrl)
+                // 1.5.1: показ фото в обраному при постингу форматі.
+                MediaView(media, baseUrl, post.imageAspect)
             }
             // --- 1.2.3: опитування поста ---
             post.poll?.let { poll ->
@@ -1191,19 +1234,25 @@ private fun AuthorAvatar(post: PostDto, baseUrl: String) {
  * coil-gif) — картинка; відео — ВБУДОВАНИЙ плеєр у стилі Instagram:
  * автоплей без звуку, повтор, тап — пауза, іконка — звук. Системний
  * плеєр більше не потрібен.
+ * 1.5.1: [aspectCode] — формат показу, обраний при постингу
+ * ("1:1"|"4:5"|"16:9"); оригінальний — як раніше, висота 220 dp.
  */
 @Composable
-private fun MediaView(media: MediaDto, baseUrl: String) {
+private fun MediaView(media: MediaDto, baseUrl: String, aspectCode: String? = null) {
     val context = LocalContext.current
     val url = absoluteMediaUrl(baseUrl, media.url)
     if (media.kind == "photo") {
+        val ratio = aspectRatioOf(aspectCode)
         AsyncImage(
             model = url,
             contentDescription = "Фото поста",
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(220.dp)
+                .then(
+                    if (ratio != null) Modifier.aspectRatio(ratio)
+                    else Modifier.height(220.dp)
+                )
                 .clip(RoundedCornerShape(10.dp))
                 .clickable { openExternally(context, url, "image/*") },
         )
@@ -1216,6 +1265,17 @@ private fun MediaView(media: MediaDto, baseUrl: String) {
                 .clip(RoundedCornerShape(10.dp)),
         )
     }
+}
+
+/**
+ * 1.5.1: співвідношення сторін для формату показу фото
+ * ("original"|"1:1"|"4:5"|"16:9"); невідоме значення → оригінальний показ.
+ */
+private fun aspectRatioOf(code: String?): Float? = when (code) {
+    "1:1" -> 1f
+    "4:5" -> 4f / 5f
+    "16:9" -> 16f / 9f
+    else -> null
 }
 
 // --- допоміжне --------------------------------------------------------------

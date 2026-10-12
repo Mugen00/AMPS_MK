@@ -32,6 +32,9 @@ data class CommunityUiState(
     val composeText: String = "",
     val attachedPhotoBytes: ByteArray? = null,
     val attachedVideoBytes: ByteArray? = null,
+    /** 1.5.1: формат показу фото в стрічці — як в Instagram
+     *  ("original"|"1:1"|"4:5"|"16:9"). Діє, доки прикріплене фото. */
+    val attachAspect: String = "original",
     /** Пости, у яких зараз перемикається лайк або репост. */
     val busyPostIds: Set<Int> = emptySet(),
     val loadingMore: Boolean = false,
@@ -122,15 +125,30 @@ class CommunityViewModel(
     }
 
     fun attachPhoto(bytes: ByteArray) {
-        _state.value = _state.value.copy(attachedPhotoBytes = bytes, attachedVideoBytes = null)
+        _state.value = _state.value.copy(
+            attachedPhotoBytes = bytes,
+            attachedVideoBytes = null,
+            attachAspect = "original",
+        )
     }
 
     fun attachVideo(bytes: ByteArray) {
-        _state.value = _state.value.copy(attachedVideoBytes = bytes, attachedPhotoBytes = null)
+        _state.value = _state.value.copy(
+            attachedVideoBytes = bytes,
+            attachedPhotoBytes = null,
+            attachAspect = "original",
+        )
+    }
+
+    /** 1.5.1: вибір формату показу фото (Instagram-стиль) у композері. */
+    fun setAttachAspect(aspect: String) {
+        _state.value = _state.value.copy(attachAspect = aspect)
     }
 
     fun clearAttachments() {
-        _state.value = _state.value.copy(attachedPhotoBytes = null, attachedVideoBytes = null)
+        _state.value = _state.value.copy(
+            attachedPhotoBytes = null, attachedVideoBytes = null, attachAspect = "original",
+        )
     }
 
     fun clearMessages() {
@@ -228,6 +246,8 @@ class CommunityViewModel(
                     text = current.composeText.trim(),
                     photo = current.attachedPhotoBytes,
                     video = current.attachedVideoBytes,
+                    // 1.5.1: формат показу фото — тільки коли фото прикріплене.
+                    imageAspect = current.attachAspect.takeIf { current.attachedPhotoBytes != null },
                 )
             }
             val createdPost = (result as? ApiResult.Success)
@@ -255,6 +275,7 @@ class CommunityViewModel(
                         composeText = "",
                         attachedPhotoBytes = null,
                         attachedVideoBytes = null,
+                        attachAspect = "original",
                         pollEnabled = false,
                         pollDraftOptions = listOf("", ""),
                         notice = if (current.pollEnabled && pollFailed) {

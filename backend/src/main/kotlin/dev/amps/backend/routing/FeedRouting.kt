@@ -108,7 +108,13 @@ fun Application.feedRoutes(
             post("/feed") {
                 val uid = call.requireUid() ?: return@post
                 val upload = call.receivePost(media) ?: return@post
-                call.respondApi(feedService.createPost(uid, upload.text, upload.files))
+                call.respondApi(
+                    feedService.createPost(
+                        uid, upload.text, upload.files,
+                        // 1.5.1: формат показу фото (Instagram-стиль).
+                        imageAspect = upload.imageAspect,
+                    )
+                )
             }
             post("/feed/{id}/like") {
                 call.requireUid()?.let { uid ->
@@ -478,23 +484,34 @@ private suspend fun ApplicationCall.receiveUpload(): Upload? {
 }
 
 /** Текст поста і вже збережені вкладення: пари «вид — ім'я файлу». */
-internal data class PostUpload(val text: String, val files: List<Pair<String, String>>)
+internal data class PostUpload(
+    val text: String,
+    val files: List<Pair<String, String>>,
+    // 1.5.1: формат показу фото ("original"|"1:1"|"4:5"|"16:9").
+    val imageAspect: String? = null,
+)
 
 /**
- * Читає multipart-запит поста: текстове поле "text" і файли "photo"/"video".
+ * Читає multipart-запит поста: текстове поле "text", формат показу фото
+ * "imageAspect" (1.5.1) і файли "photo"/"video".
  * Кожен файл обмежений лімітом свого виду (фото 10 МБ, відео 50 МБ) і
  * білим списком розширень; невідомі частини пропускаються. Медіа зберігаються
  * у сховище одразу тут — сервіс отримує лише імена файлів.
  */
 private suspend fun ApplicationCall.receivePost(media: MediaStorage): PostUpload? {
     var text = ""
+    var imageAspect: String? = null
     var tooLarge = false
     var failed = false
     val files = mutableListOf<Pair<String, String>>()
     try {
         receiveMultipart().forEachPart { part ->
             when (part) {
-                is PartData.FormItem -> if (part.name == "text") text = part.value
+                is PartData.FormItem -> when (part.name) {
+                    "text" -> text = part.value
+                    // 1.5.1: формат показу фото — текстове поле multipart'а.
+                    "imageAspect" -> imageAspect = part.value.trim().take(12)
+                }
                 is PartData.FileItem -> {
                     val kind = when (part.name) {
                         "photo" -> MediaStorage.KIND_PHOTO
@@ -543,7 +560,7 @@ private suspend fun ApplicationCall.receivePost(media: MediaStorage): PostUpload
             return null
         }
     }
-    return PostUpload(text = text, files = files)
+    return PostUpload(text = text, files = files, imageAspect = imageAspect)
 }
 
 /**

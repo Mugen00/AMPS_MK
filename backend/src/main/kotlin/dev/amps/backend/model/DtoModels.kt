@@ -226,7 +226,9 @@ data class PostDto(
     val likedByMe: Boolean,
     val repostedByMe: Boolean,
     /** 1.2.3: опитування, прикріплене до поста (null — його немає). */
-    val poll: PollDto? = null
+    val poll: PollDto? = null,
+    /** 1.5.1: формат показу фото ("original"|"1:1"|"4:5"|"16:9"; null — як раніше). */
+    val imageAspect: String? = null
 )
 
 /**

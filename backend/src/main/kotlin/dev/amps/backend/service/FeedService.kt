@@ -51,6 +51,8 @@ class FeedService(
         media: List<Pair<String, String>>,
         pollOptions: List<String>? = null,
         pollQuestion: String? = null,
+        // 1.5.1: формат показу фото, як в Instagram.
+        imageAspect: String? = null,
     ): ApiResponse<PostCreatedResponse> = newSuspendedTransaction {
         val cleanPoll = pollOptions?.let { polls?.validateOptions(it) }
         if (text.isBlank() && media.isEmpty() && cleanPoll == null) {
@@ -61,6 +63,7 @@ class FeedService(
             this.userId = userId
             this.text = text.trim().take(1000)
             this.createdAt = System.currentTimeMillis()
+            this.imageAspect = imageAspect.takeIf { it in KNOWN_ASPECTS }
         }
         media.forEach { (kind, fileName) ->
             PostMediaEntity.new {
@@ -260,11 +263,16 @@ class FeedService(
             repostedByMe = repostedByMe,
             // 1.2.3: опитування, якщо є.
             poll = polls?.forPost(post.id.value, viewerId),
+            // 1.5.1: формат показу фото.
+            imageAspect = post.imageAspect,
         )
     }
 
     companion object {
         const val KIND_POST = "POST"
         const val KIND_REPOST = "REPOST"
+
+        /** 1.5.1: допустимі формати показу фото (все інше → "original"). */
+        val KNOWN_ASPECTS = setOf("original", "1:1", "4:5", "16:9")
     }
 }

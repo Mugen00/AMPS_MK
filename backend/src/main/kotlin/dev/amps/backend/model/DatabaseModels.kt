@@ -129,6 +129,10 @@ object PostTable : IntIdTable("posts") {
     val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
     val text = varchar("text", 1000)
     val createdAt = long("created_at")
+
+    // 1.5.1: формат показу фото, як в Instagram ("original"|"1:1"|"4:5"|"16:9").
+    // null — старі пости й оригінальний показ без обрізання.
+    val imageAspect = varchar("image_aspect", 12).nullable()
 }
 
 class PostEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -137,6 +141,7 @@ class PostEntity(id: EntityID<Int>) : IntEntity(id) {
     var userId by PostTable.userId
     var text by PostTable.text
     var createdAt by PostTable.createdAt
+    var imageAspect by PostTable.imageAspect
 }
 
 // ===== Вкладення поста: фото або відео =====

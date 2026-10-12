@@ -224,15 +224,21 @@ class BackendApi private constructor(
      * Публікація поста: текст і вкладення multipart'ом. Вкладення —
      * частини з іменами "photo" (jpg/png/webp/gif, ≤10 МБ) або "video"
      * (mp4/webm/mov, ≤50 МБ); сервер береже розмір ще при читанні.
+     * 1.5.1: [imageAspect] — формат показу фото в стрічці ("original",
+     * "1:1", "4:5", "16:9"), як в Instagram.
      */
     suspend fun createPost(
         authHeader: String,
         text: String,
         photo: ByteArray? = null,
         video: ByteArray? = null,
+        imageAspect: String? = null,
     ): ApiResult = withContext(Dispatchers.IO) {
         val parts = buildList {
             add(MultipartPart(name = "text", value = text))
+            if (imageAspect != null) {
+                add(MultipartPart(name = "imageAspect", value = imageAspect))
+            }
             if (photo != null) {
                 add(MultipartPart(name = "photo", filename = "photo.jpg", contentType = "image/jpeg", bytes = photo))
             }
