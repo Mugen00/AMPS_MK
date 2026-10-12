@@ -194,6 +194,15 @@ class AppContainer(private val context: Context) {
         dev.amps.app.data.remote.anilist.AniListClient(http)
     }
 
+    /** 1.4.0: клієнтський резолвер «Дивитись» — сторінка тайтла yummyani. */
+    val yummyWatch: dev.amps.app.data.remote.YummyWatchResolver by lazy {
+        val http = OkHttpClient.Builder()
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        dev.amps.app.data.remote.YummyWatchResolver(http)
+    }
+
     /**
      * 1.0.6: аниме-тегер вместо ML Kit.
      *

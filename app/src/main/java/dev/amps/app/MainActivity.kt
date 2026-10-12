@@ -340,20 +340,23 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                 dev.amps.app.ui.screens.anime.AnimeDetailScreen(
                     viewModel = detailVm,
                     animeViewModel = animeVm,
-                    // 1.4.0: «Дивитись» → резолвер бекенда знаходить сторінку
-                    // тайтла на yummyani.me (їхній пошуковий API + кеш);
-                    // fallback — звичайний пошук сайту у тому ж WebView.
+                    // 1.4.0: «Дивитись» → резолвер знаходить сторінку тайтла
+                    // на yummyani.me (їхній відкритий пошуковий API; тільки
+                    // посилання — плеєр лишається на їхньому сайті). Порядок:
+                    // клієнт напряму (Cloudflare пропускає мобільні IP),
+                    // потім бекенд, потім звичайний пошук сайту.
                     onWatch = { title ->
                         activity.lifecycleScope.launch {
-                            val resolved = when (
+                            val clientResolved = runCatching {
+                                container.yummyWatch.resolve(title)
+                            }.getOrNull()
+                            val target = clientResolved ?: when (
                                 val r = container.backendApi.fetchWatchUrl(title)
                             ) {
                                 is dev.amps.app.data.remote.backend.ApiResult.Success ->
                                     (r.data as? dev.amps.app.data.remote.backend.dto.WatchUrlResponse)?.url
                                 else -> null
-                            }
-                            val target = resolved
-                                ?: "https://old.yummyani.me/?s=${java.net.URLEncoder.encode(title, "UTF-8")}"
+                            } ?: "https://old.yummyani.me/?s=${java.net.URLEncoder.encode(title, "UTF-8")}"
                             val encoded = java.net.URLEncoder.encode(target, "UTF-8")
                             navController.navigate("web/$encoded")
                         }
