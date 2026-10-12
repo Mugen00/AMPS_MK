@@ -46,6 +46,7 @@ import dev.amps.app.data.remote.backend.dto.FeedItemDto
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import dev.amps.app.core.t
 
 /**
  * 1.2.5: екран чужого профіля — аватар/ім'я/біо, кнопка підписки,
@@ -87,7 +88,7 @@ fun UserProfileScreen(
                 state.error != null -> Column(Modifier.padding(20.dp)) {
                     Text(state.error!!, color = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.height(8.dp))
-                    androidx.compose.material3.Button(onClick = viewModel::load) { Text("Спробувати ще") }
+                    androidx.compose.material3.Button(onClick = viewModel::load) { Text(t("Спробувати ще")) }
                 }
                 state.profile != null -> ProfileHeader(state, baseUrl, viewModel)
             }
@@ -193,12 +194,12 @@ private fun ProfileHeader(state: UserProfileUiState, baseUrl: String, viewModel:
             FilterChip(
                 selected = state.tab == "posts",
                 onClick = { viewModel.loadTab("posts") },
-                label = { Text("Пости") },
+                label = { Text(t("Пости")) },
             )
             FilterChip(
                 selected = state.tab == "reposts",
                 onClick = { viewModel.loadTab("reposts") },
-                label = { Text("Репости") },
+                label = { Text(t("Репости")) },
             )
         }
         Spacer(Modifier.height(10.dp))

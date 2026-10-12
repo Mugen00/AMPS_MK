@@ -74,6 +74,7 @@ import dev.amps.app.data.remote.backend.dto.PostDto
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import dev.amps.app.core.t
 
 /**
  * 1.1.2: Спільнота — стрічка постів з фото і відео, лайки, репости.
@@ -306,7 +307,7 @@ fun CommunityScreen(
                 androidx.compose.material3.FilterChip(
                     selected = state.feedScope == "all",
                     onClick = { viewModel.setFeedScope("all") },
-                    label = { Text("Всі") },
+                    label = { Text(t("Всі")) },
                 )
                 androidx.compose.material3.AssistChip(
                     onClick = {
@@ -428,7 +429,7 @@ fun CommunityScreen(
     if (showStoryMenu) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showStoryMenu = false },
-            title = { Text("Нова сторіс") },
+            title = { Text(t("Нова сторіс")) },
             text = {
                 Column {
                     Text(
@@ -442,33 +443,33 @@ fun CommunityScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
-                            Text("Публікація…")
+                            Text(t("Публікація…"))
                         }
                     } else {
                         TextButton(onClick = { showStoryMenu = false; startStoryCapture(false) }) {
-                            Text("Зняти фото на камеру")
+                            Text(t("Зняти фото на камеру"))
                         }
                         TextButton(onClick = { showStoryMenu = false; startStoryCapture(true) }) {
-                            Text("Записати відео (камера)")
+                            Text(t("Записати відео (камера)"))
                         }
                         TextButton(onClick = {
                             showStoryMenu = false
                             storyPhotoPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp", "image/gif"))
                         }) {
-                            Text("Фото/GIF з галереї")
+                            Text(t("Фото/GIF з галереї"))
                         }
                         TextButton(onClick = {
                             showStoryMenu = false
                             storyVideoPicker.launch(arrayOf("video/mp4", "video/webm", "video/quicktime"))
                         }) {
-                            Text("Відео з галереї (mp4)")
+                            Text(t("Відео з галереї (mp4)"))
                         }
                     }
                 }
             },
             confirmButton = {},
             dismissButton = {
-                TextButton(onClick = { showStoryMenu = false }) { Text("Скасувати") }
+                TextButton(onClick = { showStoryMenu = false }) { Text(t("Скасувати")) }
             },
         )
     }
@@ -513,7 +514,7 @@ private fun GuestBanner(onOpenAuth: () -> Unit) {
                 )
             }
             Spacer(Modifier.width(10.dp))
-            Button(onClick = onOpenAuth) { Text("Увійти") }
+            Button(onClick = onOpenAuth) { Text(t("Увійти")) }
         }
     }
 }
@@ -855,7 +856,7 @@ private fun ComposeBar(
             OutlinedTextField(
                 value = state.composeText,
                 onValueChange = onTextChange,
-                placeholder = { Text("Що нового?") },
+                placeholder = { Text(t("Що нового?")) },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 2,
             )
@@ -884,7 +885,7 @@ private fun ComposeBar(
                     }
                 }
                 if (state.pollDraftOptions.size < 4) {
-                    TextButton(onClick = onAddPollOption) { Text("+ варіант") }
+                    TextButton(onClick = onAddPollOption) { Text(t("+ варіант")) }
                 }
                 Spacer(Modifier.height(4.dp))
             }
@@ -921,7 +922,7 @@ private fun ComposeBar(
                     if (state.posting) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                     } else {
-                        Text("Опублікувати")
+                        Text(t("Опублікувати"))
                     }
                 }
             }
@@ -1147,7 +1148,7 @@ private fun FeedItemCard(
                         singleLine = true,
                     )
                     TextButton(onClick = onSendComment, enabled = commentDraft.isNotBlank() && !commentsLoading) {
-                        Text("Надіслати")
+                        Text(t("Надіслати"))
                     }
                 }
             }

@@ -53,6 +53,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.amps.app.security.Totp
 import kotlinx.coroutines.flow.first
+import dev.amps.app.core.t
 
 /**
  * 1.1.0: вход, регистрация, двухфакторная защита, синхронізація з бекендом.
@@ -102,7 +103,7 @@ fun AuthScreen(
                 TextButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "Назад")
                     Spacer(Modifier.width(4.dp))
-                    Text("Назад")
+                    Text(t("Назад"))
                 }
             }
 
@@ -161,7 +162,7 @@ private fun LoginStep(state: AuthState, viewModel: AuthViewModel) {
         OutlinedTextField(
             value = login,
             onValueChange = { login = it; viewModel.clearError() },
-            label = { Text("Логін або email") },
+            label = { Text(t("Логін або email")) },
             singleLine = true,
             leadingIcon = { Icon(Icons.Default.Person, null) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -183,7 +184,7 @@ private fun LoginStep(state: AuthState, viewModel: AuthViewModel) {
 
         Spacer(Modifier.height(12.dp))
         SubmitButton(
-            text = "Увійти",
+            text = dev.amps.app.core.Loc.translate("Увійти"),
             busy = state.busy,
             enabled = login.isNotBlank() && password.isNotBlank(),
             onClick = { viewModel.loginBackend(login, password) },
@@ -191,10 +192,10 @@ private fun LoginStep(state: AuthState, viewModel: AuthViewModel) {
 
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = { viewModel.setMode(AuthState.Mode.PASSWORD_RESET) }) {
-            Text("Забули пароль?")
+            Text(t("Забули пароль?"))
         }
         TextButton(onClick = { viewModel.setMode(AuthState.Mode.REGISTER) }) {
-            Text("Створити акаунт")
+            Text(t("Створити акаунт"))
         }
 
         GoogleSignInBlock(state, viewModel)
@@ -266,7 +267,7 @@ private fun GoogleSignInBlock(state: AuthState, viewModel: AuthViewModel) {
         } else {
             Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Увійти через Google")
+            Text(t("Увійти через Google"))
         }
     }
 }
@@ -285,9 +286,9 @@ private fun RegisterStep(state: AuthState, viewModel: AuthViewModel) {
         OutlinedTextField(
             value = login,
             onValueChange = { login = it; viewModel.clearError() },
-            label = { Text("Логін") },
+            label = { Text(t("Логін")) },
             singleLine = true,
-            supportingText = { Text("від 3 символів, без пробілів") },
+            supportingText = { Text(t("від 3 символів, без пробілів")) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -307,7 +308,7 @@ private fun RegisterStep(state: AuthState, viewModel: AuthViewModel) {
         OutlinedTextField(
             value = phone,
             onValueChange = { phone = it; viewModel.clearError() },
-            label = { Text("Телефон (опціонально)") },
+            label = { Text(t("Телефон (опціонально)")) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Phone,
@@ -338,7 +339,7 @@ private fun RegisterStep(state: AuthState, viewModel: AuthViewModel) {
 
         Spacer(Modifier.height(12.dp))
         SubmitButton(
-            text = "Зареєструватися",
+            text = dev.amps.app.core.Loc.translate("Зареєструватися"),
             busy = state.busy,
             enabled = login.isNotBlank() && email.isNotBlank() && password.isNotBlank() && confirm.isNotBlank(),
             onClick = {
@@ -351,7 +352,7 @@ private fun RegisterStep(state: AuthState, viewModel: AuthViewModel) {
 
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = { viewModel.setMode(AuthState.Mode.LOGIN) }) {
-            Text("Вже є акаунт")
+            Text(t("Вже є акаунт"))
         }
 
         Spacer(Modifier.height(16.dp))
@@ -400,7 +401,7 @@ private fun PasswordResetStep(state: AuthState, viewModel: AuthViewModel) {
                 )
                 Spacer(Modifier.height(12.dp))
                 SubmitButton(
-                    text = "Надіслати код",
+                    text = dev.amps.app.core.Loc.translate("Надіслати код"),
                     busy = state.busy,
                     enabled = email.isNotBlank(),
                     onClick = {
@@ -422,7 +423,7 @@ private fun PasswordResetStep(state: AuthState, viewModel: AuthViewModel) {
                 OutlinedTextField(
                     value = code,
                     onValueChange = { code = it.filter { it.isDigit() }.take(6); viewModel.clearError() },
-                    label = { Text("Шестизначний код") },
+                    label = { Text(t("Шестизначний код")) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.NumberPassword,
@@ -435,12 +436,12 @@ private fun PasswordResetStep(state: AuthState, viewModel: AuthViewModel) {
                 )
                 Spacer(Modifier.height(12.dp))
                 SubmitButton(
-                    text = "Підтвердити код",
+                    text = dev.amps.app.core.Loc.translate("Підтвердити код"),
                     busy = state.busy,
                     enabled = code.length == 6,
                     onClick = { if (code.length == 6) step = 2 },
                 )
-                TextButton(onClick = { viewModel.cancelCode(); step = 0 }) { Text("Назад") }
+                TextButton(onClick = { viewModel.cancelCode(); step = 0 }) { Text(t("Назад")) }
             }
             2 -> {
                 Text(
@@ -468,7 +469,7 @@ private fun PasswordResetStep(state: AuthState, viewModel: AuthViewModel) {
                 )
                 Spacer(Modifier.height(12.dp))
                 SubmitButton(
-                    text = "Скинути пароль",
+                    text = dev.amps.app.core.Loc.translate("Скинути пароль"),
                     busy = state.busy,
                     enabled = newPassword.isNotBlank() && confirmPassword.isNotBlank(),
                     onClick = {
@@ -477,13 +478,13 @@ private fun PasswordResetStep(state: AuthState, viewModel: AuthViewModel) {
                         }
                     },
                 )
-                TextButton(onClick = { step = 1 }) { Text("Назад до коду") }
+                TextButton(onClick = { step = 1 }) { Text(t("Назад до коду")) }
             }
         }
 
         Spacer(Modifier.height(16.dp))
         TextButton(onClick = { viewModel.setMode(AuthState.Mode.LOGIN) }) {
-            Text("Назад до входу")
+            Text(t("Назад до входу"))
         }
     }
 }
@@ -536,7 +537,7 @@ private fun CodeStep(state: AuthState, viewModel: AuthViewModel, isBackend: Bool
             // внутрішній `it` фільтра затіняв введений рядок, поле мовчало,
             // і ні email-код реєстрації, ні 2FA-код ввести не вдавалося.
             onValueChange = { raw -> code = raw.filter { ch -> ch.isDigit() }.take(Totp.DIGITS); viewModel.clearError() },
-            label = { Text("Шестизначний код") },
+            label = { Text(t("Шестизначний код")) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.NumberPassword,
@@ -554,7 +555,7 @@ private fun CodeStep(state: AuthState, viewModel: AuthViewModel, isBackend: Bool
 
         Spacer(Modifier.height(12.dp))
         SubmitButton(
-            text = "Підтвердити",
+            text = dev.amps.app.core.Loc.translate("Підтвердити"),
             busy = state.busy,
             enabled = code.length == Totp.DIGITS,
             onClick = {
@@ -563,13 +564,13 @@ private fun CodeStep(state: AuthState, viewModel: AuthViewModel, isBackend: Bool
                 }
             },
         )
-        TextButton(onClick = { viewModel.cancelCode() }) { Text("Назад") }
+        TextButton(onClick = { viewModel.cancelCode() }) { Text(t("Назад")) }
         // 1.1.3: реєстрація і вхід уже видають токени до моменту підтвердження.
         // Якщо лист не дійшов (наприклад, Resend не налаштований на сервері),
         // користувач може продовжити — сервер знову запропонує код при вході.
         if (isBackend && state.pendingBackendType == "EMAIL_VERIFY" && state.backendUser != null) {
             TextButton(onClick = { viewModel.cancelCode() }) {
-                Text("Продовжити без підтвердження")
+                Text(t("Продовжити без підтвердження"))
             }
         }
     }
@@ -693,7 +694,7 @@ private fun SecurityStep(state: AuthState, viewModel: AuthViewModel) {
             }
 
             Spacer(Modifier.height(16.dp))
-            TextButton(onClick = { viewModel.signOut() }) { Text("Вийти з акаунта") }
+            TextButton(onClick = { viewModel.signOut() }) { Text(t("Вийти з акаунта")) }
         }
     }
 }
@@ -756,7 +757,7 @@ private fun TotpSetup(
                 onClick = { clipboard.setText(AnnotatedString(otpauth)) },
                 modifier = Modifier.weight(1f),
             ) {
-                Text("Скопіювати посилання")
+                Text(t("Скопіювати посилання"))
             }
         }
     }
@@ -774,7 +775,7 @@ private fun TotpSetup(
         // 1.1.3: той самий дефект затінення `it` — код при увімкненні 2FA
         // не вводився.
         onValueChange = { raw -> code = raw.filter { ch -> ch.isDigit() }.take(Totp.DIGITS); viewModel.clearError() },
-        label = { Text("Код з додатку") },
+        label = { Text(t("Код з додатку")) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(
             keyboardType = KeyboardType.NumberPassword,
@@ -795,7 +796,7 @@ private fun TotpSetup(
         enabled = code.length == Totp.DIGITS,
         onClick = { if (code.length == Totp.DIGITS) viewModel.confirmTwoFactor(code) },
     )
-    TextButton(onClick = { viewModel.cancelTwoFactor() }) { Text("Скасувати") }
+    TextButton(onClick = { viewModel.cancelTwoFactor() }) { Text(t("Скасувати")) }
 }
 
 @Composable
@@ -814,7 +815,7 @@ private fun PasswordChangeBlock(state: AuthState, viewModel: AuthViewModel) {
             onClick = { viewModel.changePasswordLocal(old, fresh); old = ""; fresh = "" },
             enabled = !state.busy && old.isNotBlank() && fresh.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Змінити пароль") }
+        ) { Text(t("Змінити пароль")) }
     }
 }
 
@@ -837,7 +838,7 @@ private fun ContactsBlock(state: AuthState, viewModel: AuthViewModel) {
         OutlinedTextField(
             value = email,
             onValueChange = { email = it },
-            label = { Text("Пошта") },
+            label = { Text(t("Пошта")) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth(),
@@ -847,12 +848,12 @@ private fun ContactsBlock(state: AuthState, viewModel: AuthViewModel) {
             onClick = { viewModel.setEmail(email) },
             enabled = email.isNotBlank() && state.account?.email != email.trim(),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Зберегти пошту") }
+        ) { Text(t("Зберегти пошту")) }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = phone,
             onValueChange = { phone = it },
-            label = { Text("Телефон") },
+            label = { Text(t("Телефон")) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
             modifier = Modifier.fillMaxWidth(),
@@ -862,7 +863,7 @@ private fun ContactsBlock(state: AuthState, viewModel: AuthViewModel) {
             onClick = { viewModel.setPhone(phone) },
             enabled = phone.isNotBlank() && state.account?.phone != phone.trim(),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Зберегти номер") }
+        ) { Text(t("Зберегти номер")) }
     }
 }
 

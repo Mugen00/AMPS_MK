@@ -63,6 +63,7 @@ import coil.compose.AsyncImage
 import dev.amps.app.data.remote.anilist.AniListClient
 import dev.amps.app.data.remote.backend.dto.FavoriteAnimeDto
 import kotlinx.coroutines.launch
+import dev.amps.app.core.t
 
 /**
  * 1.1.2: сторінка профіля. 1.4.0: реворк у стилі Instagram — шапка
@@ -187,7 +188,7 @@ fun ProfileScreen(
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
-                TextButton(onClick = { showEditDialog = true }) { Text("Редагувати") }
+                TextButton(onClick = { showEditDialog = true }) { Text(t("Редагувати")) }
             }
 
             Spacer(Modifier.height(14.dp))
@@ -254,7 +255,7 @@ fun ProfileScreen(
                 TextButton(onClick = { showAnimeSearch = true }) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Додати")
+                    Text(t("Додати"))
                 }
             }
             if (state.favoriteAnime.isEmpty()) {
@@ -473,13 +474,13 @@ private fun EditProfileDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Редагувати профіль") },
+        title = { Text(t("Редагувати профіль")) },
         text = {
             Column {
                 OutlinedTextField(
                     value = name,
                     onValueChange = onName,
-                    label = { Text("Ім'я") },
+                    label = { Text(t("Ім'я")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -487,17 +488,17 @@ private fun EditProfileDialog(
                 OutlinedTextField(
                     value = bio,
                     onValueChange = onBio,
-                    label = { Text("Про себе (до 280)") },
+                    label = { Text(t("Про себе (до 280)")) },
                     minLines = 3,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = onSave, enabled = name.isNotBlank() && !saving) { Text("Зберегти") }
+            TextButton(onClick = onSave, enabled = name.isNotBlank() && !saving) { Text(t("Зберегти")) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Скасувати") }
+            TextButton(onClick = onDismiss) { Text(t("Скасувати")) }
         },
     )
 }
@@ -515,7 +516,7 @@ private fun GenrePickerDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Улюблені жанри") },
+        title = { Text(t("Улюблені жанри")) },
         text = {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -531,7 +532,7 @@ private fun GenrePickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Готово") }
+            TextButton(onClick = onDismiss) { Text(t("Готово")) }
         },
     )
 }
@@ -554,13 +555,13 @@ private fun AnimeSearchDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Додати улюблене аніме") },
+        title = { Text(t("Додати улюблене аніме")) },
         text = {
             Column {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text("Назва аніме (ромаджі/англійською)") },
+                    label = { Text(t("Назва аніме (ромаджі/англійською)")) },
                     singleLine = true,
                     trailingIcon = {
                         androidx.compose.material3.IconButton(
@@ -649,7 +650,7 @@ private fun AnimeSearchDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Закрити") }
+            TextButton(onClick = onDismiss) { Text(t("Закрити")) }
         },
     )
 }

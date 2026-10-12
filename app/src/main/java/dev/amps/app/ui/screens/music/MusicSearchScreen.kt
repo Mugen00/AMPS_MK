@@ -91,6 +91,7 @@ import dev.amps.app.ui.components.NetworkImage
 import dev.amps.app.ui.theme.AmpsColors
 import dev.amps.app.util.formatBytes
 import dev.amps.app.util.formatDurationSec
+import dev.amps.app.core.t
 
 /**
  * The "Музыка" tab.
@@ -135,7 +136,7 @@ fun MusicSearchScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Музыка") },
+                title = { Text(t("Музыка")) },
                 actions = {
                     IconButton(onClick = { picker.launch(arrayOf("audio/*")) }) {
                         Icon(Icons.Default.FolderOpen, contentDescription = "Импортировать свой файл")
@@ -170,8 +171,8 @@ fun MusicSearchScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 singleLine = true,
-                label = { Text("Название трека или «исполнитель — трек»") },
-                placeholder = { Text("например: One More Time") },
+                label = { Text(t("Название трека или «исполнитель — трек»")) },
+                placeholder = { Text(t("например: One More Time")) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 trailingIcon = {
                     if (state.hasQuery) {
@@ -191,12 +192,12 @@ fun MusicSearchScreen(
                 Tab(
                     selected = state.tab == MusicSearchViewModel.TAB_METADATA,
                     onClick = { viewModel.onTabChange(MusicSearchViewModel.TAB_METADATA) },
-                    text = { Text("Поиск") },
+                    text = { Text(t("Поиск")) },
                 )
                 Tab(
                     selected = state.tab == MusicSearchViewModel.TAB_FREE,
                     onClick = { viewModel.onTabChange(MusicSearchViewModel.TAB_FREE) },
-                    text = { Text("Свободные") },
+                    text = { Text(t("Свободные")) },
                 )
                 Tab(
                     selected = state.tab == MusicSearchViewModel.TAB_PLAYLISTS,
@@ -204,12 +205,12 @@ fun MusicSearchScreen(
                         viewModel.onTabChange(MusicSearchViewModel.TAB_PLAYLISTS)
                         viewModel.loadPlaylists()
                     },
-                    text = { Text("Плейлісти") },
+                    text = { Text(t("Плейлісти")) },
                 )
                 Tab(
                     selected = state.tab == MusicSearchViewModel.TAB_LIBRARY,
                     onClick = { viewModel.onTabChange(MusicSearchViewModel.TAB_LIBRARY) },
-                    text = { Text("Мои файлы") },
+                    text = { Text(t("Мои файлы")) },
                 )
             }
 
@@ -268,7 +269,7 @@ private fun ScopePicker(
 ) {
     Column(Modifier.padding(horizontal = 16.dp)) {
         Text(
-            text = "Что ищем",
+            text = dev.amps.app.core.Loc.translate("Что ищем"),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -330,7 +331,7 @@ private fun MetadataTab(
                     SectionLabel(
                         title = "Слухати онлайн",
                         count = files.size,
-                        subtitle = "Повний трек з вільного джерела — грає одразу",
+                        subtitle = t("Повний трек з вільного джерела — грає одразу"),
                         color = AmpsColors.violet,
                     )
                 }
@@ -356,7 +357,7 @@ private fun MetadataTab(
                     SectionLabel(
                         title = "Только метаданные",
                         count = metadata.size,
-                        subtitle = "Описание записи есть, файла у нас нет",
+                        subtitle = t("Описание записи есть, файла у нас нет"),
                         color = AmpsColors.amber,
                     )
                 }
@@ -555,7 +556,7 @@ private fun UnifiedTrackRow(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = "Лицензия не указана — файл закрыт для скачивания",
+                    text = dev.amps.app.core.Loc.translate("Лицензия не указана — файл закрыт для скачивания"),
                     style = MaterialTheme.typography.labelSmall,
                     color = AmpsColors.danger,
                 )
@@ -594,7 +595,7 @@ private fun FreeTracksTab(
                 FilterChip(
                     selected = false,
                     onClick = viewModel::startAnimeRadio,
-                    label = { Text("📻 Радіо аніме") },
+                    label = { Text(t("📻 Радіо аніме")) },
                 )
             }
             items(FreeTrackFilter.entries) { filter ->
@@ -606,7 +607,7 @@ private fun FreeTracksTab(
             }
         }
         Text(
-            text = "Только источники, которые публикуют свободную лицензию. " +
+            text = dev.amps.app.core.Loc.translate("Только источники, которые публикуют свободную лицензию. ") +
                 "Без читаемой лицензии файл считается закрытым.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -787,7 +788,7 @@ private fun LibraryTab(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Импортированные и скачанные файлы",
+                text = dev.amps.app.core.Loc.translate("Импортированные и скачанные файлы"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
@@ -796,7 +797,7 @@ private fun LibraryTab(
                 if (state.importsInProgress) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 } else {
-                    Text("Импорт")
+                    Text(t("Импорт"))
                 }
             }
         }
@@ -955,7 +956,7 @@ private fun PlaylistsTab(
                 onValueChange = { newPlaylistName = it },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                label = { Text("Назва нового плейліста") },
+                label = { Text(t("Назва нового плейліста")) },
             )
             Spacer(Modifier.width(8.dp))
             FilledTonalButton(
@@ -965,7 +966,7 @@ private fun PlaylistsTab(
                 },
                 enabled = newPlaylistName.isNotBlank() && !state.playlistBusy,
             ) {
-                Text("Створити")
+                Text(t("Створити"))
             }
         }
 
@@ -999,7 +1000,7 @@ private fun PlaylistsTab(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(onClick = viewModel::closePlaylist) { Text("До списку") }
+                TextButton(onClick = viewModel::closePlaylist) { Text(t("До списку")) }
             }
             if (state.openPlaylistTracks.isNotEmpty()) {
                 val queue = playlistToQueue(state.openPlaylistTracks)
@@ -1013,7 +1014,7 @@ private fun PlaylistsTab(
                     }) {
                         Icon(Icons.Default.PlayArrow, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Грати все")
+                        Text(t("Грати все"))
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -1220,7 +1221,7 @@ private fun AddToPlaylistDialog(
     var newName by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Додати в плейліст") },
+        title = { Text(t("Додати в плейліст")) },
         text = {
             Column {
                 Text(
@@ -1240,7 +1241,7 @@ private fun AddToPlaylistDialog(
                 OutlinedTextField(
                     value = newName,
                     onValueChange = { newName = it },
-                    label = { Text("Або створити новий") },
+                    label = { Text(t("Або створити новий")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -1251,11 +1252,11 @@ private fun AddToPlaylistDialog(
                 onClick = { if (newName.isNotBlank()) onCreate(newName) },
                 enabled = !busy && newName.isNotBlank(),
             ) {
-                Text("Створити плейліст")
+                Text(t("Створити плейліст"))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Скасувати") }
+            TextButton(onClick = onDismiss) { Text(t("Скасувати")) }
         },
     )
 }
@@ -1291,20 +1292,20 @@ private fun UrlImportDialog(
     var url by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Імпорт за посиланням") },
+        title = { Text(t("Імпорт за посиланням")) },
         text = {
             Column {
                 if (busy) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(10.dp))
-                        Text("Завантаження…")
+                        Text(t("Завантаження…"))
                     }
                 } else {
                     OutlinedTextField(
                         value = url,
                         onValueChange = { url = it },
-                        label = { Text("Пряме посилання на аудіофайл") },
+                        label = { Text(t("Пряме посилання на аудіофайл")) },
                         placeholder = { Text("https://…/track.mp3") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -1325,11 +1326,11 @@ private fun UrlImportDialog(
                 onClick = { onImport(url) },
                 enabled = !busy && url.trim().startsWith("http"),
             ) {
-                Text("Імпортувати")
+                Text(t("Імпортувати"))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !busy) { Text("Скасувати") }
+            TextButton(onClick = onDismiss, enabled = !busy) { Text(t("Скасувати")) }
         },
     )
 }

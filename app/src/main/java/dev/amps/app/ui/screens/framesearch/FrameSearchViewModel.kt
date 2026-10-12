@@ -109,7 +109,7 @@ class FrameSearchViewModel(
         viewModelScope.launch {
             val bytes = runCatching { File(session.photoPath).readBytes() }.getOrNull()
             if (bytes == null) {
-                _state.value = _state.value.copy(error = "Фото цієї сесії видалено з пам'яті пристрою")
+                _state.value = _state.value.copy(error = dev.amps.app.core.Loc.translate("Фото цієї сесії видалено з пам'яті пристрою"))
                 return@launch
             }
             val image = PreparedImage(

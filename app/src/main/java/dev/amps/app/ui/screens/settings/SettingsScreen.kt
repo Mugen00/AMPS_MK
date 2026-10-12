@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.Button
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.amps.app.core.ThemeMode
+import dev.amps.app.core.t
 import dev.amps.app.ui.components.SectionCard
 import dev.amps.app.ui.components.StatRow
 import dev.amps.app.ui.theme.AmpsColors
@@ -66,7 +68,7 @@ fun SettingsScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Настройки") },
+                title = { Text(t("Настройки")) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
@@ -84,7 +86,7 @@ fun SettingsScreen(
             // 1.0.9: аккаунт первым, потому что от него зависит, пишется ли
             // история. Гостю показывается честное объяснение, а не «войдите,
             // чтобы пользоваться приложением» — пользоваться можно и так.
-            SectionCard(title = "Аккаунт", icon = Icons.Default.Person) {
+            SectionCard(title = t("Аккаунт"), icon = Icons.Default.Person) {
                 Text(
                     sessionLabel ?: "Гость",
                     style = MaterialTheme.typography.titleSmall,
@@ -107,7 +109,7 @@ fun SettingsScreen(
                 }
             }
 
-            SectionCard(title = "Ключи API", icon = Icons.Default.VpnKey) {
+            SectionCard(title = t("Ключи API"), icon = Icons.Default.VpnKey) {
                 Text(
                     "Пошук по картинке идёт через IQDB — без ключа и регистрации. " +
                         "Jamendo тоже подключён сразу. Ключ нужен только для AI-анализа фото (Gemini).",
@@ -118,7 +120,7 @@ fun SettingsScreen(
                 OutlinedTextField(
                     value = state.geminiApiKey,
                     onValueChange = viewModel::onGeminiKey,
-                    label = { Text("Ключ Google AI Studio (Gemini)") },
+                    label = { Text(t("Ключ Google AI Studio (Gemini)")) },
                     placeholder = { Text("AIza…") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -152,7 +154,7 @@ fun SettingsScreen(
                 Button(
                     onClick = viewModel::save,
                     enabled = state.dirty,
-                ) { Text("Зберегти ключі") }
+                ) { Text(t("Зберегти ключі")) }
                 Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -191,7 +193,43 @@ fun SettingsScreen(
                 }
             }
 
-            SectionCard(title = "Оформление", icon = Icons.Default.Info) {
+            // 1.5.0: мова інтерфейсу — застосовується одразу, без перезапуску.
+            SectionCard(title = t("Мова"), icon = Icons.Default.Language) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    dev.amps.app.core.Loc.Lang.entries.forEach { lang ->
+                        val selected = when (lang) {
+                            dev.amps.app.core.Loc.Lang.SYSTEM ->
+                                dev.amps.app.core.Loc.language == dev.amps.app.core.Loc.Lang.SYSTEM
+                            else ->
+                                dev.amps.app.core.Loc.language == lang ||
+                                    (dev.amps.app.core.Loc.language == dev.amps.app.core.Loc.Lang.SYSTEM &&
+                                        dev.amps.app.core.Loc.systemLanguage == lang.code)
+                        }
+                        FilterChip(
+                            selected = selected,
+                            onClick = { dev.amps.app.core.Loc.setLanguage(context, lang) },
+                            label = {
+                                Text(
+                                    when (lang) {
+                                        dev.amps.app.core.Loc.Lang.SYSTEM -> t("Системна")
+                                        dev.amps.app.core.Loc.Lang.UK -> "Українська"
+                                        dev.amps.app.core.Loc.Lang.RU -> "Русский"
+                                        dev.amps.app.core.Loc.Lang.EN -> "English"
+                                    }
+                                )
+                            },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    t("Системна — як у системи телефона. Зміна набирає сили одразу."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            SectionCard(title = t("Оформление"), icon = Icons.Default.Info) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ThemeMode.entries.forEach { mode ->
                         FilterChip(
@@ -211,19 +249,19 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(12.dp))
                 SwitchRow(
-                    title = "Класть скачанное в музыку телефона",
-                    subtitle = "Файл появится в «Музыка/AMPS» и откроется любым плеером",
+                    title = t("Класть скачанное в музыку телефона"),
+                    subtitle = t("Файл появится в «Музыка/AMPS» и откроется любым плеером"),
                     checked = state.importToMediaStore,
                     onChange = viewModel::setImportToMediaStore,
                 )
                 SwitchRow(
-                    title = "Хранить историю поиска",
+                    title = t("Хранить историю поиска"),
                     checked = state.keepHistory,
                     onChange = viewModel::setKeepHistory,
                 )
                 SwitchRow(
-                    title = "Приховувати 18+",
-                    subtitle = "Frame Wiki не показуватиме збіги з рейтингом e/q (1.2.3)",
+                    title = t("Приховувати 18+"),
+                    subtitle = t("Frame Wiki не показуватиме збіги з рейтингом e/q (1.2.3)"),
                     checked = state.hideNsfw,
                     onChange = viewModel::setHideNsfw,
                 )
@@ -231,8 +269,8 @@ fun SettingsScreen(
 
                 // --- 1.2.4: сезонні теми і генератор унікальних тем ---
                 SwitchRow(
-                    title = "Сезонні теми",
-                    subtitle = "Палітра змінюється сама за датою пристрою: зараз — " +
+                    title = t("Сезонні теми"),
+                    subtitle = t("Палітра змінюється сама за датою пристрою: зараз — ") +
                         dev.amps.app.ui.theme.SeasonTheme.seasonName(java.time.LocalDate.now()).lowercase(),
                     checked = state.seasonalTheme,
                     onChange = viewModel::setSeasonalTheme,
@@ -240,12 +278,12 @@ fun SettingsScreen(
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = viewModel::generateTheme) {
-                        Text("🎲 Згенерувати тему")
+                        Text(t("🎲 Згенерувати тему"))
                     }
                     Spacer(Modifier.width(10.dp))
                     if (state.customHue != null) {
                         TextButton(onClick = viewModel::resetCustomTheme) {
-                            Text("Скинути")
+                            Text(t("Скинути"))
                         }
                     }
                 }
@@ -278,7 +316,7 @@ fun SettingsScreen(
                 }
             }
 
-            SectionCard(title = "Источники музыки", icon = Icons.Default.Info) {
+            SectionCard(title = t("Источники музыки"), icon = Icons.Default.Info) {
                 Text(
                     "Метаданные берутся из iTunes и MusicBrainz, свободные файлы — из Internet Archive и ccMixter. Приложение не скачивает треки из стриминговых сервисов.",
                     style = MaterialTheme.typography.bodySmall,
@@ -290,7 +328,7 @@ fun SettingsScreen(
                 StatRow("Лицензия", "без неё файл не предлагается к скачиванию")
             }
 
-            SectionCard(title = "О приложении", icon = Icons.Default.Info) {
+            SectionCard(title = t("О приложении"), icon = Icons.Default.Info) {
                 StatRow("Название", "AMPS · поиск по картинке и музыке")
                 // Read from the package so it can never go stale next to the build.
                 StatRow("Версия", installedVersion)
@@ -298,7 +336,7 @@ fun SettingsScreen(
                 StatRow("Данные о серии", "AniList GraphQL")
                 StatRow("Музыка", "iTunes · MusicBrainz · Internet Archive · ccMixter")
                 Spacer(Modifier.height(10.dp))
-                Button(onClick = onOpenUpdates) { Text("Проверить обновления") }
+                Button(onClick = onOpenUpdates) { Text(t("Проверить обновления")) }
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "Лицензии: IQDB и AniList дают только метаданные. Аудио берётся лишь из источников со свободной лицензией или из файла, который вы импортировали сами.",

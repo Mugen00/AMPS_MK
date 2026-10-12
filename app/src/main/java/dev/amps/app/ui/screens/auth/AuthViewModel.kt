@@ -380,7 +380,7 @@ class AuthViewModel(
 
             is AccountStore.Result.WrongPassword,
             is AccountStore.Result.NoSuchAccount -> _state.value = _state.value.copy(
-                busy = false, error = "невірний логін або пароль"
+                busy = false, error = dev.amps.app.core.Loc.translate("невірний логін або пароль")
             )
 
             is AccountStore.Result.WeakPassword -> _state.value = _state.value.copy(
@@ -469,7 +469,7 @@ class AuthViewModel(
         _state.value = current.copy(busy = true, error = null)
         viewModelScope.launch {
             if (!Totp.verify(secret, code)) {
-                _state.value = current.copy(busy = false, error = "невірний код — перевір час на телефоні")
+                _state.value = current.copy(busy = false, error = dev.amps.app.core.Loc.translate("невірний код — перевір час на телефоні"))
                 return@launch
             }
             val result = withContext(Dispatchers.Default) {

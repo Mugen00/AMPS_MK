@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import dev.amps.app.data.remote.anilist.AniListClient
 import dev.amps.app.data.remote.backend.dto.AnimeListDto
+import dev.amps.app.core.t
 
 /**
  * 1.2.2: екран каталогу аніме. Вкладки «Топ / Сезон / Жанри / Моє аніме»
@@ -112,10 +113,10 @@ fun AnimeScreen(
                 )
             }
             TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Топ") })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Сезон") })
-                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Жанри") })
-                Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Моє") })
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text(t("Топ")) })
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text(t("Сезон")) })
+                Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text(t("Жанри")) })
+                Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text(t("Моє")) })
             }
 
             Row(
@@ -128,7 +129,7 @@ fun AnimeScreen(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Пошук аніме") },
+                    placeholder = { Text(t("Пошук аніме")) },
                     singleLine = true,
                     trailingIcon = {
                         IconButton(onClick = { viewModel.search(query) }) {
@@ -210,7 +211,7 @@ private fun CatalogGrid(
 ) {
     if (cards.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Нічого не знайдено")
+            Text(t("Нічого не знайдено"))
         }
         return
     }
@@ -391,14 +392,14 @@ private fun AddAnimeDialog(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = reminder, onCheckedChange = { onReminder(it) })
-                    Text("Нагадувати про нові серії")
+                    Text(t("Нагадувати про нові серії"))
                 }
                 if (existing != null) {
-                    TextButton(onClick = onRemove) { Text("Прибрати зі списку") }
+                    TextButton(onClick = onRemove) { Text(t("Прибрати зі списку")) }
                 }
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Закрити") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(t("Закрити")) } },
     )
 }

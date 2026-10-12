@@ -78,6 +78,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 1.5.0: мова інтерфейсу (system/uk/ru/en) — читається зі сховища.
+        dev.amps.app.core.Loc.init(this)
         enableEdgeToEdge()
         sharedImage = intent.imageUriOrNull()
 
@@ -93,6 +95,9 @@ class MainActivity : ComponentActivity() {
             // сезонна за датою пристрою (синхронізація з часом системи).
             val accentHue = settings.customHue
                 ?: (if (settings.seasonalTheme) dev.amps.app.ui.theme.SeasonTheme.hueFor(java.time.LocalDate.now()) else null)
+            // 1.5.0: читання ревізії мови в корені — при зміні мови вся
+            // композиція перемальовується, t() повертає нові переклади.
+            val languageRevision = dev.amps.app.core.Loc.revision.intValue
             AmpsTheme(themeMode = settings.themeMode, accentHue = accentHue) {
                 AmpsRoot(container = container, initialSharedImage = sharedImage)
             }
@@ -195,11 +200,11 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
     }
 
     val tabs = listOf(
-        TabItem(Routes.FRAME, "Картинка", Icons.Default.ImageSearch),
-        TabItem(Routes.MUSIC, "Музыка", Icons.Default.MusicNote),
-        TabItem(Routes.COMMUNITY, "Спільнота", Icons.Default.Groups),
-        TabItem(Routes.ANIME, "Аніме", Icons.Default.PlayArrow),
-        TabItem(Routes.SETTINGS, "Настройки", Icons.Default.Settings),
+        TabItem(Routes.FRAME, dev.amps.app.core.t("Картинка"), Icons.Default.ImageSearch),
+        TabItem(Routes.MUSIC, dev.amps.app.core.t("Музыка"), Icons.Default.MusicNote),
+        TabItem(Routes.COMMUNITY, dev.amps.app.core.t("Спільнота"), Icons.Default.Groups),
+        TabItem(Routes.ANIME, dev.amps.app.core.t("Аніме"), Icons.Default.PlayArrow),
+        TabItem(Routes.SETTINGS, dev.amps.app.core.t("Настройки"), Icons.Default.Settings),
     )
 
     Scaffold(
@@ -376,7 +381,7 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                 val url = java.net.URLDecoder.decode(rawUrl, "UTF-8")
                 dev.amps.app.ui.screens.anime.WebViewScreen(
                     url = url,
-                    title = "Перегляд сайту",
+                    title = dev.amps.app.core.t("Перегляд сайту"),
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -466,11 +471,12 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
     if (pending != null) {
         AlertDialog(
             onDismissRequest = updateModel::dismiss,
-            title = { Text("Доступно обновление") },
+            title = { Text(dev.amps.app.core.t("Доступно обновление")) },
             text = {
                 Text(
-                    "Установлена ${updateModel.currentVersion}, доступна ${pending.release.versionLabel}. " +
-                        "Новое приложение скачается и установится само."
+                    dev.amps.app.core.t("Установлена ") + updateModel.currentVersion +
+                        dev.amps.app.core.t(", доступна ") + pending.release.versionLabel + ". " +
+                        dev.amps.app.core.t("Новое приложение скачается и установится само.")
                 )
             },
             confirmButton = {
@@ -479,10 +485,10 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                         updateModel.dismiss()
                         navController.navigate(Routes.UPDATE)
                     },
-                ) { Text("Обновить") }
+                ) { Text(dev.amps.app.core.t("Обновить")) }
             },
             dismissButton = {
-                TextButton(onClick = updateModel::dismiss) { Text("Позже") }
+                TextButton(onClick = updateModel::dismiss) { Text(dev.amps.app.core.t("Позже")) }
             },
         )
     }

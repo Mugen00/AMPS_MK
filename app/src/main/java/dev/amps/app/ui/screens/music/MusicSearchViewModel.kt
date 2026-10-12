@@ -360,14 +360,14 @@ class MusicSearchViewModel(
         if (trimmed.isEmpty()) return
         viewModelScope.launch {
             val stored = session.current() ?: run {
-                _state.update { it.copy(message = "Плейлісти зберігаються в акаунті — увійдіть у спільноті") }
+                _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Плейлісти зберігаються в акаунті — увійдіть у спільноті")) }
                 return@launch
             }
             _state.update { it.copy(playlistBusy = true) }
             when (val result = api.createPlaylist("Bearer ${stored.accessToken}", trimmed)) {
                 is dev.amps.app.data.remote.backend.ApiResult.Success -> {
                     loadPlaylists()
-                    _state.update { it.copy(playlistBusy = false, message = "Плейліст створено") }
+                    _state.update { it.copy(playlistBusy = false, message = dev.amps.app.core.Loc.translate("Плейліст створено")) }
                 }
                 is dev.amps.app.data.remote.backend.ApiResult.Failure ->
                     _state.update { it.copy(playlistBusy = false, message = result.error) }
@@ -437,7 +437,7 @@ class MusicSearchViewModel(
         viewModelScope.launch {
             val stored = session.current() ?: run {
                 _state.update {
-                    it.copy(addTrackTarget = null, message = "Плейлісти доступні після входу в акаунт")
+                    it.copy(addTrackTarget = null, message = dev.amps.app.core.Loc.translate("Плейлісти доступні після входу в акаунт"))
                 }
                 return@launch
             }
@@ -478,7 +478,7 @@ class MusicSearchViewModel(
                     openPlaylist(playlistId)
                 }
                 else -> _state.update {
-                    it.copy(playlistBusy = false, message = "Не вдалося прибрати трек")
+                    it.copy(playlistBusy = false, message = dev.amps.app.core.Loc.translate("Не вдалося прибрати трек"))
                 }
             }
         }

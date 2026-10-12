@@ -83,6 +83,7 @@ import dev.amps.app.util.formatDurationMs
 import dev.amps.app.util.formatDurationSec
 import dev.amps.app.util.formatSampleRate
 import dev.amps.app.util.openUrl
+import dev.amps.app.core.t
 
 /**
  * The track wiki page: identity, licence, technical facts, where it came from
@@ -143,7 +144,7 @@ fun TrackWikiScreen(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(12.dp))
-                OutlinedButton(onClick = viewModel::load) { Text("Повторить") }
+                OutlinedButton(onClick = viewModel::load) { Text(t("Повторить")) }
             }
 
             else -> LazyColumn(
@@ -198,7 +199,7 @@ fun TrackWikiScreen(
                 if (page.similar.isNotEmpty()) {
                     item {
                         Text(
-                            text = "Похожие треки",
+                            text = dev.amps.app.core.Loc.translate("Похожие треки"),
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.padding(start = 18.dp, top = 18.dp, bottom = 8.dp),
                         )
@@ -294,7 +295,7 @@ private fun PlaybackCard(
     onToggle: () -> Unit,
     onOnlinePlay: () -> Unit,
 ) {
-    SectionCard(title = "Файл", icon = Icons.Default.MusicNote, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+    SectionCard(title = t("Файл"), icon = Icons.Default.MusicNote, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
         if (page.playableFile == null) {
             Text(
                 text = if (page.source.offersFile && page.freeTrack != null) {
@@ -355,12 +356,12 @@ private fun PlaybackCard(
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Слухати онлайн повністю")
+                    Text(t("Слухати онлайн повністю"))
                 }
                 if (track.source == dev.amps.app.data.model.MusicSource.ITUNES) {
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "iTunes дає лише 30-секундне прев'ю — повні версії дивіться на вкладці «Свободные».",
+                        text = dev.amps.app.core.Loc.translate("iTunes дає лише 30-секундне прев'ю — повні версії дивіться на вкладці «Свободные»."),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -374,7 +375,7 @@ private fun PlaybackCard(
 
 @Composable
 private fun IdentityCard(page: TrackWikiPage) {
-    SectionCard(title = "Трек", icon = Icons.Default.Info, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+    SectionCard(title = t("Трек"), icon = Icons.Default.Info, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             page.album?.let { InfoChip(it) }
             page.year?.let { InfoChip(it.toString(), color = AmpsColors.cyan) }
@@ -394,7 +395,7 @@ private fun IdentityCard(page: TrackWikiPage) {
 
 @Composable
 private fun FactsCard(page: TrackWikiPage) {
-    SectionCard(title = "Технические данные", icon = Icons.Default.Album, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+    SectionCard(title = t("Технические данные"), icon = Icons.Default.Album, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
         StatRow("Длительность", formatDurationSec(page.format.durationSec) ?: "не указана")
         StatRow("Битрейт", bitrateLabel(page.format))
         StatRow("Частота дискретизации", formatSampleRate(page.format.sampleRateHz) ?: "не указана")
@@ -481,7 +482,7 @@ private fun LicenceCard(
         page.attributionNote?.let { note ->
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "Заметка об атрибуции",
+                text = dev.amps.app.core.Loc.translate("Заметка об атрибуции"),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -497,7 +498,7 @@ private fun LicenceCard(
                     OutlinedButton(onClick = { viewModel.onLicenceEditingChange(true) }) {
                         Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Указать лицензию")
+                        Text(t("Указать лицензию"))
                     }
                     if (page.localPath != null) {
                         OutlinedButton(onClick = viewModel::deleteLocalFile) {
@@ -508,7 +509,7 @@ private fun LicenceCard(
                                 modifier = Modifier.size(18.dp),
                             )
                             Spacer(Modifier.width(6.dp))
-                            Text("Удалить")
+                            Text(t("Удалить"))
                         }
                     }
                 }
@@ -526,7 +527,7 @@ private fun LicenceEditor(saving: Boolean, viewModel: TrackWikiViewModel) {
     OutlinedTextField(
         value = name,
         onValueChange = { name = it },
-        label = { Text("Лицензия (например CC BY 4.0)") },
+        label = { Text(t("Лицензия (например CC BY 4.0)")) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
     )
@@ -534,7 +535,7 @@ private fun LicenceEditor(saving: Boolean, viewModel: TrackWikiViewModel) {
     OutlinedTextField(
         value = url,
         onValueChange = { url = it },
-        label = { Text("Ссылка на лицензию") },
+        label = { Text(t("Ссылка на лицензию")) },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
     )
@@ -542,7 +543,7 @@ private fun LicenceEditor(saving: Boolean, viewModel: TrackWikiViewModel) {
     OutlinedTextField(
         value = note,
         onValueChange = { note = it },
-        label = { Text("Атрибуция: автор, источник, год") },
+        label = { Text(t("Атрибуция: автор, источник, год")) },
         modifier = Modifier.fillMaxWidth(),
     )
     Spacer(Modifier.height(12.dp))
@@ -550,7 +551,7 @@ private fun LicenceEditor(saving: Boolean, viewModel: TrackWikiViewModel) {
         Button(onClick = { viewModel.saveAttribution(name, url, note) }, enabled = !saving) {
             Text(if (saving) "Сохраняем…" else "Сохранить")
         }
-        OutlinedButton(onClick = { viewModel.onLicenceEditingChange(false) }) { Text("Отмена") }
+        OutlinedButton(onClick = { viewModel.onLicenceEditingChange(false) }) { Text(t("Отмена")) }
     }
 }
 

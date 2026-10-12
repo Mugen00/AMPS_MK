@@ -92,7 +92,7 @@ class CommunityNotifier(
 
         val lines = mutableListOf<String>()
         if (newCount > 0 && lastSeen >= 0) {
-            lines += "Нові пости: $newCount"
+            lines += Loc.translate("Нові пости: ") + newCount
         }
         feed.items
             .filter { it.post.author.userId == myId }
@@ -100,13 +100,13 @@ class CommunityNotifier(
                 val previous = seenCounts[item.post.id] ?: return@forEach
                 val likeDelta = item.post.likeCount - previous.likes
                 val repostDelta = item.post.repostCount - previous.reposts
-                if (likeDelta > 0) lines += "Лайки ваших постів: +$likeDelta"
-                if (repostDelta > 0) lines += "Репости ваших постів: +$repostDelta"
+                if (likeDelta > 0) lines += Loc.translate("Лайки ваших постів: +") + likeDelta
+                if (repostDelta > 0) lines += Loc.translate("Репости ваших постів: +") + repostDelta
             }
 
         if (lines.isNotEmpty()) {
             notifier.notifyCommunityActivity(
-                "Спільнота",
+                Loc.translate("Спільнота"),
                 lines.take(3).joinToString("\n"),
             )
         }

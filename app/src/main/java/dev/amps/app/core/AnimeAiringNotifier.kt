@@ -94,18 +94,18 @@ class AnimeAiringNotifier(
             val isFresh = episode > already
             if (isFresh && within24h) {
                 val whenText = if (airingAtSec <= nowSec + 3600) {
-                    "сьогодні"
+                    Loc.translate("сьогодні")
                 } else {
                     val hours = (airingAtSec - nowSec) / 3600
-                    if (hours < 48) "через $hours год" else "незабаром"
+                    if (hours < 48) Loc.translate("через ") + hours + Loc.translate(" год") else Loc.translate("незабаром")
                 }
-                lines += "${item.title}: серія $episode — $whenText"
+                lines += item.title + ": " + Loc.translate("серія ") + episode + " — " + whenText
                 updated[item.anilistId] = episode
             }
         }
         if (lines.isNotEmpty()) {
             notifier.notifyAnimeEpisode(
-                "Аніме",
+                Loc.translate("Аніме"),
                 lines.take(3).joinToString("\n"),
             )
         }

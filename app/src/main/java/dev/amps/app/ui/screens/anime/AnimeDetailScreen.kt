@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import dev.amps.app.core.t
 
 data class AnimeDetailState(
     val loading: Boolean = true,
@@ -174,7 +175,7 @@ fun AnimeDetailScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(state.error ?: "")
                     Spacer(Modifier.height(12.dp))
-                    OutlinedButton(onClick = viewModel::load) { Text("Спробувати ще раз") }
+                    OutlinedButton(onClick = viewModel::load) { Text(t("Спробувати ще раз")) }
                 }
             }
 
@@ -237,7 +238,7 @@ fun AnimeDetailScreen(
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Дивитись на yummyani.me")
+                            Text(t("Дивитись на yummyani.me"))
                         }
                     }
                 }
@@ -270,7 +271,7 @@ fun AnimeDetailScreen(
                     status?.let {
                         OutlinedButton(
                             onClick = { animeViewModel.removeFromMyListById(it.anilistId, it.title) },
-                        ) { Text("Прибрати зі списку") }
+                        ) { Text(t("Прибрати зі списку")) }
                     }
                 }
 

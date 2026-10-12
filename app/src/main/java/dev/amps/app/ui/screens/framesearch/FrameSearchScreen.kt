@@ -79,6 +79,7 @@ import io.noties.markwon.Markwon
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import dev.amps.app.core.t
 
 /**
  * 1.3.0: «Пошук по картинці» повністю став AI-чатом: вибираєш фото —
@@ -107,13 +108,13 @@ fun FrameSearchScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("AI-аналіз фото") },
+                title = { Text(t("AI-аналіз фото")) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                 ),
                 actions = {
                     if (state.messages.isNotEmpty()) {
-                        TextButton(onClick = viewModel::newChat) { Text("Нове питання") }
+                        TextButton(onClick = viewModel::newChat) { Text(t("Нове питання")) }
                     }
                     IconButton(onClick = { showHistory = true }) {
                         Icon(Icons.Default.History, contentDescription = "Історія аналізів")
@@ -238,7 +239,7 @@ private fun ChatBody(
             OutlinedTextField(
                 value = state.input,
                 onValueChange = onInput,
-                placeholder = { Text("Питання про фото…") },
+                placeholder = { Text(t("Питання про фото…")) },
                 modifier = Modifier.weight(1f),
                 maxLines = 3,
                 shape = RoundedCornerShape(14.dp),
@@ -368,13 +369,13 @@ private fun HistoryDialog(
     AlertDialog(
         onDismissRequest = onClose,
         confirmButton = {},
-        title = { Text("Історія аналізів") },
+        title = { Text(t("Історія аналізів")) },
         dismissButton = {
-            TextButton(onClick = onClose) { Text("Закрити") }
+            TextButton(onClick = onClose) { Text(t("Закрити")) }
         },
         text = {
             if (chats.isEmpty()) {
-                Text("Поки що немає збережених аналізів")
+                Text(t("Поки що немає збережених аналізів"))
             } else {
                 LazyColumn(Modifier.height(340.dp)) {
                     items(chats) { session ->
@@ -394,7 +395,7 @@ private fun HistoryDialog(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            TextButton(onClick = { onOpen(session) }) { Text("Відкрити") }
+                            TextButton(onClick = { onOpen(session) }) { Text(t("Відкрити")) }
                             IconButton(onClick = { onDelete(session) }) {
                                 Icon(
                                     Icons.Default.Delete,
@@ -456,7 +457,7 @@ private fun DropZone(onPick: () -> Unit) {
             FilledTonalButton(onClick = onPick) {
                 Icon(Icons.Outlined.PhotoLibrary, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Вибрати зображення")
+                Text(t("Вибрати зображення"))
             }
         }
     }
@@ -514,7 +515,7 @@ private fun FramePreviewCard(
                 OutlinedButton(onClick = onReplace, enabled = enabled) {
                     Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Змінити")
+                    Text(t("Змінити"))
                 }
                 Spacer(Modifier.width(8.dp))
                 IconButton(onClick = onClear, enabled = enabled) {

@@ -99,15 +99,15 @@ class AnimeViewModel(
                 val cards = block()
                 if (cards == null) {
                     _state.update {
-                        it.copy(loading = false, error = "AniList недоступний — перевірте інтернет і спробуйте ще раз")
+                        it.copy(loading = false, error = dev.amps.app.core.Loc.translate("AniList недоступний — перевірте інтернет і спробуйте ще раз"))
                     }
                 } else {
                     _state.update { it.copy(loading = false, cards = cards) }
                 }
             } catch (e: java.io.IOException) {
-                _state.update { it.copy(loading = false, error = "Мережа недоступна: ${e.message}") }
+                _state.update { it.copy(loading = false, error = dev.amps.app.core.Loc.translate("Мережа недоступна: ") + (e.message ?: "")) }
             } catch (e: Exception) {
-                _state.update { it.copy(loading = false, error = "Помилка: ${e.message}") }
+                _state.update { it.copy(loading = false, error = dev.amps.app.core.Loc.translate("Помилка: ") + (e.message ?: "")) }
             }
         }
     }
@@ -146,7 +146,7 @@ class AnimeViewModel(
     fun removeFromMyList(card: AniListClient.AnimeCard) {
         val session = backendSession
         if (session == null) {
-            _state.update { it.copy(message = "Увійдіть, щоб керувати списком") }
+            _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Увійдіть, щоб керувати списком")) }
             return
         }
         viewModelScope.launch {
@@ -156,11 +156,11 @@ class AnimeViewModel(
                 is ApiResult.Success -> {
                     synchronized(myById) { myById.remove(card.anilistId) }
                     refreshMyListQuiet()
-                    _state.update { it.copy(message = "Видалено: ${card.title}") }
+                    _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Видалено: ") + card.title) }
                 }
                 is ApiResult.Failure -> _state.update { it.copy(message = r.error) }
                 is ApiResult.NetworkError ->
-                    _state.update { it.copy(message = "Мережа недоступна") }
+                    _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Мережа недоступна")) }
             }
         }
     }
@@ -169,7 +169,7 @@ class AnimeViewModel(
     fun removeFromMyListById(anilistId: Int, title: String) {
         val session = backendSession
         if (session == null) {
-            _state.update { it.copy(message = "Увійдіть, щоб керувати списком") }
+            _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Увійдіть, щоб керувати списком")) }
             return
         }
         viewModelScope.launch {
@@ -179,11 +179,11 @@ class AnimeViewModel(
                 is ApiResult.Success -> {
                     synchronized(myById) { myById.remove(anilistId) }
                     refreshMyListQuiet()
-                    _state.update { it.copy(message = "Видалено: $title") }
+                    _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Видалено: ") + title) }
                 }
                 is ApiResult.Failure -> _state.update { it.copy(message = r.error) }
                 is ApiResult.NetworkError ->
-                    _state.update { it.copy(message = "Мережа недоступна") }
+                    _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Мережа недоступна")) }
             }
         }
     }
@@ -191,7 +191,7 @@ class AnimeViewModel(
     private fun upsert(card: AniListClient.AnimeCard, status: String, reminder: Boolean) {
         val session = backendSession
         if (session == null) {
-            _state.update { it.copy(message = "Увійдіть, щоб зберігати тайтли в акаунті") }
+            _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Увійдіть, щоб зберігати тайтли в акаунті")) }
             return
         }
         viewModelScope.launch {
@@ -219,11 +219,11 @@ class AnimeViewModel(
                         )
                     }
                     refreshMyList()
-                    _state.update { it.copy(message = "Збережено: ${card.title}") }
+                    _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Збережено: ") + card.title) }
                 }
                 is ApiResult.Failure -> _state.update { it.copy(message = r.error) }
                 is ApiResult.NetworkError ->
-                    _state.update { it.copy(message = "Мережа недоступна") }
+                    _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Мережа недоступна")) }
             }
         }
     }

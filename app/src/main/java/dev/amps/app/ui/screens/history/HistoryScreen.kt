@@ -45,6 +45,7 @@ import dev.amps.app.ui.components.EmptyState
 import dev.amps.app.ui.components.NetworkImage
 import java.text.DateFormat
 import java.util.Date
+import dev.amps.app.core.t
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,14 +62,14 @@ fun HistoryScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("История") },
+                title = { Text(t("История")) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 actions = {
                     if (entries.isNotEmpty()) {
                         TextButton(onClick = { scope.launch { store.clear() } }) {
                             Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Очистить")
+                            Text(t("Очистить"))
                         }
                     }
                 },

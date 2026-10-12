@@ -84,6 +84,7 @@ import dev.amps.app.ui.components.StatRow
 import dev.amps.app.ui.theme.AmpsColors
 import dev.amps.app.util.htmlToAnnotatedString
 import dev.amps.app.util.openUrl
+import dev.amps.app.core.t
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -232,7 +233,7 @@ private fun VerdictCard(verdict: FrameVerdict, onOpen: (String) -> Unit) {
         verdict.uncertain -> AmpsColors.amber
         else -> scheme.error
     }
-    SectionCard(title = "Насколько уверены источники", icon = Icons.AutoMirrored.Filled.FactCheck) {
+    SectionCard(title = t("Насколько уверены источники"), icon = Icons.AutoMirrored.Filled.FactCheck) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             ConfidenceDial(
                 percent = verdict.confidencePercent,
@@ -247,7 +248,7 @@ private fun VerdictCard(verdict: FrameVerdict, onOpen: (String) -> Unit) {
                 )
                 if (verdict.agreedSources.isNotEmpty()) {
                     Text(
-                        text = "Совпали источники: " + verdict.agreedSources.joinToString(", "),
+                        text = dev.amps.app.core.Loc.translate("Совпали источники: ") + verdict.agreedSources.joinToString(", "),
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant,
                     )
@@ -288,7 +289,7 @@ private fun VerdictCard(verdict: FrameVerdict, onOpen: (String) -> Unit) {
         if (verdict.candidates.size > 1) {
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "Другие варианты",
+                text = dev.amps.app.core.Loc.translate("Другие варианты"),
                 style = MaterialTheme.typography.labelLarge,
                 color = scheme.onSurfaceVariant,
             )
@@ -353,7 +354,7 @@ private fun TagCard(content: FrameContent, onOpen: (String) -> Unit) {
         },
     ) {
         Text(
-            text = "Определено локально, без интернета и без отправки картинки наружу. " +
+            text = dev.amps.app.core.Loc.translate("Определено локально, без интернета и без отправки картинки наружу. ") +
                 "Всё, что ниже, — предположения модели по тегам, а не проверенные факты.",
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurfaceVariant,
@@ -378,7 +379,7 @@ private fun TagCard(content: FrameContent, onOpen: (String) -> Unit) {
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "Замер на 21 картинке: широкие кадры 16:9 (пропорция 1,6–2,1) trace.moe " +
+                        text = dev.amps.app.core.Loc.translate("Замер на 21 картинке: широкие кадры 16:9 (пропорция 1,6–2,1) trace.moe ") +
                             "узнаёт точно, сходство 96,2–100 %. Книжные и квадратные (меньше 1,2) дают " +
                             "24–67 % — шум, пересечения не было ни разу. Обрезка не помогает: у точного " +
                             "кадра, обрезанного в портрет, сходство падает. Нужен широкий кадр из той же серии.",
@@ -396,12 +397,12 @@ private fun TagCard(content: FrameContent, onOpen: (String) -> Unit) {
         if (content.charactersUnreliable) {
             Spacer(Modifier.height(14.dp))
             Text(
-                text = "Имена персонажей не показаны",
+                text = dev.amps.app.core.Loc.translate("Имена персонажей не показаны"),
                 style = MaterialTheme.typography.titleSmall,
                 color = AmpsColors.amber,
             )
             Text(
-                text = "Модель здесь схлопнулась: она выдала одного персонажа с уверенностью около 1,0, " +
+                text = dev.amps.app.core.Loc.translate("Модель здесь схлопнулась: она выдала одного персонажа с уверенностью около 1,0, ") +
                     "а все остальные теги остались тихими. Замер на 7 картинках с вырезанными персонажами " +
                     "показал ровно это: Итачи Учиха превратился в suiseiseki, Нацу — тоже в suiseiseki, " +
                     "Цзинлю — в suigintou, и на семь картинок пришлось всего три тега. Модель обучена на " +
@@ -413,18 +414,18 @@ private fun TagCard(content: FrameContent, onOpen: (String) -> Unit) {
         } else if (content.characters.isNotEmpty()) {
             Spacer(Modifier.height(14.dp))
             Text(
-                text = "Кто это — предположения по тегам",
+                text = dev.amps.app.core.Loc.translate("Кто это — предположения по тегам"),
                 style = MaterialTheme.typography.titleSmall,
             )
             Text(
-                text = "Показаны все пять, а не один: на наборе из 36 картинок правильное " +
+                text = dev.amps.app.core.Loc.translate("Показаны все пять, а не один: на наборе из 36 картинок правильное ") +
                     "имя оказывалось в пятёрке всегда, а первым — примерно в половине случаев.",
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Имена здесь появляются только когда серию подтвердил внешний источник. " +
+                text = dev.amps.app.core.Loc.translate("Имена здесь появляются только когда серию подтвердил внешний источник. ") +
                     "Замер на восьми скриншотах аниме: IQDB на них не нашёл ничего, а тегер выдал " +
                     "чужих персонажей с уверенностью выше порога — то есть говорил уверенно и неверно. " +
                     "Поэтому неподтверждённые гипотезы остаются подписанными бо́ру-тегом, а если " +
@@ -462,7 +463,7 @@ private fun TagCard(content: FrameContent, onOpen: (String) -> Unit) {
                 }
             }
             Text(
-                text = "Описание собрано из тегов источника по словарю. Чего в словаре нет, в описании нет: " +
+                text = dev.amps.app.core.Loc.translate("Описание собрано из тегов источника по словарю. Чего в словаре нет, в описании нет: ") +
                     "ничего не додумывается вместо отсутствующего тега.",
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
@@ -472,12 +473,12 @@ private fun TagCard(content: FrameContent, onOpen: (String) -> Unit) {
         if (content.emptyButAnalyzed) {
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "Картинка не похожа на иллюстрацию — определять нечего.",
+                text = dev.amps.app.core.Loc.translate("Картинка не похожа на иллюстрацию — определять нечего."),
                 style = MaterialTheme.typography.titleSmall,
                 color = AmpsColors.amber,
             )
             Text(
-                text = "Модель отработала и не нашла ни персонажа, ни признаков внешности. " +
+                text = dev.amps.app.core.Loc.translate("Модель отработала и не нашла ни персонажа, ни признаков внешности. ") +
                     "По её замерам на таких картинках оценки держатся у 0,50–0,53, " +
                     "а настоящая находка даёт 0,73, поэтому пустой список здесь — честный ответ, а не сбой. " +
                     "На кадрах видеозаписей она молчит всегда, и это правильно: " +
@@ -569,7 +570,7 @@ private fun HypothesisRow(hypothesis: CharacterHypothesis, onOpen: (String) -> U
 @Composable
 private fun FandomCard(page: AnimeWikiPage, onOpen: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    SectionCard(title = "Фандом-вики", icon = Icons.Default.Language) {
+    SectionCard(title = t("Фандом-вики"), icon = Icons.Default.Language) {
         val wiki = page.wiki
         if (wiki == null && page.rosterCharacters.isEmpty() && page.rosterPlaces.isEmpty()) return@SectionCard
 
@@ -590,7 +591,7 @@ private fun FandomCard(page: AnimeWikiPage, onOpen: (String) -> Unit) {
                         )
                     }
                 }
-                TextButton(onClick = { onOpen(wiki.url!!) }) { Text("Открыть") }
+                TextButton(onClick = { onOpen(wiki.url!!) }) { Text(t("Открыть")) }
             }
         }
 
@@ -709,7 +710,7 @@ private fun FrameFoundCard(hit: FrameHit, sha256: String?, onOpenSource: () -> U
             OutlinedButton(onClick = onOpenSource, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Открыть найденную картинку")
+                Text(t("Открыть найденную картинку"))
             }
         }
         sha256?.let {
@@ -761,7 +762,7 @@ private fun TraceMatchCard(page: AnimeWikiPage) {
         trailing = { InfoChip("trace.moe", color = AmpsColors.cyan) },
     ) {
         Text(
-            text = "Название серии взято не из бо́ру-тегов, а из совпадения самого кадра: " +
+            text = dev.amps.app.core.Loc.translate("Название серии взято не из бо́ру-тегов, а из совпадения самого кадра: ") +
                 "trace.moe сравнивает хеши кадров видеозаписей, поэтому отвечает там, где IQDB " +
                 "отвечает «no relevant matches» — на скриншоте аниме.",
             style = MaterialTheme.typography.bodySmall,
@@ -770,7 +771,7 @@ private fun TraceMatchCard(page: AnimeWikiPage) {
 
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "Файл в архиве источника",
+            text = dev.amps.app.core.Loc.translate("Файл в архиве источника"),
             style = MaterialTheme.typography.labelLarge,
             color = scheme.onSurfaceVariant,
         )
@@ -785,7 +786,7 @@ private fun TraceMatchCard(page: AnimeWikiPage) {
         match.sourceFilename.takeIf { it.isNotBlank() }?.let {
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "Это и есть доказательство, откуда взялось название: файл лежит в архиве " +
+                text = dev.amps.app.core.Loc.translate("Это и есть доказательство, откуда взялось название: файл лежит в архиве ") +
                     "источника, и его можно открыть и сверить самому.",
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
@@ -883,7 +884,7 @@ private fun CharacterCard(
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        text = "имя подтверждено AniList по бо́ру-тегу, серия взята из его появлений",
+                        text = dev.amps.app.core.Loc.translate("имя подтверждено AniList по бо́ру-тегу, серия взята из его появлений"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -964,7 +965,7 @@ private fun CharacterCard(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = "Кто именно в кадре, определяет только совпадение по тегам — этот список к картинке отношения не имеет.",
+                text = dev.amps.app.core.Loc.translate("Кто именно в кадре, определяет только совпадение по тегам — этот список к картинке отношения не имеет."),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1011,7 +1012,7 @@ private fun SimilarImagesBlock(page: AnimeWikiPage, onOpen: (String) -> Unit) {
     }
     if (items.isEmpty()) return
 
-    SectionCard(title = "Похожие изображения", icon = Icons.Default.Image) {
+    SectionCard(title = t("Похожие изображения"), icon = Icons.Default.Image) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(items) { (url, caption, badge) ->
                 Column(Modifier.width(150.dp)) {
@@ -1044,7 +1045,7 @@ private fun SimilarImagesBlock(page: AnimeWikiPage, onOpen: (String) -> Unit) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SeriesCard(media: AnimeMedia) {
-    SectionCard(title = "О произведении", icon = Icons.Default.Book) {
+    SectionCard(title = t("О произведении"), icon = Icons.Default.Book) {
         val description = htmlToAnnotatedString(media.description)
         if (description != null) {
             Text(description, style = MaterialTheme.typography.bodyLarge)
@@ -1069,7 +1070,7 @@ private fun SeriesCard(media: AnimeMedia) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FactsCard(media: AnimeMedia) {
-    SectionCard(title = "Факты", icon = Icons.Default.Category) {
+    SectionCard(title = t("Факты"), icon = Icons.Default.Category) {
         StatRow("Формат", media.format?.lowercase()?.replaceFirstChar(Char::uppercase) ?: "—")
         StatRow("Серий", media.episodes?.toString() ?: "—")
         StatRow("Длительность", media.duration?.let { "$it мин" } ?: "—")
@@ -1096,7 +1097,7 @@ private fun FactsCard(media: AnimeMedia) {
 
 @Composable
 private fun RelationsCard(media: AnimeMedia, onOpen: (String) -> Unit) {
-    SectionCard(title = "Связи", icon = Icons.Default.Link) {
+    SectionCard(title = t("Связи"), icon = Icons.Default.Link) {
         media.relations.forEach { relation ->
             Row(
                 modifier = Modifier
@@ -1135,7 +1136,7 @@ private fun RelationsCard(media: AnimeMedia, onOpen: (String) -> Unit) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RecommendationsCard(media: AnimeMedia, onOpen: (String) -> Unit) {
-    SectionCard(title = "Похожие аниме", icon = Icons.Default.Tv) {
+    SectionCard(title = t("Похожие аниме"), icon = Icons.Default.Tv) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(media.recommendations) { recommendation ->
                 Column(
@@ -1173,7 +1174,7 @@ private fun RecommendationsCard(media: AnimeMedia, onOpen: (String) -> Unit) {
 
 @Composable
 private fun SourcesCard(page: AnimeWikiPage, onOpen: (String) -> Unit) {
-    SectionCard(title = "Источники", icon = Icons.Default.Link) {
+    SectionCard(title = t("Источники"), icon = Icons.Default.Link) {
         page.sources.forEach { source ->
             Row(
                 modifier = Modifier

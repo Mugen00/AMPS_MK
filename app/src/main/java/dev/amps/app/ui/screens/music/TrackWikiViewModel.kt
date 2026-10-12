@@ -72,7 +72,7 @@ class TrackWikiViewModel(
     fun load() {
         val id = repository.currentTargetId.value
         if (id == null) {
-            _state.update { it.copy(loading = false, error = "Трек не выбран") }
+            _state.update { it.copy(loading = false, error = dev.amps.app.core.Loc.translate("Трек не выбран")) }
             return
         }
         viewModelScope.launch { show(id) }
@@ -83,7 +83,7 @@ class TrackWikiViewModel(
         releasePlayer()
         val target = repository.targetOf(id)
         if (target == null) {
-            _state.update { it.copy(loading = false, error = "Трек не найден в текущей сессии") }
+            _state.update { it.copy(loading = false, error = dev.amps.app.core.Loc.translate("Трек не найден в текущей сессии")) }
             return
         }
         runCatching { repository.wikiPage(target) }
@@ -101,7 +101,7 @@ class TrackWikiViewModel(
             }
             .onFailure { error ->
                 _state.update {
-                    it.copy(loading = false, error = "Не удалось открыть трек: ${error.readableMessage()}")
+                    it.copy(loading = false, error = dev.amps.app.core.Loc.translate("Не удалось открыть трек: ") + error.readableMessage())
                 }
             }
     }
@@ -119,7 +119,7 @@ class TrackWikiViewModel(
     fun togglePlayback() {
         val path = _state.value.page?.playableFile
         if (path.isNullOrBlank()) {
-            _state.update { it.copy(message = "Файла нет — играть нечего") }
+            _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Файла нет — играть нечего")) }
             return
         }
         if (_state.value.playing) {
@@ -194,7 +194,7 @@ class TrackWikiViewModel(
     fun saveAttribution(licenseName: String?, licenseUrl: String?, note: String?) {
         val entryId = _state.value.page?.entryId
         if (entryId == null) {
-            _state.update { it.copy(message = "Этот трек ещё не сохранён локально") }
+            _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Этот трек ещё не сохранён локально")) }
             return
         }
         viewModelScope.launch {
@@ -208,7 +208,7 @@ class TrackWikiViewModel(
                             saving = false,
                             editingLicence = false,
                             page = refreshed ?: current.page,
-                            message = "Лицензия сохранена",
+                            message = dev.amps.app.core.Loc.translate("Лицензия сохранена"),
                         )
                     }
                 }
@@ -225,11 +225,11 @@ class TrackWikiViewModel(
         viewModelScope.launch {
             runCatching { repository.download(track) }
                 .onSuccess {
-                    _state.update { it.copy(message = "Файл сохранён локально") }
+                    _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Файл сохранён локально")) }
                     load()
                 }
                 .onFailure { error ->
-                    _state.update { it.copy(message = "Не удалось скачать: ${error.readableMessage()}") }
+                    _state.update { it.copy(message = dev.amps.app.core.Loc.translate("Не удалось скачать: ") + error.readableMessage()) }
                 }
         }
     }
@@ -241,7 +241,7 @@ class TrackWikiViewModel(
             runCatching { repository.deleteEntry(entryId) }
                 .onSuccess {
                     _state.update { current ->
-                        current.copy(message = "Файл удалён", page = current.page?.copy(localPath = null))
+                        current.copy(message = dev.amps.app.core.Loc.translate("Файл удалён"), page = current.page?.copy(localPath = null))
                     }
                 }
                 .onFailure { error -> _state.update { it.copy(message = error.readableMessage()) } }

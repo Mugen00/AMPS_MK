@@ -63,6 +63,7 @@ import dev.amps.app.update.UpdateUiState
 import dev.amps.app.update.UpdateViewModel
 import dev.amps.app.util.formatBytes
 import dev.amps.app.util.openUrl
+import dev.amps.app.core.t
 
 /**
  * «Обновление»: asks GitHub for the newest AMPS, downloads the release APK and
@@ -103,7 +104,7 @@ fun UpdateScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Обновление") },
+                title = { Text(t("Обновление")) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
@@ -147,7 +148,7 @@ fun UpdateScreen(
 @Composable
 private fun VersionCard(current: String, latest: String?, state: UpdateUiState) {
     val fresh = state is UpdateUiState.UpToDate
-    SectionCard(title = "Версия", icon = Icons.Default.Info) {
+    SectionCard(title = t("Версия"), icon = Icons.Default.Info) {
         StatRow("Установлена", current)
         StatRow(
             label = "Доступна",
@@ -157,7 +158,7 @@ private fun VersionCard(current: String, latest: String?, state: UpdateUiState) 
         if (fresh) {
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "Установленная версия — самая свежая.",
+                text = dev.amps.app.core.Loc.translate("Установленная версия — самая свежая."),
                 style = MaterialTheme.typography.bodySmall,
                 color = AmpsColors.cyan,
             )
@@ -167,7 +168,7 @@ private fun VersionCard(current: String, latest: String?, state: UpdateUiState) 
 
 @Composable
 private fun ReleaseCard(release: UpdateRelease, onOpenPage: () -> Unit) {
-    SectionCard(title = "Что нового", icon = Icons.Default.NewReleases) {
+    SectionCard(title = t("Что нового"), icon = Icons.Default.NewReleases) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             InfoChip(release.versionLabel, color = AmpsColors.violet)
             Spacer(Modifier.width(8.dp))
@@ -210,7 +211,7 @@ private fun ReleaseCard(release: UpdateRelease, onOpenPage: () -> Unit) {
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Открыть релиз на GitHub",
+                    text = dev.amps.app.core.Loc.translate("Открыть релиз на GitHub"),
                     style = MaterialTheme.typography.labelMedium,
                     color = AmpsColors.violet,
                 )
@@ -242,17 +243,17 @@ private fun ActionCard(
                 Button(onClick = onCheck) {
                     Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Проверить обновления")
+                    Text(t("Проверить обновления"))
                 }
             },
         )
 
-        UpdateUiState.Checking -> SectionCard(title = "Проверяем GitHub", icon = Icons.Default.SystemUpdateAlt) {
+        UpdateUiState.Checking -> SectionCard(title = t("Проверяем GitHub"), icon = Icons.Default.SystemUpdateAlt) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Спрашиваем последний релиз AMPS…",
+                    text = dev.amps.app.core.Loc.translate("Спрашиваем последний релиз AMPS…"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -264,7 +265,7 @@ private fun ActionCard(
             title = "Обновлений нет",
             message = "Установлена версия ${state.current}, а последний релиз — ${state.latest}.",
             action = {
-                OutlinedButton(onClick = onCheck) { Text("Проверить ещё раз") }
+                OutlinedButton(onClick = onCheck) { Text(t("Проверить ещё раз")) }
             },
         )
 
@@ -282,11 +283,11 @@ private fun ActionCard(
             Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Скачать и установить")
+                Text(t("Скачать и установить"))
             }
         }
 
-        is UpdateUiState.Downloading -> SectionCard(title = "Скачиваем обновление", icon = Icons.Default.Download) {
+        is UpdateUiState.Downloading -> SectionCard(title = t("Скачиваем обновление"), icon = Icons.Default.Download) {
             LinearProgressIndicator(
                 progress = { state.fraction },
                 modifier = Modifier
@@ -318,7 +319,7 @@ private fun ActionCard(
             }
         }
 
-        is UpdateUiState.ReadyToInstall -> SectionCard(title = "Обновление готово", icon = Icons.Default.CheckCircle) {
+        is UpdateUiState.ReadyToInstall -> SectionCard(title = t("Обновление готово"), icon = Icons.Default.CheckCircle) {
             StatRow("Файл", state.fileName, valueColor = AmpsColors.cyan)
             Spacer(Modifier.height(10.dp))
             Button(
@@ -328,7 +329,7 @@ private fun ActionCard(
             ) {
                 Icon(Icons.Default.SystemUpdateAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Установить")
+                Text(t("Установить"))
             }
         }
 
@@ -337,7 +338,7 @@ private fun ActionCard(
             icon = Icons.Default.Warning,
         ) {
             Text(
-                text = "Android не даёт приложениям ставить обновления, пока владелец телефона " +
+                text = dev.amps.app.core.Loc.translate("Android не даёт приложениям ставить обновления, пока владелец телефона ") +
                     "не разрешит установку из AMPS. Откройте настройки, включите «Установка " +
                     "неизвестных приложений» для AMPS и вернитесь — установка продолжится сама.",
                 style = MaterialTheme.typography.bodySmall,
@@ -349,23 +350,23 @@ private fun ActionCard(
                 enabled = activity != null,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Разрешить установку")
+                Text(t("Разрешить установку"))
             }
         }
 
-        UpdateUiState.Installing -> SectionCard(title = "Открываем установщик", icon = Icons.Default.SystemUpdateAlt) {
+        UpdateUiState.Installing -> SectionCard(title = t("Открываем установщик"), icon = Icons.Default.SystemUpdateAlt) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = "Передаём APK системному установщику Android…",
+                    text = dev.amps.app.core.Loc.translate("Передаём APK системному установщику Android…"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
 
-        is UpdateUiState.Failed -> SectionCard(title = "Не получилось", icon = Icons.Default.Warning) {
+        is UpdateUiState.Failed -> SectionCard(title = t("Не получилось"), icon = Icons.Default.Warning) {
             Text(
                 text = state.message,
                 style = MaterialTheme.typography.bodySmall,
@@ -373,9 +374,9 @@ private fun ActionCard(
             )
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = onRetry) { Text("Повторить") }
+                Button(onClick = onRetry) { Text(t("Повторить")) }
                 Spacer(Modifier.width(10.dp))
-                OutlinedButton(onClick = onDismiss) { Text("Закрыть") }
+                OutlinedButton(onClick = onDismiss) { Text(t("Закрыть")) }
             }
         }
     }

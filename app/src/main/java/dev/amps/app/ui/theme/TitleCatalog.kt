@@ -120,12 +120,14 @@ object TitleCatalog {
         "Абсолютна легенда",
     )
 
-    /** Титул для рівня 1–100; поза діапазоном — клампа на межу. */
+    /** Титул для рівня 1–100; поза діапазоном — клампа на межу. 1.5.0: переклад. */
     fun titleFor(level: Int): String =
-        titles.getOrNull((level - 1).coerceIn(0, titles.size - 1)) ?: titles.first()
+        dev.amps.app.core.Loc.translate(
+            titles.getOrNull((level - 1).coerceIn(0, titles.size - 1)) ?: titles.first()
+        )
 
     /** Блок (десяток), до якого належить рівень. */
-    fun blockName(level: Int): String = when (level) {
+    fun blockName(level: Int): String = dev.amps.app.core.Loc.translate(when (level) {
         in 1..10 -> "Знайомство з фандомом"
         in 11..20 -> "Перші кроки у спільноті"
         in 21..30 -> "Справжній поціновувач"
@@ -136,5 +138,5 @@ object TitleCatalog {
         in 71..80 -> "Еліта фандому"
         in 81..90 -> "За межами звичайного"
         else -> "Вічність аніме"
-    }
+    })
 }
