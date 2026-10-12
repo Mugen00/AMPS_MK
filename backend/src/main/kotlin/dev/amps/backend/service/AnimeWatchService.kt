@@ -87,6 +87,8 @@ class AnimeWatchService {
         val request = Request.Builder()
             .url(url)
             .header("Accept", "application/json")
+            // Обов'язковий header їхнього API: без нього віддає HTML-заглушку.
+            .header("X-Requested-With", "XMLHttpRequest")
             .header("User-Agent", "AMPS-App/1.4 (https://github.com/Mugen00/AMPS_MK)")
             .build()
         http.newCall(request).execute().use { resp ->
