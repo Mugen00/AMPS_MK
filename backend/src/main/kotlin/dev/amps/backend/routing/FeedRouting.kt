@@ -70,9 +70,18 @@ fun Application.feedRoutes(
             }
         }
         // Роздача медіа — публічна: імена файлів — невгадувані UUID.
+        // 1.6.2: kind "private" тут НЕ видається — приватні вкладення
+        // чатів мають власний авторизований маршрут у SocialRouting.
         get("/media/{kind}/{file}") {
             val kind = call.parameters["kind"].orEmpty()
             val file = call.parameters["file"].orEmpty()
+            if (kind == dev.amps.backend.service.MediaStorage.KIND_PRIVATE) {
+                call.respond(
+                    HttpStatusCode.Unauthorized,
+                    ApiError(error = "Приватні вкладення потребують входу", errorCode = "PRIVATE_MEDIA"),
+                )
+                return@get
+            }
             val target = media.resolve(kind, file)
             if (target == null) {
                 call.respond(HttpStatusCode.NotFound, ApiError(error = "Файл не знайдено"))
@@ -111,6 +120,34 @@ fun Application.feedRoutes(
                 call.requireUid() ?: return@get
                 val q = call.request.queryParameters["q"].orEmpty()
                 call.respondApi(profileService.searchUsers(q))
+            }
+
+            // 1.6.2: лідерборд XP — топ-50 накопичених балів; моє місце поруч.
+            get("/xp/leaderboard") {
+                val uid = call.requireUid() ?: return@get
+                val top = dev.amps.backend.service.XpLedger.top(50)
+                val entries = top.mapIndexed { _, (userId, xp) ->
+                    val profile = profileService.profileOf(profileService.ensureProfile(userId))
+                    dev.amps.backend.model.LeaderboardEntryDto(
+                        userId = userId,
+                        displayName = profile.displayName,
+                        avatarPath = profile.avatarPath,
+                        xp = xp,
+                        level = dev.amps.backend.service.XpLedger.levelFor(xp),
+                    )
+                }
+                val myXp = dev.amps.backend.service.XpLedger.xpOf(uid)
+                val myRank = top.indexOfFirst { it.first == uid }.let { if (it < 0) 0 else it + 1 }
+                call.respondApi(
+                    dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.LeaderboardResponse(
+                            entries = entries,
+                            myRank = myRank,
+                            myXp = myXp,
+                            myLevel = dev.amps.backend.service.XpLedger.levelFor(myXp),
+                        )
+                    )
+                )
             }
 
             // --- стрічка: створення — лише з токеном ---

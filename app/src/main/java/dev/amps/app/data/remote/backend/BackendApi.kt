@@ -712,6 +712,45 @@ class BackendApi private constructor(
         execute("POST", "groups/$groupId/chat/read", null, UnitResult.serializer(), authHeader)
     }
 
+    // ===== 1.6.2: реакції, «друкує…», блокування, лідерборд =====
+
+    /** Перемкнути реакцію на повідомлення (той самий емодзі ще раз — зняти). */
+    suspend fun reactToMessage(authHeader: String, messageId: Int, emoji: String): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(
+                ChatReactionToggleRequest.serializer(),
+                ChatReactionToggleRequest(emoji),
+            )
+            execute("POST", "chats/message/$messageId/react", body, ChatMessageDto.serializer(), authHeader)
+        }
+
+    /** Позначка «друкує…» в чаті (клієнт тротлить 1 раз за 3 с). */
+    suspend fun sendTyping(authHeader: String, peerUserId: Int? = null, groupId: Int? = null): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(
+                ChatTypingRequest.serializer(),
+                ChatTypingRequest(peerUserId = peerUserId, groupId = groupId),
+            )
+            execute("POST", "chats/typing", body, UnitResult.serializer(), authHeader)
+        }
+
+    /** Хтось друкує в чаті? */
+    suspend fun getTyping(authHeader: String, peerUserId: Int? = null, groupId: Int? = null): ApiResult =
+        withContext(Dispatchers.IO) {
+            val q = if (groupId != null) "groupId=$groupId" else "peerUserId=$peerUserId"
+            execute("GET", "chats/typing?$q", null, TypingResponse.serializer(), authHeader)
+        }
+
+    /** Заблокувати/розблокувати користувача (toggle). */
+    suspend fun toggleBlock(authHeader: String, userId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("POST", "blocks/$userId", null, BlockToggleResponse.serializer(), authHeader)
+    }
+
+    /** Лідерборд XP: топ-50 + моє місце. */
+    suspend fun getLeaderboard(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "xp/leaderboard", null, LeaderboardResponse.serializer(), authHeader)
+    }
+
     // ===== Рілси (1.6.0) =====
 
     /** Лента рілсів (публічна; для залогінених — лайки «мої»). */

@@ -15,6 +15,10 @@ import dev.amps.backend.model.GroupMemberTable
 import dev.amps.backend.model.GroupMembersResponse
 import dev.amps.backend.model.GroupRequestsResponse
 import dev.amps.backend.model.GroupTable
+import dev.amps.backend.model.PostEntity
+import dev.amps.backend.model.PostMediaEntity
+import dev.amps.backend.model.PostMediaTable
+import dev.amps.backend.model.PostTable
 import dev.amps.backend.model.ProfileDto
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.and
@@ -28,7 +32,11 @@ import org.jetbrains.exposed.sql.transactions.transaction
  * Активності в групі нараховують XP: створення групи і вступ.
  * Постинг у групі — через FeedService (пост із group_id).
  */
-class GroupService(private val profiles: ProfileService) {
+class GroupService(
+    private val profiles: ProfileService,
+    // 1.6.2: сховище — щоб при видаленні групи стерти і її файли.
+    private val mediaStorage: MediaStorage? = null,
+) {
 
     /** Створення групи: власник автоматично перший учасник. XP за створення. */
     suspend fun create(
@@ -191,7 +199,7 @@ class GroupService(private val profiles: ProfileService) {
         ApiResponse.ok(true)
     }
 
-    /** Видалення групи — тільки власник; вкладення зникнуть каскадом. */
+    /** Видалення групи — тільки власник. 1.6.2: медіа її постів і аватар теж стираються. */
     suspend fun delete(groupId: Int, requesterId: Int): ApiResponse<Boolean> = newSuspendedTransaction {
         val group = GroupEntity.findById(groupId)
             ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
@@ -200,7 +208,23 @@ class GroupService(private val profiles: ProfileService) {
                 "Видаляти групу може тільки власник", "NOT_OWNER",
             )
         }
+        // 1.6.2: збираємо медіа постів групи до каскадного видалення рядків.
+        val groupPostIds = PostEntity.find { PostTable.groupId eq groupId }
+            .map { it.id.value }
+        val mediaFiles = if (groupPostIds.isEmpty()) emptyList() else {
+            PostMediaEntity.find { PostMediaTable.postId inList groupPostIds }
+                .map { it.kind to it.fileName }
+        }
+        val avatarFile = group.avatarFile
         group.delete()
+        // Диск — не база: файли прибираємо після успішної транзакції.
+        val storage = mediaStorage
+        if (storage != null) {
+            mediaFiles.forEach { (kind, fileName) -> storage.delete(kind, fileName) }
+            if (avatarFile != null) {
+                storage.delete(dev.amps.backend.service.MediaStorage.KIND_AVATAR, avatarFile)
+            }
+        }
         ApiResponse.ok(true)
     }
 

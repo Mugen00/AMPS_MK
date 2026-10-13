@@ -37,6 +37,9 @@ class MediaStorage(private val config: AppConfig) {
             dirFor(KIND_PHOTO).mkdirs()
             dirFor(KIND_VIDEO).mkdirs()
             dirFor(KIND_AVATAR).mkdirs()
+            // 1.6.2: окремий каталог приватних вкладень чатів — роздача
+            // лише з JWT і участю в листуванні (див. /media/private/{file}).
+            dirFor(KIND_PRIVATE).mkdirs()
         }
     }
 
@@ -54,13 +57,14 @@ class MediaStorage(private val config: AppConfig) {
         val fromName = fileName?.substringAfterLast('.', "")
             ?.lowercase()?.takeIf { it.length in 1..5 && it.all { ch -> ch.isLetterOrDigit() } }
         if (fromName != null) {
-            val allowed = if (kind == KIND_PHOTO) PHOTO_EXT else VIDEO_EXT
+            // 1.6.2: приватні вкладення — ті самі зображення, інший каталог.
+            val allowed = if (kind == KIND_VIDEO) VIDEO_EXT else PHOTO_EXT
             if (fromName in allowed) return fromName
         }
         return when {
-            kind == KIND_PHOTO && contentType?.startsWith("image/") == true -> "jpg"
             kind == KIND_VIDEO && contentType == "video/webm" -> "webm"
             kind == KIND_VIDEO && contentType?.startsWith("video/") == true -> "mp4"
+            kind != KIND_VIDEO && contentType?.startsWith("image/") == true -> "jpg"
             else -> null
         }
     }
@@ -96,6 +100,8 @@ class MediaStorage(private val config: AppConfig) {
         const val KIND_PHOTO = "photo"
         const val KIND_VIDEO = "video"
         const val KIND_AVATAR = "avatar"
+        /** 1.6.2: приватні вкладення чатів — роздача лише за участю. */
+        const val KIND_PRIVATE = "private"
 
         private val PHOTO_EXT = setOf("jpg", "jpeg", "png", "webp", "gif")
         private val VIDEO_EXT = setOf("mp4", "webm", "mov", "m4v")

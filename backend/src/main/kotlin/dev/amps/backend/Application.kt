@@ -84,9 +84,11 @@ fun main() {
     val commentService = dev.amps.backend.service.CommentService(profileService)
     val animeListService = dev.amps.backend.service.AnimeListService()
     // 1.6.0: групи, чати (приватні + групові) і рілси.
-    val groupService = dev.amps.backend.service.GroupService(profileService)
-    val chatService = dev.amps.backend.service.ChatService(profileService, groupService)
-    val reelService = dev.amps.backend.service.ReelService(profileService)
+    // 1.6.2: групи і рілси отримали сховище — видаляють свої файли.
+    val groupService = dev.amps.backend.service.GroupService(profileService, media)
+    val blockService = dev.amps.backend.service.BlockService()
+    val chatService = dev.amps.backend.service.ChatService(profileService, groupService, blockService)
+    val reelService = dev.amps.backend.service.ReelService(profileService, media)
 
     initDatabase(config)
 
@@ -96,6 +98,7 @@ fun main() {
             feedService, profileService, media, storyService, playlistService,
             commentService, followService, animeListService, pollService,
             animeWatchService, groupService, chatService, reelService,
+            blockService,
         )
     }.start(wait = true)
 }
@@ -146,7 +149,18 @@ private fun initDatabase(config: AppConfig) {
             dev.amps.backend.model.ChatReadTable,
             dev.amps.backend.model.ReelTable,
             dev.amps.backend.model.ReelLikeTable,
+            // 1.6.2: реакції на повідомлення і блокування.
+            dev.amps.backend.model.ChatReactionTable,
+            dev.amps.backend.model.BlockTable,
         )
+        // 1.6.2: самолікування кеш-лічильників постів — синхронізуємо
+        // кеш із фактами (лайки/репости), щоб стрічка читала колонку
+        // замість COUNT(*) на кожен пост. Дешево на нашому масштабі,
+        // і після будь-яких ручних правок бази дані сходяться.
+        runCatching {
+            exec("UPDATE posts SET like_count = (SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id)")
+            exec("UPDATE posts SET repost_count = (SELECT COUNT(*) FROM reposts WHERE reposts.post_id = posts.id)")
+        }
     }
 }
 
@@ -168,6 +182,7 @@ fun Application.module(
     groupService: dev.amps.backend.service.GroupService,
     chatService: dev.amps.backend.service.ChatService,
     reelService: dev.amps.backend.service.ReelService,
+    blockService: dev.amps.backend.service.BlockService,
 ) {
     install(ContentNegotiation) {
         json(kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
@@ -216,5 +231,6 @@ fun Application.module(
     // 1.6.0: групи, чати, рілси.
     socialRoutes(
         feedService, profileService, media, groupService, chatService, reelService, followService,
+        blockService,
     )
 }

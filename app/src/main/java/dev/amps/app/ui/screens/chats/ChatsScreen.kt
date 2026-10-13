@@ -4,7 +4,9 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,9 +26,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddComment
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.Badge
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,6 +41,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -130,6 +135,8 @@ fun ChatsScreen(
                     onDraft = viewModel::setDraft,
                     onSend = viewModel::sendMessage,
                     onSendPhoto = viewModel::sendPhoto,
+                    onReact = viewModel::reactToMessage,
+                    onToggleBlock = viewModel::toggleBlockPeer,
                 )
                 else -> DialogsList(
                     state = state,
@@ -326,6 +333,9 @@ private fun PrivateChatView(
     onDraft: (String) -> Unit,
     onSend: () -> Unit,
     onSendPhoto: (ByteArray) -> Unit,
+    // 1.6.2: реакції і блокування.
+    onReact: (Int, String) -> Unit = { _, _ -> },
+    onToggleBlock: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val photoPicker = rememberLauncherForActivityResult(
@@ -336,6 +346,11 @@ private fun PrivateChatView(
             if (bytes != null) onSendPhoto(bytes)
         }
     }
+    // 1.6.2: відкрита панель реакцій для конкретного повідомлення.
+    var reactionFor by remember { mutableStateOf<Int?>(null) }
+    // 1.6.2: підтвердження блокування співрозмовника.
+    var confirmBlock by remember { mutableStateOf(false) }
+
     Column(Modifier.fillMaxSize()) {
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -358,7 +373,30 @@ private fun PrivateChatView(
             }
             items(state.messages.size) { index ->
                 val message = state.messages[index]
-                ChatBubble(message, baseUrl)
+                ChatBubble(
+                    message = message,
+                    baseUrl = baseUrl,
+                    authHeader = state.authHeader,
+                    reactionOpen = reactionFor == message.id,
+                    onToggleReactionBar = {
+                        reactionFor = if (reactionFor == message.id) null else message.id
+                    },
+                    onReact = { emoji ->
+                        onReact(message.id, emoji)
+                        reactionFor = null
+                    },
+                )
+            }
+            // 1.6.2: «друкує…» — дрібний рядок над полем введення.
+            if (state.peerTyping) {
+                item {
+                    Text(
+                        t("друкує…"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+                    )
+                }
             }
             item { Spacer(Modifier.size(8.dp)) }
         }
@@ -378,6 +416,14 @@ private fun PrivateChatView(
                 modifier = Modifier.weight(1f),
                 maxLines = 4,
             )
+            // 1.6.2: блокування співрозмовника — з підтвердженням.
+            IconButton(onClick = { confirmBlock = true }) {
+                Icon(
+                    Icons.Default.Block,
+                    contentDescription = t("Заблокувати"),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
             IconButton(onClick = onSend, enabled = state.draft.isNotBlank() && !state.sending) {
                 Icon(
                     Icons.Default.Send,
@@ -387,14 +433,47 @@ private fun PrivateChatView(
             }
         }
     }
+
+    // 1.6.2: підтвердження блокування.
+    if (confirmBlock) {
+        AlertDialog(
+            onDismissRequest = { confirmBlock = false },
+            title = { Text(t("Заблокувати користувача?")) },
+            text = { Text(t("Він не зможе писати вам у приватні чати, поки блокування не знято.")) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmBlock = false
+                    onToggleBlock()
+                }) { Text(t("Заблокувати 🚫")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmBlock = false }) { Text(t("Скасувати")) }
+            },
+        )
+    }
 }
 
 /**
  * Бульбашка повідомлення: мої — праворуч (акцент), чужі — ліворуч.
  * Фото теж у бульбашці, як у месенджерах.
  */
+/**
+ * Бульбашка повідомлення: мої — праворуч (акцент), чужі — ліворуч.
+ * Фото теж у бульбашці, як у месенджерах.
+ *
+ * 1.6.2: довгий тап — панель реакцій (❤️😂👍🔥😢😮), чіпси реакцій під
+ * текстом; приватні фото завантажуються з Authorization-заголовком.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatBubble(message: ChatMessageDto, baseUrl: String) {
+private fun ChatBubble(
+    message: ChatMessageDto,
+    baseUrl: String,
+    authHeader: String? = null,
+    reactionOpen: Boolean = false,
+    onToggleReactionBar: () -> Unit = {},
+    onReact: (String) -> Unit = {},
+) {
     val align = if (message.mine) Alignment.CenterEnd else Alignment.CenterStart
     Box(Modifier.fillMaxWidth(), contentAlignment = align) {
         Column(
@@ -411,6 +490,10 @@ private fun ChatBubble(message: ChatMessageDto, baseUrl: String) {
                     if (message.mine) MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
                     else MaterialTheme.colorScheme.surfaceVariant,
                 )
+                .combinedClickable(
+                    onClick = onToggleReactionBar,
+                    onLongClick = onToggleReactionBar,
+                )
                 .padding(10.dp),
         ) {
             if (!message.mine) {
@@ -421,15 +504,32 @@ private fun ChatBubble(message: ChatMessageDto, baseUrl: String) {
                 )
             }
             if (message.mediaUrl != null) {
-                AsyncImage(
-                    model = dev.amps.app.ui.screens.groups.absoluteMediaUrl(baseUrl, message.mediaUrl),
-                    contentDescription = t("Фото повідомлення"),
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(180.dp)
-                        .clip(RoundedCornerShape(10.dp)),
-                )
+                // 1.6.2: приватні вкладення (private-*) — із токеном у заголовку.
+                val url = dev.amps.app.ui.screens.groups.absoluteMediaUrl(baseUrl, message.mediaUrl)
+                if (message.mediaUrl.startsWith("/media/private/") && authHeader != null) {
+                    AsyncImage(
+                        model = coil.request.ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                            .data(url)
+                            .addHeader("Authorization", authHeader)
+                            .build(),
+                        contentDescription = t("Фото повідомлення"),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
+                            .clip(RoundedCornerShape(10.dp)),
+                    )
+                } else {
+                    AsyncImage(
+                        model = url,
+                        contentDescription = t("Фото повідомлення"),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
+                            .clip(RoundedCornerShape(10.dp)),
+                    )
+                }
             }
             if (message.text.isNotBlank()) {
                 Text(
@@ -437,6 +537,30 @@ private fun ChatBubble(message: ChatMessageDto, baseUrl: String) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (message.mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                 )
+            }
+            // 1.6.2: чіпси реакцій під текстом/фото.
+            if (message.reactions.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    message.reactions.forEach { reaction ->
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (reaction.mine) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                            } else {
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+                            },
+                        ) {
+                            Text(
+                                "${reaction.emoji} ${reaction.count}",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
             }
             Text(
                 java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
@@ -450,7 +574,26 @@ private fun ChatBubble(message: ChatMessageDto, baseUrl: String) {
             )
         }
     }
+    // 1.6.2: панель емодзі для реакції — під бульбашкою.
+    if (reactionOpen) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp, horizontal = 4.dp),
+        ) {
+            CHAT_REACTIONS.forEach { emoji ->
+                AssistChip(
+                    onClick = { onReact(emoji) },
+                    label = { Text(emoji) },
+                )
+            }
+        }
+    }
 }
+
+/** 1.6.2: швидкі реакції на повідомлення. */
+private val CHAT_REACTIONS = listOf("❤️", "😂", "👍", "🔥", "😢", "😮")
 
 private fun readBytesCapped(context: android.content.Context, uri: Uri, maxBytes: Long): ByteArray? =
     runCatching {

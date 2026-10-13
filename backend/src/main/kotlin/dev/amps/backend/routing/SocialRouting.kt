@@ -22,6 +22,7 @@ import io.ktor.server.auth.authenticate
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondFile
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -47,9 +48,11 @@ fun Application.socialRoutes(
     chats: ChatService,
     reels: ReelService,
     follows: FollowService,
+    // 1.6.2: блокування користувачів.
+    blocks: dev.amps.backend.service.BlockService,
 ) {
     groupRoutes(feedService, media, groups, chats)
-    chatRoutes(media, chats, profiles = profileService, follows = follows)
+    chatRoutes(media, chats, profiles = profileService, follows = follows, blocks = blocks)
     reelRoutes(media, reels)
 }
 
@@ -210,7 +213,9 @@ fun Application.groupRoutes(
                     val uid = call.requireUid() ?: return@post
                     val gid = call.parameters["id"]?.toIntOrNull() ?: return@post
                     val upload = call.receiveUpload() ?: return@post
-                    val name = media.save(MediaStorage.KIND_PHOTO, upload.bytes, "jpg")
+                    // 1.6.2: вкладення чатів — приватний каталог; роздача
+                    // лише за участю в листуванні.
+                    val name = media.save(MediaStorage.KIND_PRIVATE, upload.bytes, "jpg")
                     if (name == null) {
                         call.respond(
                             HttpStatusCode.InternalServerError,
@@ -235,6 +240,8 @@ fun Application.chatRoutes(
     chats: ChatService,
     profiles: ProfileService,
     follows: FollowService,
+    // 1.6.2: блокування користувачів.
+    blocks: dev.amps.backend.service.BlockService,
 ) {
     routing {
         authenticate("auth-jwt") {
@@ -265,6 +272,49 @@ fun Application.chatRoutes(
                         )
                     )
                 }
+                // 1.6.2: реакція на повідомлення (той самий емодзі ще раз — зняти).
+                post("/message/{id}/react") {
+                    val uid = call.requireUid() ?: return@post
+                    val messageId = call.parameters["id"]?.toIntOrNull() ?: return@post
+                    val body = call.receive<dev.amps.backend.model.ChatReactionToggleRequest>()
+                    call.respondApi(chats.toggleReaction(uid, messageId, body.emoji))
+                }
+                // 1.6.2: «друкує…» — позначка і опитування.
+                post("/typing") {
+                    val uid = call.requireUid() ?: return@post
+                    val body = call.receive<dev.amps.backend.model.ChatTypingRequest>()
+                    val key = if (body.groupId != null) "g:${body.groupId}" else "u:${body.peerUserId}"
+                    if (key.endsWith("null")) {
+                        call.respond(
+                            HttpStatusCode.BadRequest,
+                            dev.amps.backend.model.ApiError(error = "Нема адресата"),
+                        )
+                        return@post
+                    }
+                    dev.amps.backend.service.TypingTracker.mark(key)
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(Unit))
+                }
+                get("/typing") {
+                    val uid = call.requireUid() ?: return@get
+                    val peer = call.request.queryParameters["peerUserId"]?.toIntOrNull()
+                    val gid = call.request.queryParameters["groupId"]?.toIntOrNull()
+                    val key = if (gid != null) "g:$gid" else "u:$peer"
+                    if (gid == null && peer == null) {
+                        call.respond(
+                            HttpStatusCode.BadRequest,
+                            dev.amps.backend.model.ApiError(error = "Нема адресата"),
+                        )
+                        return@get
+                    }
+                    call.respond(
+                        dev.amps.backend.model.ApiResponse(
+                            success = true,
+                            data = dev.amps.backend.model.TypingResponse(
+                                typing = dev.amps.backend.service.TypingTracker.isTyping(key)
+                            ),
+                        )
+                    )
+                }
                 get("/{userId}") {
                     val uid = call.requireUid() ?: return@get
                     val peer = call.parameters["userId"]?.toIntOrNull() ?: return@get
@@ -282,8 +332,9 @@ fun Application.chatRoutes(
                     val uid = call.requireUid() ?: return@post
                     val peer = call.parameters["userId"]?.toIntOrNull() ?: return@post
                     val upload = call.receiveUpload() ?: return@post
-                    val ext = media.extensionOf("photo.jpg", "image/jpeg", MediaStorage.KIND_PHOTO)
-                    val name = ext?.let { media.save(MediaStorage.KIND_PHOTO, upload.bytes, it) }
+                    // 1.6.2: приватний каталог + роздача за участю в листуванні.
+                    val ext = media.extensionOf("photo.jpg", "image/jpeg", MediaStorage.KIND_PRIVATE)
+                    val name = ext?.let { media.save(MediaStorage.KIND_PRIVATE, upload.bytes, it) }
                     if (name == null) {
                         call.respond(
                             HttpStatusCode.InternalServerError,
@@ -297,6 +348,29 @@ fun Application.chatRoutes(
                     val uid = call.requireUid() ?: return@post
                     val peer = call.parameters["userId"]?.toIntOrNull() ?: return@post
                     call.respondApi(chats.markRead(uid, peerUserId = peer, groupId = null))
+                }
+            }
+            // 1.6.2: приватні вкладення чатів — роздача лише учасникам
+            // листування (власний JWT-маршрут замість публічного /media).
+            get("/media/private/{file}") {
+                val uid = call.requireUid() ?: return@get
+                val file = call.parameters["file"].orEmpty()
+                val target = media.resolve(MediaStorage.KIND_PRIVATE, file)
+                if (target == null || !chats.canAccessMedia(uid, file)) {
+                    call.respond(
+                        HttpStatusCode.NotFound,
+                        dev.amps.backend.model.ApiError(error = "Файл не знайдено", errorCode = "NO_FILE"),
+                    )
+                    return@get
+                }
+                call.respondFile(target)
+            }
+            // 1.6.2: блокування користувача — toggle.
+            route("/blocks") {
+                post("/{userId}") {
+                    val uid = call.requireUid() ?: return@post
+                    val target = call.parameters["userId"]?.toIntOrNull() ?: return@post
+                    call.respondApi(blocks.toggle(uid, target))
                 }
             }
         }

@@ -66,6 +66,8 @@ data class GroupsUiState(
     val sendingChat: Boolean = false,
     val notice: String? = null,
     val error: String? = null,
+    /** 1.6.2: Authorization для приватних вкладень чатів. */
+    val authHeader: String? = null,
 ) {
     /** Мій id (щоб не кікнути себе і ховати свої кнопки). */
     val myRole: String? get() = selected?.group?.myRole
@@ -91,7 +93,10 @@ class GroupsViewModel(
                 val authorized = stored != null
                 val previous = lastAuthorized
                 lastAuthorized = authorized
-                _state.value = _state.value.copy(authorized = authorized)
+                _state.value = _state.value.copy(
+                    authorized = authorized,
+                    authHeader = stored?.let { "Bearer ${stored.accessToken}" },
+                )
                 when {
                     previous == null && _state.value.groups.isEmpty() -> load()
                     previous == false && authorized -> load()

@@ -18,7 +18,11 @@ import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransacti
  * власна лента з автоплеєм, лайками, пагінацією offset'ом. Відео лежить
  * у спільному сховищі (KIND_VIDEO). Публікація рилса — XP за активність.
  */
-class ReelService(private val profiles: ProfileService) {
+class ReelService(
+    private val profiles: ProfileService,
+    // 1.6.2: сховище — для видалення файлу відео разом із рилсом.
+    private val mediaStorage: MediaStorage? = null,
+) {
 
     /** Публікація рилса: відео вже у сховищі (ім'я повертає роутинг). */
     suspend fun create(
@@ -92,7 +96,7 @@ class ReelService(private val profiles: ProfileService) {
             )
         }
 
-    /** Видалити свій рилс (власник — автор). */
+    /** Видалити свій рилс (власник — автор). 1.6.2: файл відео теж стирається. */
     suspend fun delete(reelId: Int, requesterId: Int): ApiResponse<Boolean> = newSuspendedTransaction {
         val reel = ReelEntity.findById(reelId)
             ?: return@newSuspendedTransaction ApiResponse.fail("Рілс не знайдено", "NO_REEL")
@@ -101,7 +105,10 @@ class ReelService(private val profiles: ProfileService) {
                 "Видаляти можна тільки свій рилс", "NOT_OWNER",
             )
         }
+        val videoFile = reel.videoFile
         reel.delete()
+        // 1.6.2: диск — не база; відео прибираємо після успішної транзакції.
+        mediaStorage?.delete(dev.amps.backend.service.MediaStorage.KIND_VIDEO, videoFile)
         ApiResponse.ok(true)
     }
 

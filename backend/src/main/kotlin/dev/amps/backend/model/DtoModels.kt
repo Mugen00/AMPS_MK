@@ -579,11 +579,56 @@ data class ChatMessageDto(
     val toUserId: Int? = null,
     val toGroupId: Int? = null,
     val text: String,
-    /** Відносний шлях фото: /media/photo/{file}; null — текстове повідомлення. */
+    /** Відносний шлях фото (публічний або приватний каталог); null — текстове. */
     val mediaUrl: String? = null,
     val createdAt: Long,
     /** Своє повідомлення — щоб клієнт вмів вирівнювати бульбашки. */
-    val mine: Boolean = false
+    val mine: Boolean = false,
+    /** 1.6.2: реакції повідомлення (агреговані: emoji → count + чи моя). */
+    val reactions: List<ChatReactionDto> = emptyList()
+)
+
+/** 1.6.2: реакція — емодзі, скільки людей і чи це моя. */
+@Serializable
+data class ChatReactionDto(
+    val emoji: String,
+    val count: Int,
+    val mine: Boolean
+)
+
+// 1.6.2: перемикання реакції (той самий емодзі ще раз — знімає).
+@Serializable
+data class ChatReactionToggleRequest(val emoji: String)
+
+// 1.6.2: «друкує…» — позначка (one of peerUserId/groupId).
+@Serializable
+data class ChatTypingRequest(val peerUserId: Int? = null, val groupId: Int? = null)
+
+// 1.6.2: блокування користувача — toggle.
+@Serializable
+data class BlockToggleResponse(val blocked: Boolean)
+
+// 1.6.2: стан «друкує…» — опитується разом з історією.
+@Serializable
+data class TypingResponse(val typing: Boolean)
+
+// ===== 1.6.2: лідерборд XP =====
+@Serializable
+data class LeaderboardEntryDto(
+    val userId: Int,
+    val displayName: String,
+    val avatarPath: String? = null,
+    val xp: Int,
+    val level: Int,
+)
+
+@Serializable
+data class LeaderboardResponse(
+    val entries: List<LeaderboardEntryDto>,
+    /** Моє місце в загальному заліку (1-based; 0 — не в списку). */
+    val myRank: Int = 0,
+    val myXp: Int = 0,
+    val myLevel: Int = 1,
 )
 
 @Serializable

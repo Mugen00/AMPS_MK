@@ -1,6 +1,7 @@
 package dev.amps.backend.service
 
 import dev.amps.backend.model.ApiResponse
+import dev.amps.backend.model.ApiResponse.Companion.ok
 import dev.amps.backend.model.ChatDialogDto
 import dev.amps.backend.model.ChatDialogsResponse
 import dev.amps.backend.model.ChatMessageDto
@@ -9,6 +10,8 @@ import dev.amps.backend.model.ChatMessageTable
 import dev.amps.backend.model.ChatMessagesResponse
 import dev.amps.backend.model.ChatReadEntity
 import dev.amps.backend.model.ChatReadTable
+import dev.amps.backend.model.ChatReactionEntity
+import dev.amps.backend.model.ChatReactionTable
 import dev.amps.backend.model.GroupEntity
 import dev.amps.backend.model.GroupMemberEntity
 import dev.amps.backend.model.GroupMemberTable
@@ -28,6 +31,8 @@ import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransacti
 class ChatService(
     private val profiles: ProfileService,
     private val groups: GroupService,
+    // 1.6.2: блокування — заблокований не зможе написати приватне повідомлення.
+    private val blocks: dev.amps.backend.service.BlockService? = null,
 ) {
 
     /** Приватне повідомлення користувачу. XP за активність. */
@@ -50,6 +55,12 @@ class ChatService(
         }
         if (UserEntity.findById(toUserId) == null) {
             return@newSuspendedTransaction ApiResponse.fail("Отримувача не знайдено", "NO_USER")
+        }
+        // 1.6.2: отримувач заблокував відправника — листування закрите.
+        if (blocks?.isBlocked(blockerId = toUserId, targetId = fromId) == true) {
+            return@newSuspendedTransaction ApiResponse.fail(
+                "Користувач обмежив листування", "BLOCKED",
+            )
         }
         val cleanText = text.trim().take(1000)
         if (cleanText.isEmpty() && mediaFile == null) {
@@ -106,6 +117,11 @@ class ChatService(
         }
         ApiResponse.ok(true)
     }
+
+    /** 1.6.2: URL вкладення повідомлення. Старе фото (до 1.6.2) лежало
+     *  у публічному каталозі photo-*, нове — у приватному private-*. */
+    private fun mediaUrlOf(mediaFile: String?): String? =
+        mediaFile?.let { if (it.startsWith("photo-")) "/media/photo/$it" else "/media/private/$it" }
 
     /** Історія приватного діалогу: свіжі зверху, пагінація offset'ом. */
     suspend fun historyPrivate(
@@ -172,7 +188,7 @@ class ChatService(
                     title = profile.displayName,
                     avatarPath = profile.avatarPath,
                     lastText = last.text,
-                    lastMediaUrl = last.mediaFile?.let { "/media/photo/$it" },
+                    lastMediaUrl = mediaUrlOf(last.mediaFile),
                     lastAt = last.createdAt,
                     unread = unreadPrivate(viewerId, peerId),
                 )
@@ -194,7 +210,7 @@ class ChatService(
                     title = group.name,
                     avatarPath = group.avatarFile?.let { "/media/photo/$it" },
                     lastText = last.text,
-                    lastMediaUrl = last.mediaFile?.let { "/media/photo/$it" },
+                    lastMediaUrl = mediaUrlOf(last.mediaFile),
                     lastAt = last.createdAt,
                     unread = unreadGroup(viewerId, gid),
                 )
@@ -252,10 +268,81 @@ class ChatService(
         toUserId = toUserId,
         toGroupId = toGroupId,
         text = text,
-        mediaUrl = mediaFile?.let { "/media/photo/$it" },
+        mediaUrl = mediaUrlOf(mediaFile),
         createdAt = createdAt,
         mine = fromId == viewerId,
+        // 1.6.2: реакції повідомлення — агресовані по емодзі, «mine» з viewerId.
+        reactions = reactionsOf(id.value, viewerId),
     )
+
+    /** 1.6.2: реакції повідомлення: group by emoji → (emoji, count, mine). */
+    private fun reactionsOf(messageId: Int, viewerId: Int): List<dev.amps.backend.model.ChatReactionDto> {
+        val rows = ChatReactionEntity.find { ChatReactionTable.messageId eq messageId }.toList()
+        if (rows.isEmpty()) return emptyList()
+        return rows.groupBy { it.emoji }.map { (emoji, list) ->
+            dev.amps.backend.model.ChatReactionDto(
+                emoji = emoji,
+                count = list.size,
+                mine = list.any { it.userId == viewerId },
+            )
+        }
+    }
+
+    // ===== 1.6.2: реакції на повідомлення =====
+
+    /**
+     * Перемкнути реакцію [emoji] на повідомлення. Дозволено: відправнику
+     * й отримувачу приватного чату; учасникам групи — у груповому.
+     * Повторна реакція тим самим емодзі знімає її.
+     */
+    suspend fun toggleReaction(viewerId: Int, messageId: Int, emoji: String): ApiResponse<ChatMessageDto> =
+        newSuspendedTransaction {
+            val message = ChatMessageEntity.findById(messageId)
+                ?: return@newSuspendedTransaction ApiResponse.fail("Повідомлення не знайдено", "NO_MESSAGE")
+            val canSee = when {
+                message.fromId == viewerId || message.toUserId == viewerId -> true
+                message.toGroupId != null -> groups.isMember(message.toGroupId!!, viewerId)
+                else -> false
+            }
+            if (!canSee) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Реагувати можна лише у своїх чатах", "NOT_ALLOWED",
+                )
+            }
+            val clean = emoji.trim()
+            if (clean.isEmpty() || clean.length > 8) {
+                return@newSuspendedTransaction ApiResponse.fail("Невірна реакція", "BAD_EMOJI")
+            }
+            val existing = ChatReactionEntity.find {
+                (ChatReactionTable.messageId eq messageId) and
+                    (ChatReactionTable.userId eq viewerId) and
+                    (ChatReactionTable.emoji eq clean)
+            }.firstOrNull()
+            if (existing != null) {
+                existing.delete()
+            } else {
+                ChatReactionEntity.new {
+                    this.messageId = messageId
+                    this.userId = viewerId
+                    this.emoji = clean
+                }
+            }
+            ok(message.toDto(viewerId))
+        }
+
+    /** 1.6.2: чи може [viewerId] бачити приватне вкладення [fileName]. */
+    suspend fun canAccessMedia(viewerId: Int, fileName: String): Boolean = newSuspendedTransaction {
+        val mine = ChatMessageEntity.find {
+            (ChatMessageTable.mediaFile eq fileName) and
+                ((ChatMessageTable.fromId eq viewerId) or (ChatMessageTable.toUserId eq viewerId))
+        }.firstOrNull() != null
+        if (mine) return@newSuspendedTransaction true
+        // Групові вкладення: я учасник групи, де це фото було надіслане.
+        val msg = ChatMessageEntity.find { ChatMessageTable.mediaFile eq fileName }
+            .firstOrNull() ?: return@newSuspendedTransaction false
+        val gid = msg.toGroupId ?: return@newSuspendedTransaction false
+        groups.isMember(gid, viewerId)
+    }
 
     private fun profileOf(userId: Int): ProfileDto =
         profiles.profileOf(profiles.ensureProfile(userId))

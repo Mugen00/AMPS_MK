@@ -181,10 +181,9 @@ class FeedService(
         }
 
     /**
-     * 1.6.1: видалення власного поста. Каскадні посилання (медіа, лайки,
-     * репости, коментарі, опитування) мають ON DELETE CASCADE на posts;
-     * репости цього поста зникають разом з оригіналом. Файли медіа
-     * лишаються на диску — їх збирає фоновий cleanup, а не цей виклик.
+     * 1.6.1/1.6.2: видалення власного поста. Каскадні посилання (медіа,
+     * лайки, репости, коментарі, опитування) мають ON DELETE CASCADE на
+     * posts. 1.6.2: файли медіа видаляються з диска одразу — сиріт не лишається.
      */
     suspend fun deletePost(userId: Int, postId: Int): ApiResponse<Unit> =
         newSuspendedTransaction {
@@ -193,13 +192,19 @@ class FeedService(
             if (post.userId != userId) {
                 return@newSuspendedTransaction ApiResponse.fail("Видалити можна лише свій пост", "NOT_OWNER")
             }
+            // Файли для видалення збираємо до видалення рядків.
+            val mediaFiles = PostMediaEntity.find { PostMediaTable.postId eq postId }
+                .map { it.kind to it.fileName }
             post.delete()
+            // Диск — не база: файли прибираємо після успішної транзакції.
+            mediaFiles.forEach { (kind, fileName) -> media.delete(kind, fileName) }
             ok(Unit)
         }
 
     /** Лайк перемикається: повторне натискання знімає його. */
-    suspend fun toggleLike(userId: Int, postId: Int): ApiResponse<LikeToggleResponse> =        newSuspendedTransaction {
-            PostEntity.findById(postId)
+    suspend fun toggleLike(userId: Int, postId: Int): ApiResponse<LikeToggleResponse> =
+        newSuspendedTransaction {
+            val post = PostEntity.findById(postId)
                 ?: return@newSuspendedTransaction ApiResponse.fail<LikeToggleResponse>(
                     "Поста не знайдено", "NO_POST")
             val existing = LikeEntity.find {
@@ -214,12 +219,13 @@ class FeedService(
                 }
             }
             val count = LikeEntity.find { LikeTable.postId eq postId }.count().toInt()
+            // 1.6.2: синхронізуємо кеш-лічильник із фактом.
+            post.likeCount = count
             if (existing == null) {
                 // 1.2.4: XP за лайк — тому, хто лайкнув, і автору поста.
-                val author = PostEntity.findById(postId)?.userId
                 dev.amps.backend.service.XpLedger.award(userId, dev.amps.backend.service.XpLedger.LIKE_GIVEN)
-                if (author != null && author != userId) {
-                    dev.amps.backend.service.XpLedger.award(author, dev.amps.backend.service.XpLedger.LIKE_RECEIVED)
+                if (post.userId != userId) {
+                    dev.amps.backend.service.XpLedger.award(post.userId, dev.amps.backend.service.XpLedger.LIKE_RECEIVED)
                 }
             }
             ApiResponse.ok(LikeToggleResponse(liked = existing == null, likeCount = count))
@@ -231,7 +237,7 @@ class FeedService(
      */
     suspend fun toggleRepost(userId: Int, postId: Int): ApiResponse<RepostResponse> =
         newSuspendedTransaction {
-            PostEntity.findById(postId)
+            val post = PostEntity.findById(postId)
                 ?: return@newSuspendedTransaction ApiResponse.fail<RepostResponse>(
                     "Поста не знайдено", "NO_POST")
             val existing = RepostEntity.find {
@@ -247,6 +253,8 @@ class FeedService(
                 }
             }
             val count = RepostEntity.find { RepostTable.postId eq postId }.count().toInt()
+            // 1.6.2: синхронізуємо кеш-лічильник репостів.
+            post.repostCount = count
             if (existing == null) {
                 dev.amps.backend.service.XpLedger.award(userId, dev.amps.backend.service.XpLedger.REPOST)
             }
@@ -310,37 +318,68 @@ class FeedService(
 
     // --- складання рядка стрічки --------------------------------------------
 
-    /** DTO поста: автор-профіль, вкладення, лічильники і «моє чи ні». */
-    private fun postDto(post: PostEntity, viewerId: Int): PostDto {
-        val authorProfile = profiles.profileOf(profiles.ensureProfile(post.userId))
-        val attachments = PostMediaEntity.find { PostMediaTable.postId eq post.id.value }
-            .map { MediaDto(kind = it.kind, url = "/media/${it.kind}/${it.fileName}") }
-        val likeCount = LikeEntity.find { LikeTable.postId eq post.id.value }.count().toInt()
-        val repostCount = RepostEntity.find { RepostTable.postId eq post.id.value }.count().toInt()
-        val likedByMe = LikeEntity.find {
-            (LikeTable.postId eq post.id.value) and (LikeTable.userId eq viewerId)
-        }.firstOrNull() != null
-        val repostedByMe = RepostEntity.find {
-            (RepostTable.postId eq post.id.value) and (RepostTable.userId eq viewerId)
-        }.firstOrNull() != null
-        return PostDto(
-            id = post.id.value,
-            author = authorProfile,
-            text = post.text,
-            media = attachments,
-            createdAt = post.createdAt,
-            likeCount = likeCount,
-            repostCount = repostCount,
-            likedByMe = likedByMe,
-            repostedByMe = repostedByMe,
-            // 1.2.3: опитування, якщо є.
-            poll = polls?.forPost(post.id.value, viewerId),
-            // 1.5.1: формат показу фото.
-            imageAspect = post.imageAspect,
-            // 1.6.1: мітка редагування.
-            editedAt = post.editedAt,
-        )
+    /**
+     * 1.6.2: батч-складання DTO постів — заміна N+1. Замість 6 запитів
+     * на кожен пост — фіксована кількість на всю сторінку: автори одним
+     * запитом, вкладення одним, лайки/репости глядача — по одному;
+     * лічильники беремо з кеш-колонок (оновлюються при лайку/репості,
+     * самолікування — на старті). Опитування — по-посту (рідкісні).
+     * Викликається лише всередині транзакції.
+     */
+    private fun postsToDtos(posts: List<PostEntity>, viewerId: Int): Map<Int, PostDto> {
+        if (posts.isEmpty()) return emptyMap()
+        val ids = posts.map { it.id.value }
+        val authorIds = posts.map { it.userId }.distinct()
+
+        // Автори — одним запитом; відсутні профілі (ліниве створення) — точково.
+        val authorsByUserId = dev.amps.backend.model.ProfileEntity
+            .find { dev.amps.backend.model.ProfileTable.userId inList authorIds }
+            .associateBy { it.userId }
+
+        // Вкладення — одним запитом, групуємо в пам'яті.
+        val mediaByPost = HashMap<Int, MutableList<MediaDto>>()
+        PostMediaEntity.find { PostMediaTable.postId inList ids }.forEach { row ->
+            mediaByPost.getOrPut(row.postId) { ArrayList() }
+                .add(MediaDto(kind = row.kind, url = "/media/${row.kind}/${row.fileName}"))
+        }
+
+        // Мої лайки/репости по всій сторінці — по одному запиту.
+        val likedIds = LikeEntity.find {
+            (LikeTable.userId eq viewerId) and (LikeTable.postId inList ids)
+        }.map { it.postId }.toSet()
+        val repostedIds = RepostEntity.find {
+            (RepostTable.userId eq viewerId) and (RepostTable.postId inList ids)
+        }.map { it.postId }.toSet()
+
+        val result = HashMap<Int, PostDto>(posts.size)
+        for (post in posts) {
+            val author = authorsByUserId[post.userId] ?: profiles.ensureProfile(post.userId)
+            val pid = post.id.value
+            result[pid] = PostDto(
+                id = post.id.value,
+                author = profiles.profileOf(author),
+                text = post.text,
+                media = mediaByPost[pid] ?: emptyList(),
+                createdAt = post.createdAt,
+                // 1.6.2: лічильники з кеш-колонок — без COUNT(*).
+                likeCount = post.likeCount,
+                repostCount = post.repostCount,
+                likedByMe = pid in likedIds,
+                repostedByMe = pid in repostedIds,
+                // 1.2.3: опитування, якщо є (рідкісне — залишається по-посту).
+                poll = polls?.forPost(pid, viewerId),
+                // 1.5.1: формат показу фото.
+                imageAspect = post.imageAspect,
+                // 1.6.1: мітка редагування.
+                editedAt = post.editedAt,
+            )
+        }
+        return result
     }
+
+    /** DTO одного поста (обгортка над батчем). */
+    private fun postDto(post: PostEntity, viewerId: Int): PostDto =
+        postsToDtos(listOf(post), viewerId).getValue(post.id.value)
 
     companion object {
         const val KIND_POST = "POST"

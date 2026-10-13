@@ -58,4 +58,16 @@ object XpLedger {
     fun xpOf(userId: Int): Int = transaction {
         XpEntity.find { XpTable.userId eq userId }.firstOrNull()?.xp ?: 0
     }
+
+    /**
+     * 1.6.2: топ-50 накопиченого XP — (userId, xp) у порядку спадання.
+     * Імена/аватари клієнтського шару добирає роутинг через профілі.
+     */
+    fun top(limit: Int = 50): List<Pair<Int, Int>> = transaction {
+        dev.amps.backend.model.XpEntity.all()
+            .orderBy(dev.amps.backend.model.XpTable.xp to org.jetbrains.exposed.sql.SortOrder.DESC)
+            .limit(limit)
+            .toList()
+            .map { it.userId to it.xp }
+    }
 }

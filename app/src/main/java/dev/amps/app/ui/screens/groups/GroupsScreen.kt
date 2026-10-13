@@ -41,6 +41,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -773,7 +774,7 @@ private fun GroupChatTab(
                 }
             }
             items(state.chat, key = { it.id }) { message ->
-                ChatBubble(message, baseUrl)
+                ChatBubble(message, baseUrl, state.authHeader)
             }
             item { Spacer(Modifier.height(8.dp)) }
         }
@@ -800,9 +801,10 @@ private fun GroupChatTab(
     }
 }
 
-/** Бульбашка повідомлення: мої — праворуч, чужі — ліворуч. */
+/** Бульбашка повідомлення: мої — праворуч, чужі — ліворуч.
+ *  1.6.2: приватні вкладення (private-*) — із Authorization-заголовком. */
 @Composable
-private fun ChatBubble(message: ChatMessageDto, baseUrl: String) {
+private fun ChatBubble(message: ChatMessageDto, baseUrl: String, authHeader: String? = null) {
     val align = if (message.mine) Alignment.CenterEnd else Alignment.CenterStart
     Box(Modifier.fillMaxWidth(), contentAlignment = align) {
         Column(
@@ -829,19 +831,49 @@ private fun ChatBubble(message: ChatMessageDto, baseUrl: String) {
                 )
             }
             if (message.mediaUrl != null) {
-                AsyncImage(
-                    model = absoluteMediaUrl(baseUrl, message.mediaUrl),
-                    contentDescription = t("Фото повідомлення"),
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxWidth().height(180.dp).clip(RoundedCornerShape(10.dp)),
-                )
+                val url = absoluteMediaUrl(baseUrl, message.mediaUrl)
+                if (message.mediaUrl.startsWith("/media/private/") && authHeader != null) {
+                    AsyncImage(
+                        model = coil.request.ImageRequest.Builder(LocalContext.current)
+                            .data(url)
+                            .addHeader("Authorization", authHeader)
+                            .build(),
+                        contentDescription = t("Фото повідомлення"),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().height(180.dp).clip(RoundedCornerShape(10.dp)),
+                    )
+                } else {
+                    AsyncImage(
+                        model = url,
+                        contentDescription = t("Фото повідомлення"),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().height(180.dp).clip(RoundedCornerShape(10.dp)),
+                    )
+                }
             }
-            if (message.text.isNotBlank()) {
-                Text(
-                    message.text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (message.mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                )
+            // 1.6.2: чіпси реакцій.
+            if (message.reactions.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    message.reactions.forEach { reaction ->
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (reaction.mine) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                            } else {
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+                            },
+                        ) {
+                            Text(
+                                "${reaction.emoji} ${reaction.count}",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
             }
             Text(
                 java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(message.createdAt)),

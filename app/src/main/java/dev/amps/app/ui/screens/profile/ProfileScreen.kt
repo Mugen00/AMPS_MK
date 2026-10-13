@@ -15,11 +15,14 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -85,6 +88,8 @@ fun ProfileScreen(
     var showEditDialog by remember { mutableStateOf(false) }
     var showGenreDialog by remember { mutableStateOf(false) }
     var showAnimeSearch by remember { mutableStateOf(false) }
+    // 1.6.2: діалог лідерборду рівнів.
+    var showLeaderboard by remember { mutableStateOf(false) }
 
     val avatarPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -204,6 +209,19 @@ fun ProfileScreen(
                 ProfileStat(state.level, "рівень")
             }
             Spacer(Modifier.height(10.dp))
+
+            // --- 1.6.2: лідерборд XP ---
+            OutlinedButton(
+                onClick = {
+                    viewModel.loadLeaderboard()
+                    showLeaderboard = true
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Text("🏆 " + t("Лідерборд рівнів"))
+            }
+            Spacer(Modifier.height(6.dp))
 
             state.watchingTitle?.let { title ->
                 Text(
@@ -358,6 +376,76 @@ fun ProfileScreen(
             anilist = anilist,
             onPick = { item -> viewModel.addFavoriteAnime(item) },
             onDismiss = { showAnimeSearch = false },
+        )
+    }
+
+    // --- 1.6.2: діалог лідерборду рівнів ---
+    if (showLeaderboard) {
+        AlertDialog(
+            onDismissRequest = { showLeaderboard = false },
+            confirmButton = {
+                TextButton(onClick = { showLeaderboard = false }) { Text(t("Закрити")) }
+            },
+            title = { Text("🏆 " + t("Лідерборд рівнів")) },
+            text = {
+                Column {
+                    if (state.leaderboardLoading) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                        }
+                    } else if (state.leaderboard.isEmpty()) {
+                        Text(
+                            t("Поки ніхто не набрав XP — почни першим 🚀"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        // Моє місце — жирним рядком зверху.
+                        if (state.myRank > 0) {
+                            Text(
+                                "${t("Моє місце")}: #${state.myRank}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 360.dp),
+                        ) {
+                            itemsIndexed(state.leaderboard) { index, entry ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                ) {
+                                    Text(
+                                        "${index + 1}.",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier.width(30.dp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        if (entry.displayName.isNotBlank()) entry.displayName else "@${entry.userId}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        "${entry.xp} XP · ${t("рів.")}${entry.level}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
         )
     }
 }

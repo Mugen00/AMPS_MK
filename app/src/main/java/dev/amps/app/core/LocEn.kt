@@ -511,4 +511,16 @@ internal val enDict: Map<String, String> = mapOf(
     "Видалити пост?" to "Delete post?",
     "Пост, його лайки і коментарі буде видалено назавжди." to "The post, its likes and comments will be deleted permanently.",
     "Нові повідомлення: " to "New messages: ",
+    // 1.6.2: реакції, typing, блокування, лідерборд.
+    "Лідерборд рівнів" to "Level leaderboard",
+    "Моє місце" to "My rank",
+    "рів." to "lv.",
+    "Поки ніхто не набрав XP — почни першим 🚀" to "Nobody has XP yet — be the first 🚀",
+    "Закрити" to "Close",
+    "друкує…" to "typing…",
+    "Заблокувати" to "Block",
+    "Заблокувати користувача?" to "Block this user?",
+    "Він не зможе писати вам у приватні чати, поки блокування не знято." to "They won't be able to message you privately until unblocked.",
+    "Заблокувати 🚫" to "Block 🚫",
+    "Скасувати" to "Cancel",
 )

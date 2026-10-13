@@ -141,6 +141,11 @@ object PostTable : IntIdTable("posts") {
 
     // 1.6.1: мітка редагування — відображається «(ред.)» у клієнтах.
     val editedAt = long("edited_at").nullable()
+
+    // 1.6.2: кеш-лічильники — стрічка читає їх без COUNT(*) на кожен пост
+    // (було 6 запитів на пост). Оновлюються при лайку/репості, бекфіл на старті.
+    val likeCount = integer("like_count").default(0)
+    val repostCount = integer("repost_count").default(0)
 }
 
 class PostEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -152,6 +157,8 @@ class PostEntity(id: EntityID<Int>) : IntEntity(id) {
     var imageAspect by PostTable.imageAspect
     var groupId by PostTable.groupId
     var editedAt by PostTable.editedAt
+    var likeCount by PostTable.likeCount
+    var repostCount by PostTable.repostCount
 }
 
 // ===== Вкладення поста: фото або відео =====
@@ -524,6 +531,46 @@ class ChatReadEntity(id: EntityID<Int>) : IntEntity(id) {
     var lastReadAt by ChatReadTable.lastReadAt
 }
 
+// ===== 1.6.2: реакції на повідомлення =====
+object ChatReactionTable : IntIdTable("chat_reactions") {
+    val messageId = integer("message_id").references(ChatMessageTable.id, ReferenceOption.CASCADE)
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    /** Один емодзі-рядок: "❤️", "😂", "👍" тощо. */
+    val emoji = varchar("emoji", 16)
+
+    init {
+        uniqueIndex(messageId, userId, emoji)
+    }
+}
+
+class ChatReactionEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<ChatReactionEntity>(ChatReactionTable)
+
+    var messageId by ChatReactionTable.messageId
+    var userId by ChatReactionTable.userId
+    var emoji by ChatReactionTable.emoji
+}
+
+// ===== 1.6.2: блокування користувачів =====
+object BlockTable : IntIdTable("blocks") {
+    /** Хто заблокував. */
+    val blockerId = integer("blocker_id").references(UserTable.id, ReferenceOption.CASCADE)
+    /** Кого заблокували. */
+    val blockedId = integer("blocked_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val createdAt = long("created_at")
+
+    init {
+        uniqueIndex(blockerId, blockedId)
+    }
+}
+
+class BlockEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<BlockEntity>(BlockTable)
+
+    var blockerId by BlockTable.blockerId
+    var blockedId by BlockTable.blockedId
+    var createdAt by BlockTable.createdAt
+}
 // ===== 1.6.0: рілси — вертикальні відео 9:16 =====
 object ReelTable : IntIdTable("reels") {
     val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)

@@ -52,6 +52,10 @@ data class ProfileUiState(
     val level: Int = 1,
     /** Скільки XP лишилось до наступного рівня (0 — максимальний). */
     val xpToNext: Int = 0,
+    // ===== 1.6.2: лідерборд XP =====
+    val leaderboard: List<dev.amps.app.data.remote.backend.dto.LeaderboardEntryDto> = emptyList(),
+    val myRank: Int = 0,
+    val leaderboardLoading: Boolean = false,
 )
 
 class ProfileViewModel(
@@ -87,6 +91,31 @@ class ProfileViewModel(
     fun load() {
         viewModelScope.launch { loadInternal() }
     }
+
+    /** 1.6.2: лідерборд XP — топ-50 + моє місце. */
+    fun loadLeaderboard() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(leaderboardLoading = true)
+            val result = backendSession.authedCall { header -> backendApi.getLeaderboard(header) }
+            when (result) {
+                is ApiResult.Success -> {
+                    val data = result.data as? dev.amps.app.data.remote.backend.dto.LeaderboardResponse
+                    _state.value = _state.value.copy(
+                        leaderboard = data?.entries ?: emptyList(),
+                        myRank = data?.myRank ?: 0,
+                        leaderboardLoading = false,
+                    )
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(
+                    leaderboardLoading = false, error = result.error,
+                )
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(
+                    leaderboardLoading = false, error = result.message,
+                )
+            }
+        }
+    }
+
 
     private suspend fun loadInternal() {
         _state.value = _state.value.copy(loading = true, error = null)

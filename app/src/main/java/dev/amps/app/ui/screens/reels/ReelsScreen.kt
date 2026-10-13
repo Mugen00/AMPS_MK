@@ -321,6 +321,19 @@ private fun ReelPage(
             }
         }
 
+        // 1.6.2: нижній градієнт-скрім — підпис і автор читаються на будь-якому відео.
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(220.dp)
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)),
+                    ),
+                ),
+        )
+
         // Нижній блок: автор + підпис.
         Column(
             modifier = Modifier
