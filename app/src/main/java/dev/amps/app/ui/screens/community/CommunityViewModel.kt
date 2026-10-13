@@ -589,6 +589,43 @@ class CommunityViewModel(
         }
     }
 
+    // ===== 1.6.1: редагування і видалення власних постів =====
+
+    /**
+     * Редагувати текст свого поста. Сервер повертає оновлений пост —
+     * підставляємо його в стрічку; репости й опитування лишаються.
+     */
+    fun editPost(postId: Int, text: String) {
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header -> backendApi.editPost(header, postId, text) }
+            val edited = (result as? ApiResult.Success)?.data as? dev.amps.app.data.remote.backend.dto.PostEditedResponse
+            when {
+                edited != null -> _state.value = _state.value.copy(
+                    items = updateItem(_state.value.items, postId) { edited.post },
+                    notice = dev.amps.app.core.Loc.translate("Пост оновлено ✏️"),
+                )
+                result is ApiResult.Failure -> _state.value = _state.value.copy(error = result.error)
+                result is ApiResult.NetworkError -> _state.value = _state.value.copy(error = result.message)
+                else -> _state.value = _state.value.copy(error = "Не вдалося зберегти зміни")
+            }
+        }
+    }
+
+    /** Видалити свій пост зі стрічки. */
+    fun deletePost(postId: Int) {
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header -> backendApi.deletePost(header, postId) }
+            when (result) {
+                is ApiResult.Success -> _state.value = _state.value.copy(
+                    items = _state.value.items.filterNot { it.post.id == postId },
+                    notice = dev.amps.app.core.Loc.translate("Пост видалено"),
+                )
+                is ApiResult.Failure -> _state.value = _state.value.copy(error = result.error)
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(error = result.message)
+            }
+        }
+    }
+
     // ===== Сторіс (1.2.0) =====
 
     /** Живі сторіс; публічно — як і стрічка. Викликається разом із load(). */

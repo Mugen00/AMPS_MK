@@ -9,9 +9,13 @@ import dev.amps.backend.model.ProfileDto
 import dev.amps.backend.model.ProfileEntity
 import dev.amps.backend.model.ProfileTable
 import dev.amps.backend.model.UserEntity
+import dev.amps.backend.model.UserTable
+import dev.amps.backend.model.UsersSearchResponse
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.lowerCase
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 
 /**
@@ -108,6 +112,39 @@ class ProfileService(private val media: MediaStorage) {
 
     // --- допоміжне ----------------------------------------------------------
 
+    /** Профіль, створюючи дефолтний за потреби; для стрічки та власних сторінок. */
+    suspend fun ensureAndGet(userId: Int): ApiResponse<ProfileDto> = newSuspendedTransaction {
+        ok(profileOf(ensureProfile(userId)))
+    }
+
+    /**
+     * 1.6.1: пошук людей за ім'ям (профіль) або логіном — case-insensitive,
+     * contains. Логін шукаємо по users, ім'я — по профилях; результати
+     * з'єднуються без дублів, до [limit] профілів.
+     */
+    suspend fun searchUsers(query: String, limit: Int = 20): ApiResponse<UsersSearchResponse> =
+        newSuspendedTransaction {
+            val q = query.trim().lowercase()
+            if (q.length < 2) return@newSuspendedTransaction ok(UsersSearchResponse(emptyList()))
+            val found = LinkedHashMap<Int, ProfileDto>()
+            ProfileEntity.find {
+                ProfileTable.displayName.lowerCase() like "%$q%"
+            }.orderBy(ProfileTable.updatedAt to SortOrder.DESC).limit(limit).toList().forEach {
+                found[it.userId] = profileOf(it)
+            }
+            // Логіни, яких ще немає в результатах.
+            if (found.size < limit) {
+                UserEntity.find { UserTable.login.lowerCase() like "%$q%" }
+                    .limit(limit).toList().forEach { user ->
+                        val uid = user.id.value
+                        if (!found.containsKey(uid)) {
+                            found[uid] = profileOf(ensureProfile(uid))
+                        }
+                    }
+            }
+            ok(UsersSearchResponse(users = found.values.take(limit).toList()))
+        }
+
     /**
      * Профіль користувача, створюючи дефолтний за потреби.
      * Викликається лише всередині транзакції; FeedService користується
@@ -124,11 +161,6 @@ class ProfileService(private val media: MediaStorage) {
             avatarFile = null
             updatedAt = System.currentTimeMillis()
         }
-    }
-
-    /** Профіль, створюючи дефолтний за потреби; для стрічки та власних сторінок. */
-    suspend fun ensureAndGet(userId: Int): ApiResponse<ProfileDto> = newSuspendedTransaction {
-        ok(profileOf(ensureProfile(userId)))
     }
 
     /** DTO профіля разом із логіном користувача. */

@@ -172,16 +172,23 @@ fun ReelsScreen(
 
         VerticalPager(
             state = pagerState,
+            // 1.6.1: сусідня сторінка тримається в композиції — відео
+            // підготується (прелоад), тож свайп не чекає на буферизацію.
+            beyondViewportPageCount = 1,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) { page ->
             val reel = state.reels.getOrNull(page)
             if (reel != null) {
+                // Відео монтується на активній + сусідніх сторінках (прелоад),
+                // але грає лише активна — решта на паузі.
+                val distance = kotlin.math.abs(pagerState.currentPage - page)
                 ReelPage(
                     reel = reel,
                     baseUrl = baseUrl,
-                    isActive = pagerState.currentPage == page,
+                    isActive = distance == 0,
+                    preload = distance <= 1,
                     likedByMe = reel.likedByMe,
                     isMine = state.myUserId > 0 && reel.author.userId == state.myUserId,
                     busy = state.busyReelIds.contains(reel.id),
@@ -273,6 +280,8 @@ private fun ReelPage(
     reel: ReelDto,
     baseUrl: String,
     isActive: Boolean,
+    /** 1.6.1: сусідня сторінка — відео готується (прелоад), але на паузі. */
+    preload: Boolean = false,
     likedByMe: Boolean,
     isMine: Boolean,
     busy: Boolean,
@@ -286,15 +295,17 @@ private fun ReelPage(
             .fillMaxSize()
             .background(Color.Black),
     ) {
-        if (isActive) {
+        if (preload) {
+            // 1.6.1: активна грає; сусідня — готується (прелоад), на паузі.
             dev.amps.app.ui.components.InlineVideo(
                 url = videoUrl,
                 modifier = Modifier.fillMaxSize(),
                 mutedByDefault = true,
                 loop = true,
+                active = isActive,
             )
         } else {
-            // Неактивна сторінка: чорний фон — відео стартує, коли сторінка активна.
+            // Неактивна й не сусідня: чорний фон — відео змонтується при підході.
             Box(Modifier.fillMaxSize().background(Color.Black))
         }
 

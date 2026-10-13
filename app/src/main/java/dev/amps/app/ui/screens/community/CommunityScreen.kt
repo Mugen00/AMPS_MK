@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Refresh
@@ -41,8 +42,11 @@ import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -421,6 +425,9 @@ fun CommunityScreen(
                             if (state.authorized) viewModel.votePoll(postId, pollId, optionId) else onOpenAuth()
                         },
                         pollBusy = item.post.poll?.pollId in state.busyPollIds,
+                        // 1.6.1: редагування/видалення власного поста.
+                        onEditPost = { postId, text -> viewModel.editPost(postId, text) },
+                        onDeletePost = { postId -> viewModel.deletePost(postId) },
                     )
                     }
                 }
@@ -1175,9 +1182,17 @@ private fun FeedItemCard(
     // 1.2.3: голосування в опитуванні поста.
     onVotePoll: (Int, Int, Int) -> Unit = { _, _, _ -> },
     pollBusy: Boolean = false,
+    // 1.6.1: редагувати/видалити свій пост (меню ⋮ біля автора).
+    onEditPost: (Int, String) -> Unit = { _, _ -> },
+    onDeletePost: (Int) -> Unit = {},
 ) {
     val post = item.post
     var commentsOpen by remember(item.post.id) { mutableStateOf(false) }
+    // 1.6.1: меню власного поста + діалог редагування.
+    var ownMenuOpen by remember { mutableStateOf(false) }
+    var editDialog by remember { mutableStateOf(false) }
+    var editDraft by remember(item.post.id) { mutableStateOf(post.text) }
+    var confirmDelete by remember { mutableStateOf(false) }
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surface,
@@ -1218,7 +1233,7 @@ private fun FeedItemCard(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        "@${post.author.login} · ${formatDate(item.at)}",
+                        "@${post.author.login} · ${formatDate(item.at)}${if (post.editedAt != null) " · ред." else ""}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1234,6 +1249,34 @@ private fun FeedItemCard(
                             )
                         },
                     )
+                }
+                // 1.6.1: ⋮ меню власного поста — редагувати / видалити.
+                if (isOwn) {
+                    Box {
+                        IconButton(onClick = { ownMenuOpen = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Меню поста")
+                        }
+                        DropdownMenu(
+                            expanded = ownMenuOpen,
+                            onDismissRequest = { ownMenuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Редагувати ✏️") },
+                                onClick = {
+                                    ownMenuOpen = false
+                                    editDraft = post.text
+                                    editDialog = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Видалити") },
+                                onClick = {
+                                    ownMenuOpen = false
+                                    confirmDelete = true
+                                },
+                            )
+                        }
+                    }
                 }
             }
             if (post.text.isNotBlank()) {
@@ -1383,6 +1426,53 @@ private fun FeedItemCard(
                         Text(t("Надіслати"))
                     }
                 }
+            }
+
+            // 1.6.1: діалог редагування тексту поста.
+            if (editDialog) {
+                AlertDialog(
+                    onDismissRequest = { editDialog = false },
+                    title = { Text("Редагувати пост ✏️") },
+                    text = {
+                        OutlinedTextField(
+                            value = editDraft,
+                            onValueChange = { if (it.length <= 1000) editDraft = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 3,
+                            label = { Text("Текст поста") },
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                editDialog = false
+                                onEditPost(post.id, editDraft.trim())
+                            },
+                            enabled = editDraft.isNotBlank(),
+                        ) { Text(t("Зберегти")) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { editDialog = false }) { Text(t("Скасувати")) }
+                    },
+                )
+            }
+
+            // 1.6.1: підтвердження видалення поста.
+            if (confirmDelete) {
+                AlertDialog(
+                    onDismissRequest = { confirmDelete = false },
+                    title = { Text("Видалити пост?") },
+                    text = { Text("Пост, його лайки і коментарі буде видалено назавжди.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmDelete = false
+                            onDeletePost(post.id)
+                        }) { Text("Видалити") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmDelete = false }) { Text(t("Скасувати")) }
+                    },
+                )
             }
         }
     }

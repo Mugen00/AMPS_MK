@@ -242,6 +242,17 @@ fun Application.chatRoutes(
                 get {
                     call.requireUid()?.let { uid -> call.respondApi(chats.dialogs(uid)) }
                 }
+                // 1.6.1: сумарні непрочитані — бейдж вкладки «Чати» і фон.
+                get("/unread-count") {
+                    val uid = call.requireUid() ?: return@get
+                    val count = chats.totalUnread(uid)
+                    call.respond(
+                        dev.amps.backend.model.ApiResponse(
+                            success = true,
+                            data = dev.amps.backend.model.ChatUnreadResponse(unread = count),
+                        )
+                    )
+                }
                 // Контакти для старту діалогу: ті, на кого я підписаний.
                 get("/contacts") {
                     val uid = call.requireUid() ?: return@get

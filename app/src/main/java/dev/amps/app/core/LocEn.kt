@@ -500,4 +500,15 @@ internal val enDict: Map<String, String> = mapOf(
     "Видалити рилс" to "Delete reel",
     "Зняти лайк" to "Unlike",
     "Лайк" to "Like",
+
+    // ===== 1.6.1: post editing, people search, badges =====
+    "Пошук людей…" to "Search people…",
+    "Редагувати пост ✏️" to "Edit post ✏️",
+    "Редагувати ✏️" to "Edit ✏️",
+    "Текст поста" to "Post text",
+    "Пост оновлено ✏️" to "Post updated ✏️",
+    "Пост видалено" to "Post deleted",
+    "Видалити пост?" to "Delete post?",
+    "Пост, його лайки і коментарі буде видалено назавжди." to "The post, its likes and comments will be deleted permanently.",
+    "Нові повідомлення: " to "New messages: ",
 )

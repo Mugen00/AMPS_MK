@@ -30,6 +30,10 @@ data class ChatsUiState(
     val dialogs: List<ChatDialogDto> = emptyList(),
     /** Контакти (ті, на кого я підписаний) — для старту нового діалогу. */
     val contacts: List<dev.amps.app.data.remote.backend.dto.ProfileDto> = emptyList(),
+    /** 1.6.1: результати пошуку людей (додаток до контактів). */
+    val searchResults: List<dev.amps.app.data.remote.backend.dto.ProfileDto> = emptyList(),
+    /** Пошук триває. */
+    val searchLoading: Boolean = false,
     /** Відкритий приватний чат: id співрозмовника (null — список чатів). */
     val openPeerId: Int? = null,
     /** Заголовок і аватар відкритого чату. */
@@ -98,6 +102,27 @@ class ChatsViewModel(
             val result = backendSession.authedCall { header -> backendApi.getChatContacts(header) }
             val list = (result as? ApiResult.Success)?.data as? ChatContactsResponse
             if (list != null) _state.value = _state.value.copy(contacts = list.contacts)
+        }
+    }
+
+    /**
+     * 1.6.1: пошук людей за ім'ям або логіном — можна написати тому,
+     * на кого ще не підписаний. Порожній запит очищає результати.
+     */
+    fun searchUsers(q: String) {
+        val query = q.trim()
+        if (query.length < 2) {
+            _state.value = _state.value.copy(searchResults = emptyList(), searchLoading = false)
+            return
+        }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(searchLoading = true)
+            val result = backendSession.authedCall { header -> backendApi.searchUsers(header, query) }
+            val found = (result as? ApiResult.Success)?.data as? dev.amps.app.data.remote.backend.dto.UsersSearchResponse
+            _state.value = _state.value.copy(
+                searchResults = found?.users ?: emptyList(),
+                searchLoading = false,
+            )
         }
     }
 

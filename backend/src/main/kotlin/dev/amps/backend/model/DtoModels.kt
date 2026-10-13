@@ -228,7 +228,9 @@ data class PostDto(
     /** 1.2.3: опитування, прикріплене до поста (null — його немає). */
     val poll: PollDto? = null,
     /** 1.5.1: формат показу фото ("original"|"1:1"|"4:5"|"16:9"; null — як раніше). */
-    val imageAspect: String? = null
+    val imageAspect: String? = null,
+    /** 1.6.1: дата редагування (null — пост не редагувався); клієнт показує «(ред.)». */
+    val editedAt: Long? = null
 )
 
 /**
@@ -264,6 +266,24 @@ data class RepostResponse(
 data class PostCreatedResponse(
     val postId: Int
 )
+
+// 1.6.1: редагування власного поста.
+@Serializable
+data class PostEditRequest(val text: String)
+
+// 1.6.1: оновлений пост після редагування.
+@Serializable
+data class PostEditedResponse(val post: PostDto)
+
+// 1.6.1: пошук людей за ім'ям/логіном.
+@Serializable
+data class UsersSearchResponse(
+    val users: List<ProfileDto>
+)
+
+// 1.6.1: сумарні непрочитані чатів — бейдж вкладки і фонові сповіщення.
+@Serializable
+data class ChatUnreadResponse(val unread: Int)
 
 // ===== Коментарі (1.2.2) =====
 

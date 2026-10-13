@@ -24,6 +24,8 @@ class AmpsApp : Application(), coil.ImageLoaderFactory {
         // 1.1.2: канали сповіщень одразу, фонова перевірка Спільноти — цикл.
         container.notifier.createChannels()
         container.communityWatcher.start()
+        // 1.6.1: фонові сповіщення про нові повідомлення в чатах — 2-хвилинний цикл.
+        container.chatWatcher.start()
         // 1.2.2: нагадування про нові серії аніме — свій шестигодинний цикл.
         container.animeWatcher.start()
         // 1.2.0: фонові патчі — поки застосунок закритий, перевіряє GitHub

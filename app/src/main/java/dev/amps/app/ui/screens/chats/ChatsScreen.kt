@@ -144,29 +144,52 @@ fun ChatsScreen(
         }
     }
 
-    // Кому написати: контакти = ті, на кого я підписаний.
+    // Кому написати: контакти (підписки) + 1.6.1: пошук людей за ім'ям/логіном.
     if (showContacts) {
+        var searchQuery by remember { mutableStateOf("") }
+        LaunchedEffect(Unit) { viewModel.loadContacts() }
         AlertDialog(
             onDismissRequest = { showContacts = false },
             title = { Text(t("Кому написати")) },
             text = {
-                if (state.contacts.isEmpty()) {
-                    Text(t("Підпишіться на когось у Спільноті — і почніть діалог 💬"))
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        items(state.contacts.size) { index ->
-                            val contact = state.contacts[index]
-                            Text(
-                                text = contact.displayName + " (@" + contact.login + ")",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        showContacts = false
-                                        viewModel.openPrivate(contact.userId, contact.displayName, contact.avatarPath)
-                                    }
-                                    .padding(vertical = 10.dp),
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
+                Column {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = {
+                            searchQuery = it
+                            viewModel.searchUsers(it)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text(t("Пошук людей…")) },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    val combined = remember(
+                        state.searchResults, state.contacts, searchQuery,
+                    ) {
+                        val unique = LinkedHashMap<Int, dev.amps.app.data.remote.backend.dto.ProfileDto>()
+                        state.searchResults.forEach { unique[it.userId] = it }
+                        state.contacts.forEach { unique.putIfAbsent(it.userId, it) }
+                        unique.values.toList()
+                    }
+                    if (combined.isEmpty() && !state.searchLoading) {
+                        Text(t("Підпишіться на когось у Спільноті — і почніть діалог 💬"))
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            items(combined.size) { index ->
+                                val contact = combined[index]
+                                Text(
+                                    text = contact.displayName + " (@" + contact.login + ")",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            showContacts = false
+                                            viewModel.openPrivate(contact.userId, contact.displayName, contact.avatarPath)
+                                        }
+                                        .padding(vertical = 10.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
                         }
                     }
                 }

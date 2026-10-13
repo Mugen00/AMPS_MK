@@ -55,6 +55,12 @@ fun InlineVideo(
      * null — некерований режим: кнопка всередині кутка (пости).
      */
     mutedOverride: Boolean? = null,
+    /**
+     * 1.6.1: чи сторінка активна. false — плеєр готується (прелоад
+     * сусідньої сторінки пейджера), але на паузі; true — грає.
+     * За замовчуванням true — поведінка попередніх версій.
+     */
+    active: Boolean = true,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -67,6 +73,10 @@ fun InlineVideo(
             volume = if (mutedOverride ?: mutedByDefault) 0f else 1f
             prepare()
         }
+    }
+    // 1.6.1: активність сторінки керує playWhenReady (прелоад сусідів).
+    LaunchedEffect(active) {
+        if (active) player.play() else player.pause()
     }
     var internalMuted by remember(url) { mutableStateOf(mutedByDefault) }
     val muted = mutedOverride ?: internalMuted

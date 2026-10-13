@@ -138,6 +138,9 @@ object PostTable : IntIdTable("posts") {
     // Без FK-декларації: таблиця груп оголошена нижче по файлу, а посилання
     // на групу чиститься при видаленні групи в сервісі.
     val groupId = integer("group_id").nullable()
+
+    // 1.6.1: мітка редагування — відображається «(ред.)» у клієнтах.
+    val editedAt = long("edited_at").nullable()
 }
 
 class PostEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -148,6 +151,7 @@ class PostEntity(id: EntityID<Int>) : IntEntity(id) {
     var createdAt by PostTable.createdAt
     var imageAspect by PostTable.imageAspect
     var groupId by PostTable.groupId
+    var editedAt by PostTable.editedAt
 }
 
 // ===== Вкладення поста: фото або відео =====

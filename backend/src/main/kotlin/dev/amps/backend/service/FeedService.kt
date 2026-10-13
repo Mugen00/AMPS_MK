@@ -10,6 +10,7 @@ import dev.amps.backend.model.LikeToggleResponse
 import dev.amps.backend.model.MediaDto
 import dev.amps.backend.model.PostCreatedResponse
 import dev.amps.backend.model.PostDto
+import dev.amps.backend.model.PostEditedResponse
 import dev.amps.backend.model.PostEntity
 import dev.amps.backend.model.PostMediaEntity
 import dev.amps.backend.model.PostMediaTable
@@ -58,6 +59,11 @@ class FeedService(
         // 1.6.0: пост у групі (null — звичайний пост спільноти).
         groupId: Int? = null,
     ): ApiResponse<PostCreatedResponse> = newSuspendedTransaction {
+        // 1.6.1: антиспам — не більше 10 постів за хвилину (постинг у групи теж).
+        if (!RateLimiter.allow("post:$userId", max = 10, windowMs = 60_000L)) {
+            return@newSuspendedTransaction ApiResponse.fail<PostCreatedResponse>(
+                "Забагато постів поспіль — трохи повільніше 🙏", "RATE_LIMITED")
+        }
         val cleanPoll = pollOptions?.let { polls?.validateOptions(it) }
         if (text.isBlank() && media.isEmpty() && cleanPoll == null) {
             return@newSuspendedTransaction ApiResponse.fail<PostCreatedResponse>(
@@ -154,9 +160,45 @@ class FeedService(
             ok(FeedResponse(items))
         }
 
-    /** Лайк перемикається: повторне натискання знімає його. */
-    suspend fun toggleLike(userId: Int, postId: Int): ApiResponse<LikeToggleResponse> =
+    /**
+     * 1.6.1: редагування власного поста. Медіа й опитування лишаються
+     * як були — змінюється лише текст; зберігаємо мітку editedAt,
+     * клієнти показують «(ред.)» поруч із датою.
+     */
+    suspend fun editPost(userId: Int, postId: Int, text: String): ApiResponse<PostEditedResponse> =
         newSuspendedTransaction {
+            val clean = text.trim()
+            if (clean.isEmpty()) return@newSuspendedTransaction ApiResponse.fail("Текст порожній")
+            if (clean.length > 1000) return@newSuspendedTransaction ApiResponse.fail("Текст задовгий (макс. 1000)")
+            val post = PostEntity.findById(postId)
+                ?: return@newSuspendedTransaction ApiResponse.fail("Поста не знайдено", "NO_POST")
+            if (post.userId != userId) {
+                return@newSuspendedTransaction ApiResponse.fail("Редагувати можна лише свій пост", "NOT_OWNER")
+            }
+            post.text = clean
+            post.editedAt = System.currentTimeMillis()
+            ok(PostEditedResponse(post = postDto(post, userId)))
+        }
+
+    /**
+     * 1.6.1: видалення власного поста. Каскадні посилання (медіа, лайки,
+     * репости, коментарі, опитування) мають ON DELETE CASCADE на posts;
+     * репости цього поста зникають разом з оригіналом. Файли медіа
+     * лишаються на диску — їх збирає фоновий cleanup, а не цей виклик.
+     */
+    suspend fun deletePost(userId: Int, postId: Int): ApiResponse<Unit> =
+        newSuspendedTransaction {
+            val post = PostEntity.findById(postId)
+                ?: return@newSuspendedTransaction ApiResponse.fail("Поста не знайдено", "NO_POST")
+            if (post.userId != userId) {
+                return@newSuspendedTransaction ApiResponse.fail("Видалити можна лише свій пост", "NOT_OWNER")
+            }
+            post.delete()
+            ok(Unit)
+        }
+
+    /** Лайк перемикається: повторне натискання знімає його. */
+    suspend fun toggleLike(userId: Int, postId: Int): ApiResponse<LikeToggleResponse> =        newSuspendedTransaction {
             PostEntity.findById(postId)
                 ?: return@newSuspendedTransaction ApiResponse.fail<LikeToggleResponse>(
                     "Поста не знайдено", "NO_POST")
@@ -295,6 +337,8 @@ class FeedService(
             poll = polls?.forPost(post.id.value, viewerId),
             // 1.5.1: формат показу фото.
             imageAspect = post.imageAspect,
+            // 1.6.1: мітка редагування.
+            editedAt = post.editedAt,
         )
     }
 

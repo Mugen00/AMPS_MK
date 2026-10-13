@@ -75,11 +75,12 @@ class AuthService(
         }
         // Коди підтвердження: email — завжди, телефон — якщо вказаний.
         // Листи/SMS — best-effort: їх невдача не ламає реєстрацію.
-        val emailCode = issueCode(user.id.value, "EMAIL_VERIFY")
-        emailService.sendVerificationCode(user.email, emailCode)
+        // 1.6.1: issueCode може повернути null при ліміті — тоді не шлемо.
+        issueCode(user.id.value, "EMAIL_VERIFY")?.let { emailService.sendVerificationCode(user.email, it) }
         user.phone?.let { phone ->
-            val smsCode = issueCode(user.id.value, "PHONE_VERIFY")
-            smsService.sendVerificationCode(phone, smsCode)
+            issueCode(user.id.value, "PHONE_VERIFY")?.let { smsCode ->
+                smsService.sendVerificationCode(phone, smsCode)
+            }
         }
         ok(tokens(user))
     }
@@ -112,9 +113,11 @@ class AuthService(
         if (!user.emailVerified) {
             // Повторний вхід = свіжий код підтвердження: це заміна кнопки
             // «надіслати лист ще раз», яку не змогло зробити чесно без
-            // окремого ендпоінту.
-            val code = issueCode(user.id.value, "EMAIL_VERIFY")
-            emailService.sendVerificationCode(user.email, code)
+            // окремого ендпоінту. 1.6.1: null при ліміті — лист не шлемо,
+            // попередній код ще діє.
+            issueCode(user.id.value, "EMAIL_VERIFY")?.let { code ->
+                emailService.sendVerificationCode(user.email, code)
+            }
         }
         ok(tokens(user))
     }
@@ -149,8 +152,9 @@ class AuthService(
         val pending = newSuspendedTransaction {
             val user = UserEntity.find { UserTable.email eq request.email }.firstOrNull()
             user?.let {
+                // 1.6.1: null при ліміті — пароль-коди теж не спамимо.
                 val code = issueCode(it.id.value, "PASSWORD_RESET")
-                it.email to code
+                if (code == null) null else it.email to code
             }
         }
         // Однакова відповідь для будь-якого email: перебір нічого не дає.
@@ -288,7 +292,16 @@ class AuthService(
         return TokenResponse(accessToken = access, refreshToken = refresh, user = user.info())
     }
 
-    private fun issueCode(userId: Int, type: String): String {
+    /**
+     * Код підтвердження. 1.6.1: не більше 3 кодів за 10 хвилин на
+     * користувача і тип — захист пошти/SMS від спам-абузу. При ліміті
+     * повертаємо null: попередній код ще живий (його термін довший),
+     * тому новий лист не потрібен.
+     */
+    private fun issueCode(userId: Int, type: String): String? {
+        if (!RateLimiter.allow("code:$userId:$type", max = 3, windowMs = 600_000L)) {
+            return null
+        }
         val code = "%06d".format(random.nextInt(1_000_000))
         VerificationCodeEntity.new {
             this.userId = userId

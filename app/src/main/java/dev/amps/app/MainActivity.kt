@@ -19,6 +19,8 @@ import androidx.compose.material.icons.filled.Settings
 import dev.amps.app.ui.screens.anime.AnimeScreen
 import dev.amps.app.ui.screens.auth.AuthScreen
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -228,6 +230,15 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
         TabItem(Routes.SETTINGS, dev.amps.app.core.t("Настройки"), Icons.Default.Settings),
     )
 
+    // 1.6.1: сумарні непрочитані чатів — бейдж на вкладці «Чати».
+    // VM чатів живий уся сесія (створений тут) і опитує список кожні ~15 с,
+    // тому бейдж свіжий навіть коли користувач в іншій вкладці.
+    // 1.6.1: сумарні непрочитані чатів — бейдж на вкладці «Чати».
+    // VM чатів живий уся сесія (створений тут) і опитує список кожні ~15 с,
+    // тому бейдж свіжий навіть коли користувач в іншій вкладці.
+    val chatsState by chatsViewModel.state.collectAsStateWithLifecycle()
+    val chatUnread = chatsState.dialogs.sumOf { it.unread }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
@@ -239,7 +250,18 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                         NavigationBarItem(
                             selected = currentRoute == tab.route,
                             onClick = { navController.navigateToTab(tab.route) },
-                            icon = { Icon(tab.icon, contentDescription = tab.label) },
+                            icon = {
+                                // 1.6.1: бейдж непрочитаних на вкладці «Чати».
+                                if (tab.route == Routes.CHATS && chatUnread > 0) {
+                                    BadgedBox(badge = {
+                                        Badge { Text(chatUnread.toString()) }
+                                    }) {
+                                        Icon(tab.icon, contentDescription = tab.label)
+                                    }
+                                } else {
+                                    Icon(tab.icon, contentDescription = tab.label)
+                                }
+                            },
                             label = { Text(tab.label) },
                             alwaysShowLabel = false,
                         )

@@ -37,6 +37,12 @@ class ChatService(
         text: String,
         mediaFile: String?,
     ): ApiResponse<Boolean> = newSuspendedTransaction {
+        // 1.6.1: антиспам — не більше 20 повідомлень за хвилину.
+        if (!RateLimiter.allow("chat:$fromId", max = 20, windowMs = 60_000L)) {
+            return@newSuspendedTransaction ApiResponse.fail(
+                "Забагато повідомлень — трохи повільніше 🙏", "RATE_LIMITED",
+            )
+        }
         if (toUserId == fromId) {
             return@newSuspendedTransaction ApiResponse.fail(
                 "Собі повідомлення не надсилають", "SELF_CHAT",
@@ -57,7 +63,10 @@ class ChatService(
             this.mediaFile = mediaFile
             this.createdAt = System.currentTimeMillis()
         }
-        XpLedger.award(fromId, XpLedger.CHAT_MESSAGE)
+        // 1.6.1: XP за чат — не більш ніж за 100 повідомлень на добу.
+        if (RateLimiter.allow("xpchat:$fromId", max = 100, windowMs = 86_400_000L)) {
+            XpLedger.award(fromId, XpLedger.CHAT_MESSAGE)
+        }
         ApiResponse.ok(true)
     }
 
@@ -68,6 +77,12 @@ class ChatService(
         text: String,
         mediaFile: String?,
     ): ApiResponse<Boolean> = newSuspendedTransaction {
+        // 1.6.1: антиспам і в груповому чаті.
+        if (!RateLimiter.allow("chat:$fromId", max = 20, windowMs = 60_000L)) {
+            return@newSuspendedTransaction ApiResponse.fail(
+                "Забагато повідомлень — трохи повільніше 🙏", "RATE_LIMITED",
+            )
+        }
         if (!groups.isMember(groupId, fromId)) {
             return@newSuspendedTransaction ApiResponse.fail(
                 "Писати в чат групи можуть тільки учасники", "NOT_MEMBER",
@@ -85,7 +100,10 @@ class ChatService(
             this.mediaFile = mediaFile
             this.createdAt = System.currentTimeMillis()
         }
-        XpLedger.award(fromId, XpLedger.CHAT_MESSAGE)
+        // 1.6.1: добовий ліміт XP за чат спільний для приватних і групових.
+        if (RateLimiter.allow("xpchat:$fromId", max = 100, windowMs = 86_400_000L)) {
+            XpLedger.award(fromId, XpLedger.CHAT_MESSAGE)
+        }
         ApiResponse.ok(true)
     }
 
@@ -183,6 +201,16 @@ class ChatService(
             )
         }
         ApiResponse.ok(ChatDialogsResponse(dialogs.sortedByDescending { it.lastAt }))
+    }
+
+    /**
+     * 1.6.1: сумарні непрочитані по всіх діалогах — для бейджа на вкладці
+     * «Чати» і фонових сповіщень. Перевикористовує dialogs(): на 500
+     * останніх повідомлень це дешево і завжди узгоджено зі списком.
+     */
+    suspend fun totalUnread(viewerId: Int): Int {
+        val data = dialogs(viewerId).data ?: return 0
+        return data.dialogs.sumOf { it.unread }
     }
 
     /**

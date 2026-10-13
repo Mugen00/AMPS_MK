@@ -26,6 +26,12 @@ class ReelService(private val profiles: ProfileService) {
         videoFile: String,
         caption: String,
     ): ApiResponse<Int> = newSuspendedTransaction {
+        // 1.6.1: антиспам — не більше 5 рілсів за 10 хвилин.
+        if (!RateLimiter.allow("reel:$userId", max = 5, windowMs = 300_000L)) {
+            return@newSuspendedTransaction ApiResponse.fail(
+                "Забагато рілсів поспіль — спробуй трохи згодом 🙏", "RATE_LIMITED",
+            )
+        }
         if (videoFile.isBlank()) {
             return@newSuspendedTransaction ApiResponse.fail("Відео не завантажено", "NO_VIDEO")
         }

@@ -78,6 +78,16 @@ class AmpsNotifier(private val context: Context) {
         notify(channel = CHANNEL_COMMUNITY, id = 2100, title = title, text = text)
     }
 
+    /** 1.6.1: нові повідомлення в чатах — одне сповіщення на цикл. */
+    fun notifyNewMessages(unread: Int) {
+        notify(
+            channel = CHANNEL_COMMUNITY,
+            id = 2200,
+            title = Loc.translate("Чати"),
+            text = Loc.translate("Нові повідомлення: ") + unread,
+        )
+    }
+
     /**
      * 1.2.2: «нові серії аніме». id залежний від тайтла: різні тайтли
      * не зливаються в одну шторку.

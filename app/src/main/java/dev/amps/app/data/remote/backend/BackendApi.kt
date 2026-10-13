@@ -266,6 +266,31 @@ class BackendApi private constructor(
         execute("POST", "feed/$postId/repost", null, RepostResponse.serializer(), authHeader)
     }
 
+    // ===== 1.6.1: редагування і видалення власного поста =====
+
+    /** Редагувати текст свого поста (медіа лишаються). */
+    suspend fun editPost(authHeader: String, postId: Int, text: String): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(
+                PostEditRequest.serializer(),
+                PostEditRequest(text = text),
+            )
+            execute("PATCH", "feed/$postId", body, PostEditedResponse.serializer(), authHeader)
+        }
+
+    /** Видалити свій пост (медіа й лічильники чистяться на сервері). */
+    suspend fun deletePost(authHeader: String, postId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("DELETE", "feed/$postId", null, UnitResult.serializer(), authHeader)
+        }
+
+    // 1.6.1: пошук людей за ім'ям/логіном (для нових діалогів і підписок).
+    suspend fun searchUsers(authHeader: String, q: String): ApiResult =
+        withContext(Dispatchers.IO) {
+            val suffix = "?q=" + java.net.URLEncoder.encode(q.trim(), "UTF-8")
+            execute("GET", "users/search$suffix", null, UsersSearchResponse.serializer(), authHeader)
+        }
+
     // ===== Коментарі (1.2.2) =====
 
     /** Коментарі поста (публічно читання, як і стрічка). */
@@ -617,6 +642,11 @@ class BackendApi private constructor(
         execute("GET", "chats", null, ChatDialogsResponse.serializer(), authHeader)
     }
 
+    // 1.6.1: сумарні непрочитані — бейдж вкладки «Чати» і фонові сповіщення.
+    suspend fun getChatUnreadCount(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "chats/unread-count", null, ChatUnreadResponse.serializer(), authHeader)
+    }
+
     /** Контакти для старту діалогу: ті, на кого я підписаний. */
     suspend fun getChatContacts(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
         execute("GET", "chats/contacts", null, ChatContactsResponse.serializer(), authHeader)
@@ -733,6 +763,8 @@ class BackendApi private constructor(
             // 1.2.2: DELETE раніше не був оброблений — запит ішов як GET,
             // і сервер відповідав 405; видалення не спрацьовувало.
             "DELETE" -> requestBuilder.delete()
+            // 1.6.1: редагування постів.
+            "PATCH" -> requestBuilder.patch((bodyJson ?: "").toRequestBody(jsonMediaType))
             "GET" -> requestBuilder.get()
         }
         authHeader?.let { requestBuilder.addHeader("Authorization", it) }

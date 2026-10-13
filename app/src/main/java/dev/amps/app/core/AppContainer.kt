@@ -176,6 +176,14 @@ class AppContainer(private val context: Context) {
     }
 
     /**
+     * 1.6.1: фонова перевірка чатів раз на 2 хвилини — нові повідомлення
+     * стають сповіщенням, поки користувач в іншій вкладці або поза застосунком.
+     */
+    val chatWatcher: dev.amps.app.core.ChatNotifier by lazy {
+        dev.amps.app.core.ChatNotifier(context, backendApi, backendSession, notifier)
+    }
+
+    /**
      * 1.2.2: нагадувач нових серій аніме — раз на 6 годин; тайтли
      * з увімкненим нагадуванням беруться з аніме-списку акаунта.
      */

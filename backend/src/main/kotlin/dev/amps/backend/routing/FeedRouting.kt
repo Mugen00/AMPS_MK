@@ -2,6 +2,7 @@ package dev.amps.backend.routing
 
 import dev.amps.backend.config.AppConfig
 import dev.amps.backend.model.ApiError
+import dev.amps.backend.model.PostEditRequest
 import dev.amps.backend.model.ProfileUpdateRequest
 import dev.amps.backend.service.FeedService
 import dev.amps.backend.service.MediaStorage
@@ -21,6 +22,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondFile
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
@@ -104,6 +106,13 @@ fun Application.feedRoutes(
                 call.respondApi(profileService.setAvatar(uid, upload.bytes))
             }
 
+            // 1.6.1: пошук людей за ім'ям/логіном — нові діалоги і підписки.
+            get("/users/search") {
+                call.requireUid() ?: return@get
+                val q = call.request.queryParameters["q"].orEmpty()
+                call.respondApi(profileService.searchUsers(q))
+            }
+
             // --- стрічка: створення — лише з токеном ---
             post("/feed") {
                 val uid = call.requireUid() ?: return@post
@@ -139,6 +148,38 @@ fun Application.feedRoutes(
                         )
                     } else {
                         call.respondApi(feedService.toggleRepost(uid, id))
+                    }
+                }
+            }
+            // 1.6.1: редагування і видалення власного поста.
+            patch("/feed/{id}") {
+                call.requireUid()?.let { uid ->
+                    val id = call.parameters["id"]?.toIntOrNull()
+                    if (id == null) {
+                        call.respond(
+                            HttpStatusCode.BadRequest,
+                            ApiError(error = "Невірний ідентифікатор поста"),
+                        )
+                    } else {
+                        val body = runCatching { call.receive<PostEditRequest>() }.getOrNull()
+                        if (body == null) {
+                            call.respond(HttpStatusCode.BadRequest, ApiError(error = "Невірне тіло запиту"))
+                        } else {
+                            call.respondApi(feedService.editPost(uid, id, body.text))
+                        }
+                    }
+                }
+            }
+            delete("/feed/{id}") {
+                call.requireUid()?.let { uid ->
+                    val id = call.parameters["id"]?.toIntOrNull()
+                    if (id == null) {
+                        call.respond(
+                            HttpStatusCode.BadRequest,
+                            ApiError(error = "Невірний ідентифікатор поста"),
+                        )
+                    } else {
+                        call.respondApi(feedService.deletePost(uid, id))
                     }
                 }
             }
