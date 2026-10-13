@@ -431,6 +431,8 @@ object GroupTable : IntIdTable("groups") {
     val description = varchar("description", 500).default("")
     /** Ім'я файлу аватарки у сховищі (null — буква-заглушка). */
     val avatarFile = varchar("avatar_file", 100).nullable()
+    /** 1.6.4: обкладинка спільноти (як у ВК) — широка шапка на сторінці групи. */
+    val coverFile = varchar("cover_file", 100).nullable()
     val isPrivate = bool("is_private").default(false)
     val createdAt = long("created_at")
 }
@@ -442,6 +444,7 @@ class GroupEntity(id: EntityID<Int>) : IntEntity(id) {
     var name by GroupTable.name
     var description by GroupTable.description
     var avatarFile by GroupTable.avatarFile
+    var coverFile by GroupTable.coverFile
     var isPrivate by GroupTable.isPrivate
     var createdAt by GroupTable.createdAt
 }

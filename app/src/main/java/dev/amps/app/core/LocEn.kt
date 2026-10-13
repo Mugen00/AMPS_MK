@@ -536,4 +536,18 @@ internal val enDict: Map<String, String> = mapOf(
     "Кружок надто довгий (ліміт 60 с)" to "Round video is too long (60 s limit)",
     "Відео порожнє або завелике (ліміт 50 МБ)" to "Video is empty or too large (50 MB limit)",
     "Ще" to "More",
+
+    // 1.6.4
+    "Обкладинка спільноти" to "Community cover",
+    "Керування спільнотою" to "Community management",
+    "Обкладинка" to "Cover",
+    "Редагувати ✏️" to "Edit ✏️",
+    "Редагувати спільноту ✏️" to "Edit community ✏️",
+    "Назва" to "Name",
+    "Опис спільноти" to "Community description",
+    "Зберегти" to "Save",
+    "Спільноту оновлено ✏️" to "Community updated ✏️",
+    "Керування групою" to "Group management",
+    "Записати кружок 📹" to "Record round video 📹",
+    "Кружок прикріплено (до 60 с) ⭕" to "Round video attached (up to 60 s) ⭕",
 )

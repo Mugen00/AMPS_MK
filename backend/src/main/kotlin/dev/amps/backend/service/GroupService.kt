@@ -14,6 +14,7 @@ import dev.amps.backend.model.GroupMemberEntity
 import dev.amps.backend.model.GroupMemberTable
 import dev.amps.backend.model.GroupMembersResponse
 import dev.amps.backend.model.GroupRequestsResponse
+import dev.amps.backend.model.GroupUpdatedResponse
 import dev.amps.backend.model.GroupTable
 import dev.amps.backend.model.PostEntity
 import dev.amps.backend.model.PostMediaEntity
@@ -80,6 +81,56 @@ class GroupService(
             ApiResponse.ok(true)
         }
 
+    /**
+     * 1.6.4: обкладинка спільноти (як у ВК) — файл уже у сховищі.
+     * Міняти можуть власник або модератор.
+     */
+    suspend fun setCover(groupId: Int, requesterId: Int, fileName: String): ApiResponse<Boolean> =
+        newSuspendedTransaction {
+            val role = roleOfTx(groupId, requesterId)
+            if (role != ROLE_OWNER && role != ROLE_MOD) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Обкладинку міняють адміни групи", "NOT_ADMIN",
+                )
+            }
+            val group = GroupEntity.findById(groupId)
+                ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
+            val old = group.coverFile
+            group.coverFile = fileName
+            // Стара обкладинка — геть, щоб у сховищі не копились дублі.
+            if (old != null && old != fileName) {
+                mediaStorage?.delete(MediaStorage.KIND_PHOTO, old)
+            }
+            ApiResponse.ok(true)
+        }
+
+    /**
+     * 1.6.4: оновити назву/опис групи. Роль-рівень — "owner"/"mod"
+     * (як у ВК: адміни спільноти редагують її сторінку).
+     */
+    suspend fun update(
+        groupId: Int,
+        requesterId: Int,
+        name: String,
+        description: String,
+    ): ApiResponse<GroupUpdatedResponse> = newSuspendedTransaction {
+        val role = roleOfTx(groupId, requesterId)
+        if (role != ROLE_OWNER && role != ROLE_MOD) {
+            return@newSuspendedTransaction ApiResponse.fail(
+                "Оновлюють групу адміни", "NOT_ADMIN",
+            )
+        }
+        val cleanName = name.trim()
+        if (cleanName.isBlank()) {
+            return@newSuspendedTransaction ApiResponse.fail("Назва групи порожня", "EMPTY_NAME")
+        }
+        val group = GroupEntity.findById(groupId)
+            ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
+        group.name = cleanName.take(80)
+        group.description = description.trim().take(500)
+        ApiResponse.ok(GroupUpdatedResponse(group.toDto(requesterId)))
+    }
+
     /** Каталог груп: пошук за назвою/описом (регістр не важливий). */
     suspend fun list(q: String?, viewerId: Int): ApiResponse<GroupListResponse> = newSuspendedTransaction {
         val all = GroupEntity.all()
@@ -116,6 +167,8 @@ class GroupService(
                 name = group.name,
                 description = group.description,
                 avatarPath = group.avatarFile?.let { "/media/photo/$it" },
+                // 1.6.4: обкладинка спільноти.
+                coverPath = group.coverFile?.let { "/media/photo/$it" },
                 isPrivate = group.isPrivate,
                 memberCount = memberCountTx(groupId),
                 isMember = role != null,
@@ -408,6 +461,8 @@ class GroupService(
             name = name,
             description = description,
             avatarPath = avatarFile?.let { "/media/photo/$it" },
+            // 1.6.4: обкладинка спільноти.
+            coverPath = coverFile?.let { "/media/photo/$it" },
             isPrivate = isPrivate,
             memberCount = memberCountTx(id.value),
             isMember = membership != null,

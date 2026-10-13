@@ -438,6 +438,8 @@ data class GroupDto(
     val name: String,
     val description: String,
     val avatarPath: String? = null,
+    /** 1.6.4: обкладинка спільноти (як у ВК); null — градієнт-заглушка. */
+    val coverPath: String? = null,
     val isPrivate: Boolean = false,
     val memberCount: Int = 0,
     /** Я — учасник цієї групи? */
@@ -456,6 +458,16 @@ data class GroupCreateRequest(
 
 @Serializable
 data class GroupCreatedResponse(val groupId: Int)
+
+// 1.6.4: оновлення групи (назва/опис) + відповідь.
+@Serializable
+data class GroupUpdateRequest(
+    val name: String,
+    val description: String = "",
+)
+
+@Serializable
+data class GroupUpdatedResponse(val group: GroupDto)
 
 @Serializable
 data class GroupListResponse(val groups: List<GroupDto>)

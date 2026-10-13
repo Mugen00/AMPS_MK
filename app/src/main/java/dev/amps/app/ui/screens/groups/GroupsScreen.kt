@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,9 +25,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.AlertDialog
@@ -108,6 +113,32 @@ fun GroupsScreen(
 
     val selected = state.selected
 
+    // 1.6.4: запис «кружка» для постів групи — до 60 с, файл у cache/camera.
+    val roundShotDir = remember { java.io.File(context.cacheDir, "camera").apply { mkdirs() } }
+    val groupRoundFile = remember { java.io.File(roundShotDir, "group-round.mp4") }
+    val roundVideoLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val bytes = groupRoundFile.takeIf { it.length() in 1..50L * 1024 * 1024 }?.readBytes()
+            if (bytes != null) viewModel.attachRoundVideo(bytes)
+        }
+    }
+
+    fun recordRoundVideo() {
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.updates", groupRoundFile)
+        val intent = android.content.Intent(android.provider.MediaStore.ACTION_VIDEO_CAPTURE).apply {
+            putExtra(android.provider.MediaStore.EXTRA_DURATION_LIMIT, 60)
+            putExtra(android.provider.MediaStore.EXTRA_VIDEO_QUALITY, 0)
+            putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri)
+            addFlags(
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        runCatching { roundVideoLauncher.launch(intent) }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar) },
@@ -157,6 +188,14 @@ fun GroupsScreen(
                 onChatDraft = viewModel::setChatDraft,
                 onSendChat = viewModel::sendChat,
                 onSendChatPhoto = viewModel::sendChatPhoto,
+                // 1.6.4: VK-стиль — обкладинка/редагування, кружки, реакції.
+                onEditGroup = viewModel::updateGroup,
+                onUploadCover = viewModel::uploadCover,
+                onRecordRound = { recordRoundVideo() },
+                onReact = viewModel::reactToMessage,
+                onDeleteMessage = viewModel::deleteMessage,
+                onSendTyping = viewModel::sendTyping,
+                onPollTyping = viewModel::pollTyping,
             )
             else -> GroupsListView(
                 state = state,
@@ -441,6 +480,14 @@ private fun GroupDetailView(
     onChatDraft: (String) -> Unit,
     onSendChat: () -> Unit,
     onSendChatPhoto: (ByteArray) -> Unit,
+    // 1.6.4: VK-стиль спільноти — обкладинка, редагування, кружки, реакції.
+    onEditGroup: (String, String) -> Unit = { _, _ -> },
+    onUploadCover: (ByteArray) -> Unit = {},
+    onRecordRound: () -> Unit = {},
+    onReact: (Int, String) -> Unit = { _, _ -> },
+    onDeleteMessage: (Int) -> Unit = {},
+    onSendTyping: () -> Unit = {},
+    onPollTyping: () -> Unit = {},
 ) {
     val group = state.selected?.group ?: return
     val context = LocalContext.current
@@ -455,31 +502,109 @@ private fun GroupDetailView(
                 ?.let(onSendChatPhoto)
         }
     }
+    // 1.6.4: обкладинка спільноти — стискається у webp (1280px досить для 16:9).
+    val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            readBytesCapped(context, uri, 10L * 1024 * 1024)
+                ?.let { dev.amps.app.core.ImageCompress.toWebp(it, maxDim = 1280, quality = 80) }
+                ?.let(onUploadCover)
+        }
+    }
+    // 1.6.4: діалог редагування спільноти (назва + опис).
+    var showEdit by remember { mutableStateOf(false) }
+    var adminMenu by remember { mutableStateOf(false) }
 
     Column(
         Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
     ) {
-        // Шапка групи.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            GroupAvatar(group.avatarPath, group.name, size = 54.dp, baseUrl = baseUrl)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(group.name, style = MaterialTheme.typography.titleLarge)
-                Text(
-                    t("👤 учасників") + ": ${group.memberCount}" +
-                        if (group.isPrivate) " · " + t("приватна 🔒") else "",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        // ===== 1.6.4: шапка спільноти як у ВК — обкладинка + аватар =====
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(150.dp),
+        ) {
+            if (group.coverPath != null) {
+                AsyncImage(
+                    model = absoluteMediaUrl(baseUrl, group.coverPath ?: ""),
+                    contentDescription = t("Обкладинка спільноти"),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(150.dp)
+                        .clip(RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)),
+                )
+            } else {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp))
+                        .background(
+                            androidx.compose.ui.graphics.Brush.linearGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
+                                    MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f),
+                                )
+                            )
+                        )
                 )
             }
+            // Меню адміна — правий верхній кут обкладинки.
+            if (state.isModOrOwner) {
+                Box(Modifier.align(Alignment.TopEnd)) {
+                    IconButton(onClick = { adminMenu = true }) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = t("Керування спільнотою"),
+                            tint = androidx.compose.ui.graphics.Color.White,
+                        )
+                    }
+                    androidx.compose.material3.DropdownMenu(expanded = adminMenu, onDismissRequest = { adminMenu = false }) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("🖼️ " + t("Обкладинка")) },
+                            onClick = {
+                                adminMenu = false
+                                coverPicker.launch(arrayOf("image/*"))
+                            },
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(t("Редагувати ✏️")) },
+                            onClick = {
+                                adminMenu = false
+                                showEdit = true
+                            },
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(t("Видалити групу"), color = MaterialTheme.colorScheme.error) },
+                            onClick = {
+                                adminMenu = false
+                                onDelete()
+                            },
+                        )
+                    }
+                }
+            }
         }
-        if (group.description.isNotBlank()) {
-            Spacer(Modifier.height(6.dp))
-            Text(group.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(horizontal = 12.dp)) {
+            Box(Modifier.offset(y = (-18).dp)) {
+                GroupAvatar(group.avatarPath, group.name, size = 64.dp, baseUrl = baseUrl)
+            }
         }
-        Spacer(Modifier.height(8.dp))
+        Column(Modifier.offset(y = (-10).dp)) {
+            Text(group.name, style = MaterialTheme.typography.titleLarge)
+            Text(
+                t("👤 учасників") + ": ${group.memberCount}" +
+                    if (group.isPrivate) " · " + t("приватна 🔒") else "",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (group.description.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(group.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             when {
                 group.isMember && !state.isOwner -> OutlinedButton(onClick = onLeave) { Text(t("Вийти")) }
@@ -490,8 +615,8 @@ private fun GroupDetailView(
                     Text(if (group.isPrivate) t("Запросити вступ") else t("Вступити (+5 XP)"))
                 }
             }
-            if (state.isOwner) {
-                OutlinedButton(onClick = onDelete) { Text(t("Видалити групу"), color = MaterialTheme.colorScheme.error) }
+            if (state.isModOrOwner) {
+                OutlinedButton(onClick = { showEdit = true }) { Text(t("Редагувати ✏️")) }
             }
         }
 
@@ -512,12 +637,21 @@ private fun GroupDetailView(
             when (state.detailTab) {
                 "members" -> MembersTab(state, onOpenUser, onKick, onRole)
                 "requests" -> RequestsTab(state, onApprove, onReject)
-                "chat" -> GroupChatTab(state, baseUrl, onChatDraft, onSendChat, { chatPhotoPicker.launch(arrayOf("image/*")) })
+                "chat" -> GroupChatTab(
+                    state, baseUrl,
+                    onChatDraft, onSendChat,
+                    { chatPhotoPicker.launch(arrayOf("image/*")) },
+                    onReact = onReact,
+                    onDeleteMessage = onDeleteMessage,
+                    onSendTyping = onSendTyping,
+                    onPollTyping = onPollTyping,
+                )
                 else -> GroupPostsTab(
                     state, baseUrl,
                     photoPicker = { photoPicker.launch(arrayOf("image/*")) },
                     onDraft, onAttach, onPublish,
                     onOpenUser = onOpenUser,
+                    onRecordRound = onRecordRound,
                 )
             }
         } else {
@@ -529,6 +663,43 @@ private fun GroupDetailView(
                 )
             }
         }
+    }
+
+    // 1.6.4: діалог редагування спільноти.
+    if (showEdit) {
+        var editName by remember(group.id) { mutableStateOf(group.name) }
+        var editDescription by remember(group.id) { mutableStateOf(group.description) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showEdit = false },
+            title = { Text(t("Редагувати спільноту ✏️")) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text(t("Назва")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = editDescription,
+                        onValueChange = { editDescription = it },
+                        label = { Text(t("Опис спільноти")) },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showEdit = false
+                    onEditGroup(editName, editDescription)
+                }) { Text(t("Зберегти")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEdit = false }) { Text(t("Скасувати")) }
+            },
+        )
     }
 }
 
@@ -543,6 +714,8 @@ private fun GroupPostsTab(
     onAttach: (ByteArray?) -> Unit,
     onPublish: () -> Unit,
     onOpenUser: (Int) -> Unit,
+    // 1.6.4: записати кружок (кругле відео до 60 с).
+    onRecordRound: () -> Unit = {},
 ) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -567,8 +740,27 @@ private fun GroupPostsTab(
                         IconButton(onClick = photoPicker) {
                             Icon(Icons.Default.AttachFile, contentDescription = t("Прикріпити фото"))
                         }
+                        // 1.6.4: записати кружок — кругле відео до 60 с.
+                        IconButton(onClick = onRecordRound) {
+                            Icon(
+                                Icons.Default.FiberManualRecord,
+                                contentDescription = t("Записати кружок 📹"),
+                                tint = if (state.roundVideo) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
                         if (state.attachedPhotoBytes != null) {
                             Text(t("📷 Фото прикріплено") + " ✕", modifier = Modifier.clickable { onAttach(null) })
+                        }
+                        if (state.roundVideo) {
+                            Text(
+                                t("Кружок прикріплено (до 60 с) ⭕"),
+                                modifier = Modifier.clickable { onAttach(null) },
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
                         Spacer(Modifier.weight(1f))
                         Button(onClick = onPublish, enabled = state.canPublish) {
@@ -596,7 +788,7 @@ private fun GroupPostsTab(
     }
 }
 
-/** Картка поста групи: автор, дата, текст, фото. */
+/** Картка поста групи: автор, дата, текст, фото; 1.6.4: кружок — коло. */
 @Composable
 private fun GroupPostCard(item: FeedItemDto, baseUrl: String, onOpenUser: (Int) -> Unit) {
     val post = item.post
@@ -639,9 +831,17 @@ private fun GroupPostCard(item: FeedItemDto, baseUrl: String, onOpenUser: (Int) 
             }
             if (video != null) {
                 Spacer(Modifier.height(8.dp))
+                // 1.6.4: кружок — кругле відео-повідомлення до хвилини.
                 dev.amps.app.ui.components.InlineVideo(
                     url = absoluteMediaUrl(baseUrl, video.url),
-                    modifier = Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(12.dp)),
+                    modifier = if (post.roundVideo) {
+                        Modifier
+                            .size(240.dp)
+                            .clip(CircleShape)
+                            .align(Alignment.CenterHorizontally)
+                    } else {
+                        Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(12.dp))
+                    },
                 )
             }
         }
@@ -765,7 +965,22 @@ private fun GroupChatTab(
     onDraft: (String) -> Unit,
     onSend: () -> Unit,
     onPickPhoto: () -> Unit,
+    // 1.6.4: реакції, видалення і «друкує…» у груповому чаті.
+    onReact: (Int, String) -> Unit = { _, _ -> },
+    onDeleteMessage: (Int) -> Unit = {},
+    onSendTyping: () -> Unit = {},
+    onPollTyping: () -> Unit = {},
 ) {
+    // 1.6.4: відкрита панель реакцій для конкретного повідомлення.
+    var reactionFor by remember { mutableStateOf<Int?>(null) }
+    var deleteMessageId by remember { mutableStateOf<Int?>(null) }
+    // 1.6.4: опитування «друкує…» раз на 4 с, поки вкладка чату відкрита.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            onPollTyping()
+            kotlinx.coroutines.delay(4000)
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -779,7 +994,32 @@ private fun GroupChatTab(
                 }
             }
             items(state.chat, key = { it.id }) { message ->
-                ChatBubble(message, baseUrl, state.authHeader)
+                ChatBubble(
+                    message = message,
+                    baseUrl = baseUrl,
+                    authHeader = state.authHeader,
+                    reactionOpen = reactionFor == message.id,
+                    onToggleReactionBar = {
+                        reactionFor = if (reactionFor == message.id) null else message.id
+                    },
+                    onReact = { emoji ->
+                        onReact(message.id, emoji)
+                        reactionFor = null
+                    },
+                    canDelete = message.mine,
+                    onDelete = { deleteMessageId = message.id },
+                )
+            }
+            // 1.6.4: «друкує…» над полем вводу.
+            if (state.peerTyping) {
+                item {
+                    Text(
+                        t("друкує…"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 8.dp, bottom = 2.dp),
+                    )
+                }
             }
             item { Spacer(Modifier.height(8.dp)) }
         }
@@ -794,7 +1034,10 @@ private fun GroupChatTab(
             }
             OutlinedTextField(
                 value = state.chatDraft,
-                onValueChange = onDraft,
+                onValueChange = {
+                    onDraft(it)
+                    onSendTyping()
+                },
                 label = { Text(t("Повідомлення…")) },
                 modifier = Modifier.weight(1f),
                 maxLines = 4,
@@ -804,12 +1047,42 @@ private fun GroupChatTab(
             }
         }
     }
+
+    // 1.6.4: підтвердження видалення свого повідомлення.
+    if (deleteMessageId != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { deleteMessageId = null },
+            title = { Text(t("Видалити повідомлення?")) },
+            text = { Text(t("Повідомлення зникне у вас і у співрозмовника.")) },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteMessageId?.let(onDeleteMessage)
+                    deleteMessageId = null
+                }) { Text(t("Видалити 🗑️")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteMessageId = null }) { Text(t("Скасувати")) }
+            },
+        )
+    }
 }
 
 /** Бульбашка повідомлення: мої — праворуч, чужі — ліворуч.
- *  1.6.2: приватні вкладення (private-*) — із Authorization-заголовком. */
+ *  1.6.2: приватні вкладення (private-*) — із Authorization-заголовком.
+ *  1.6.4: панель реакцій + видалення своїх повідомлень. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun ChatBubble(message: ChatMessageDto, baseUrl: String, authHeader: String? = null) {
+private fun ChatBubble(
+    message: ChatMessageDto,
+    baseUrl: String,
+    authHeader: String? = null,
+    reactionOpen: Boolean = false,
+    onToggleReactionBar: () -> Unit = {},
+    onReact: (String) -> Unit = {},
+    // 1.6.4: видалення свого повідомлення з панелі реакцій.
+    canDelete: Boolean = false,
+    onDelete: () -> Unit = {},
+) {
     val align = if (message.mine) Alignment.CenterEnd else Alignment.CenterStart
     Box(Modifier.fillMaxWidth(), contentAlignment = align) {
         Column(
@@ -825,6 +1098,10 @@ private fun ChatBubble(message: ChatMessageDto, baseUrl: String, authHeader: Str
                 .background(
                     if (message.mine) MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
                     else MaterialTheme.colorScheme.surfaceVariant,
+                )
+                .combinedClickable(
+                    onClick = onToggleReactionBar,
+                    onLongClick = onToggleReactionBar,
                 )
                 .padding(10.dp),
         ) {
@@ -887,7 +1164,33 @@ private fun ChatBubble(message: ChatMessageDto, baseUrl: String, authHeader: Str
             )
         }
     }
+    // 1.6.4: панель емодзі для реакції — під бульбашкою (як у приватних чатах).
+    if (reactionOpen) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp, horizontal = 4.dp),
+        ) {
+            GROUP_CHAT_REACTIONS.forEach { emoji ->
+                AssistChip(
+                    onClick = { onReact(emoji) },
+                    label = { Text(emoji) },
+                )
+            }
+            // 1.6.4: свої повідомлення можна видалити.
+            if (canDelete) {
+                AssistChip(
+                    onClick = onDelete,
+                    label = { Text("🗑️") },
+                )
+            }
+        }
+    }
 }
+
+/** 1.6.4: швидкі реакції в груповому чаті (синхронно з приватними). */
+private val GROUP_CHAT_REACTIONS = listOf("❤️", "😂", "👍", "🔥", "😢", "😮")
 
 // --- допоміжне --------------------------------------------------------------
 

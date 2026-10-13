@@ -61,6 +61,8 @@ data class GroupsUiState(
     val composingText: String = "",
     /** Байти фото, прикріпленого до поста групи. */
     val attachedPhotoBytes: ByteArray? = null,
+    /** 1.6.4: прикріплене відео — «кружок» (до 60 с), показується колом. */
+    val roundVideo: Boolean = false,
     /** id учасника/запита, для якого зараз йде дія (kick/role/approve). */
     val busyIds: Set<String> = emptySet(),
     val sendingChat: Boolean = false,
@@ -68,13 +70,16 @@ data class GroupsUiState(
     val error: String? = null,
     /** 1.6.2: Authorization для приватних вкладень чатів. */
     val authHeader: String? = null,
+    /** 1.6.4: хтось друкує у груповому чаті. */
+    val peerTyping: Boolean = false,
 ) {
     /** Мій id (щоб не кікнути себе і ховати свої кнопки). */
     val myRole: String? get() = selected?.group?.myRole
     val isOwner: Boolean get() = myRole == "owner"
     val isModOrOwner: Boolean get() = myRole == "owner" || myRole == "mod"
     val canPublish: Boolean
-        get() = !posting && selected != null && (composingText.isNotBlank() || attachedPhotoBytes != null)
+        get() = !posting && selected != null &&
+            (composingText.isNotBlank() || attachedPhotoBytes != null || roundVideo)
 }
 
 class GroupsViewModel(
@@ -342,7 +347,50 @@ class GroupsViewModel(
 
     fun setComposingText(v: String) { _state.value = _state.value.copy(composingText = v.take(1000)) }
 
-    fun attachPhoto(bytes: ByteArray?) { _state.value = _state.value.copy(attachedPhotoBytes = bytes) }
+    fun attachPhoto(bytes: ByteArray?) { _state.value = _state.value.copy(attachedPhotoBytes = bytes, roundVideo = false) }
+
+    // ===== 1.6.4: кружок у постах групи =====
+
+    /** Прикріпити записаний «кружок» (до 60 с) — показується колом. */
+    fun attachRoundVideo(bytes: ByteArray) {
+        _state.value = _state.value.copy(attachedPhotoBytes = null, roundVideo = true)
+    }
+
+    /** Редагувати спільноту (власник/модератор): назва + опис. */
+    fun updateGroup(name: String, description: String) {
+        val gid = _state.value.selected?.group?.id ?: return
+        if (name.isBlank()) return
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header ->
+                backendApi.updateGroup(header, gid, name.trim(), description.trim())
+            }
+            when (result) {
+                is ApiResult.Success -> {
+                    val updated = result.data as dev.amps.app.data.remote.backend.dto.GroupUpdatedResponse
+                    _state.value = _state.value.copy(
+                        selected = dev.amps.app.data.remote.backend.dto.GroupDetailDto(
+                            group = updated.group,
+                            myRequestPending = _state.value.selected?.myRequestPending ?: false,
+                        ),
+                        notice = Loc.translate("Спільноту оновлено ✏️"),
+                    )
+                    load()
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(error = result.error)
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(error = result.message)
+            }
+        }
+    }
+
+    /** Обкладинка спільноти (власник/модератор) — webp стискається заздалегідь. */
+    fun uploadCover(bytes: ByteArray) {
+        val gid = _state.value.selected?.group?.id ?: return
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header -> backendApi.uploadGroupCover(header, gid, bytes) }
+            if (result is ApiResult.Success) open(gid)
+            else _state.value = _state.value.copy(error = (result as? ApiResult.Failure)?.error)
+        }
+    }
 
     /** Публікація поста в групу (тільки учасникам, +20 XP). */
     fun publishInGroup() {
@@ -355,11 +403,15 @@ class GroupsViewModel(
                 backendApi.createGroupPost(
                     header, gid, s.composingText.trim(),
                     photos = listOfNotNull(s.attachedPhotoBytes),
+                    // 1.6.4: кружок — кругле відео до хвилини.
+                    roundVideo = s.roundVideo,
                 )
             }
             when (result) {
                 is ApiResult.Success -> {
-                    _state.value = _state.value.copy(posting = false, composingText = "", attachedPhotoBytes = null)
+                    _state.value = _state.value.copy(
+                        posting = false, composingText = "", attachedPhotoBytes = null, roundVideo = false,
+                    )
                     loadGroupPosts(gid)
                 }
                 is ApiResult.Failure -> _state.value = _state.value.copy(posting = false, error = result.error)
@@ -405,6 +457,66 @@ class GroupsViewModel(
             val result = backendSession.authedCall { header -> backendApi.sendGroupPhoto(header, gid, bytes) }
             if (result is ApiResult.Success) loadGroupChat(gid)
             else _state.value = _state.value.copy(error = (result as? ApiResult.Failure)?.error)
+        }
+    }
+
+    // ===== 1.6.4: реакції / видалення / друкує у груповому чаті =====
+
+    /** Реакція на повідомлення групового чату (той самий емодзі ще раз — зняти). */
+    fun reactToMessage(messageId: Int, emoji: String) {
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header ->
+                backendApi.reactToMessage(header, messageId, emoji)
+            }
+            val updated = (result as? ApiResult.Success)?.data
+                as? dev.amps.app.data.remote.backend.dto.ChatMessageDto
+            if (updated != null) {
+                _state.value = _state.value.copy(
+                    chat = _state.value.chat.map { if (it.id == updated.id) updated else it },
+                )
+            }
+        }
+    }
+
+    /** Видалити своє повідомлення з групового чату. */
+    fun deleteMessage(messageId: Int) {
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header ->
+                backendApi.deleteChatMessage(header, messageId)
+            }
+            when (result) {
+                is ApiResult.Success -> _state.value = _state.value.copy(
+                    chat = _state.value.chat.filter { it.id != messageId },
+                )
+                is ApiResult.Failure -> _state.value = _state.value.copy(error = result.error)
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(error = result.message)
+            }
+        }
+    }
+
+    /** Позначити «друкує» (тротлінг 3 с) — TypingTracker на сервері тримає 6 с. */
+    private var lastTypingSentAt = 0L
+
+    fun sendTyping() {
+        val gid = _state.value.selected?.group?.id ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastTypingSentAt < 3000) return
+        lastTypingSentAt = now
+        viewModelScope.launch {
+            backendSession.authedCall { header -> backendApi.sendTyping(header, groupId = gid) }
+        }
+    }
+
+    /** Опитати «друкує…» раз на 4 с, поки відкрита вкладка чату. */
+    fun pollTyping() {
+        val gid = _state.value.selected?.group?.id ?: return
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header -> backendApi.getTyping(header, groupId = gid) }
+            val typing = (result as? ApiResult.Success)?.data
+                as? dev.amps.app.data.remote.backend.dto.TypingResponse
+            if (typing != null && _state.value.peerTyping != typing.typing) {
+                _state.value = _state.value.copy(peerTyping = typing.typing)
+            }
         }
     }
 

@@ -5,6 +5,7 @@ import dev.amps.backend.model.ChatMessageSendRequest
 import dev.amps.backend.model.GroupCreateRequest
 import dev.amps.backend.model.GroupKickRequest
 import dev.amps.backend.model.GroupRoleRequest
+import dev.amps.backend.model.GroupUpdateRequest
 import dev.amps.backend.service.ChatService
 import dev.amps.backend.service.FeedService
 import dev.amps.backend.service.FollowService
@@ -26,6 +27,7 @@ import io.ktor.server.response.respondFile
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readBuffer
@@ -111,6 +113,37 @@ fun Application.groupRoutes(
                         call.respondApi(groups.setAvatar(id, uid, name))
                     }
                 }
+                // 1.6.4: оновити назву/опис групи (власник або модератор).
+                put("/{id}") {
+                    val uid = call.requireUid() ?: return@put
+                    val id = call.parameters["id"]?.toIntOrNull() ?: return@put
+                    val body = call.receive<GroupUpdateRequest>()
+                    call.respondApi(groups.update(id, uid, body.name, body.description))
+                }
+                // 1.6.4: обкладинка спільноти (як у ВК).
+                post("/{id}/cover") {
+                    val uid = call.requireUid() ?: return@post
+                    val id = call.parameters["id"]?.toIntOrNull() ?: return@post
+                    val upload = call.receiveUpload() ?: return@post
+                    if (upload.bytes.isEmpty()) {
+                        call.respond(HttpStatusCode.BadRequest, ApiError(error = "Порожній файл обкладинки"))
+                        return@post
+                    }
+                    val ext = media.extensionOf(
+                        upload.fileName ?: "cover.jpg",
+                        upload.contentType ?: "image/jpeg",
+                        MediaStorage.KIND_PHOTO,
+                    ) ?: "jpg"
+                    val name = media.save(MediaStorage.KIND_PHOTO, upload.bytes, ext)
+                    if (name == null) {
+                        call.respond(
+                            HttpStatusCode.InternalServerError,
+                            ApiError(error = "Сховище медіа недоступне", errorCode = "MEDIA_UNAVAILABLE"),
+                        )
+                    } else {
+                        call.respondApi(groups.setCover(id, uid, name))
+                    }
+                }
                 get("/{id}/members") {
                     val id = call.parameters["id"]?.toIntOrNull() ?: return@get
                     call.requireUid()?.let { call.respondApi(groups.members(id)) }
@@ -192,6 +225,8 @@ fun Application.groupRoutes(
                             uid, upload.text, upload.files,
                             imageAspect = upload.imageAspect,
                             groupId = gid,
+                            // 1.6.4: кружки — круглі відео в постах групи.
+                            roundVideo = upload.roundVideo,
                         )
                     )
                 }

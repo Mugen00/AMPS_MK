@@ -549,6 +549,28 @@ class BackendApi private constructor(
             )
         }
 
+    // 1.6.4: оновити назву/опис групи (власник або модератор).
+    suspend fun updateGroup(authHeader: String, groupId: Int, name: String, description: String): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(
+                GroupUpdateRequest.serializer(),
+                GroupUpdateRequest(name = name, description = description),
+            )
+            execute("PUT", "groups/$groupId", body, GroupUpdatedResponse.serializer(), authHeader)
+        }
+
+    // 1.6.4: обкладинка спільноти (власник або модератор).
+    suspend fun uploadGroupCover(authHeader: String, groupId: Int, bytes: ByteArray): ApiResult =
+        withContext(Dispatchers.IO) {
+            executeMultipart(
+                "groups/$groupId/cover", authHeader,
+                listOf(
+                    MultipartPart(name = "file", filename = "cover.jpg", contentType = "image/jpeg", bytes = bytes)
+                ),
+                UnitResult.serializer(),
+            )
+        }
+
     /** Вступ: публічна — одразу учасник; приватна — висилає запит (REQUEST_PENDING). */
     suspend fun joinGroup(authHeader: String, groupId: Int): ApiResult = withContext(Dispatchers.IO) {
         execute("POST", "groups/$groupId/join", null, UnitResult.serializer(), authHeader)
