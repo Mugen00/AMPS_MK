@@ -1,0 +1,400 @@
+package dev.amps.backend.service
+
+import dev.amps.backend.model.ApiResponse
+import dev.amps.backend.model.GroupCreatedResponse
+import dev.amps.backend.model.GroupDetailDto
+import dev.amps.backend.model.GroupDto
+import dev.amps.backend.model.GroupEntity
+import dev.amps.backend.model.GroupJoinRequestDto
+import dev.amps.backend.model.GroupJoinRequestEntity
+import dev.amps.backend.model.GroupJoinRequestTable
+import dev.amps.backend.model.GroupListResponse
+import dev.amps.backend.model.GroupMemberDto
+import dev.amps.backend.model.GroupMemberEntity
+import dev.amps.backend.model.GroupMemberTable
+import dev.amps.backend.model.GroupMembersResponse
+import dev.amps.backend.model.GroupRequestsResponse
+import dev.amps.backend.model.GroupTable
+import dev.amps.backend.model.ProfileDto
+import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
+import org.jetbrains.exposed.sql.transactions.transaction
+
+/**
+ * 1.6.0: групи — спільноти за інтересами всередині Спільноти. Публічні
+ * (вступ одразу) і приватні (запит на вступ, який схвалює власник/мод).
+ * Ролі: owner — один на групу, mod — призначає owner, member — решта.
+ * Активності в групі нараховують XP: створення групи і вступ.
+ * Постинг у групі — через FeedService (пост із group_id).
+ */
+class GroupService(private val profiles: ProfileService) {
+
+    /** Створення групи: власник автоматично перший учасник. XP за створення. */
+    suspend fun create(
+        userId: Int,
+        name: String,
+        description: String,
+        isPrivate: Boolean,
+    ): ApiResponse<GroupCreatedResponse> = newSuspendedTransaction {
+        val cleanName = name.trim()
+        if (cleanName.isBlank()) {
+            return@newSuspendedTransaction ApiResponse.fail("Назва групи порожня", "EMPTY_NAME")
+        }
+        val group = GroupEntity.new {
+            ownerId = userId
+            this.name = cleanName.take(80)
+            this.description = description.trim().take(500)
+            this.isPrivate = isPrivate
+            this.createdAt = System.currentTimeMillis()
+        }
+        GroupMemberEntity.new {
+            this.groupId = group.id.value
+            this.userId = userId
+            this.role = ROLE_OWNER
+            this.joinedAt = group.createdAt
+        }
+        XpLedger.award(userId, XpLedger.GROUP_CREATE)
+        ApiResponse.ok(GroupCreatedResponse(group.id.value))
+    }
+
+    /** Аватарка групи: файл уже у сховищі; міняти може тільки власник. */
+    suspend fun setAvatar(groupId: Int, requesterId: Int, fileName: String): ApiResponse<Boolean> =
+        newSuspendedTransaction {
+            val group = GroupEntity.findById(groupId)
+                ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
+            if (group.ownerId != requesterId) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Аватарку групи міняє тільки власник", "NOT_OWNER",
+                )
+            }
+            group.avatarFile = fileName
+            ApiResponse.ok(true)
+        }
+
+    /** Каталог груп: пошук за назвою/описом (регістр не важливий). */
+    suspend fun list(q: String?, viewerId: Int): ApiResponse<GroupListResponse> = newSuspendedTransaction {
+        val all = GroupEntity.all()
+            .orderBy(GroupTable.createdAt to SortOrder.DESC)
+            .toList()
+        val needle = q?.trim()?.lowercase().orEmpty()
+        val filtered = if (needle.isBlank()) all else {
+            all.filter { g ->
+                g.name.lowercase().contains(needle) || g.description.lowercase().contains(needle)
+            }
+        }
+        ApiResponse.ok(GroupListResponse(filtered.map { it.toDto(viewerId) }))
+    }
+
+    /** Мої групи — ті, де я вже учасник (власник теж учасник). */
+    suspend fun myGroups(viewerId: Int): ApiResponse<GroupListResponse> = newSuspendedTransaction {
+        val myGroupIds = GroupMemberEntity.find { GroupMemberTable.userId eq viewerId }
+            .map { it.groupId }
+        val groups = myGroupIds.mapNotNull { GroupEntity.findById(it) }
+            .sortedByDescending { it.createdAt }
+        ApiResponse.ok(GroupListResponse(groups.map { it.toDto(viewerId) }))
+    }
+
+    /** Карточка групи: роль, членство, висить чи мій запит на вступ. */
+    suspend fun detail(groupId: Int, viewerId: Int): ApiResponse<GroupDetailDto> = newSuspendedTransaction {
+        val group = GroupEntity.findById(groupId)
+            ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
+        val role = roleOfTx(groupId, viewerId)
+        val pending = pendingRequestTx(groupId, viewerId)
+        ApiResponse.ok(
+            GroupDetailDto(
+                id = group.id.value,
+                owner = profileOf(group.ownerId),
+                name = group.name,
+                description = group.description,
+                avatarPath = group.avatarFile?.let { "/media/photo/$it" },
+                isPrivate = group.isPrivate,
+                memberCount = memberCountTx(groupId),
+                isMember = role != null,
+                myRole = role,
+                myRequestPending = group.isPrivate && role == null && pending,
+                createdAt = group.createdAt,
+            )
+        )
+    }
+
+    /** Учасники групи: власник перший, далі за датою вступу. */
+    suspend fun members(groupId: Int): ApiResponse<GroupMembersResponse> = newSuspendedTransaction {
+        if (GroupEntity.findById(groupId) == null) {
+            return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
+        }
+        val rows = GroupMemberEntity.find { GroupMemberTable.groupId eq groupId }
+            .orderBy(GroupMemberTable.joinedAt to SortOrder.ASC)
+            .toList()
+        ApiResponse.ok(
+            GroupMembersResponse(rows.map { m ->
+                val p = profileOf(m.userId)
+                GroupMemberDto(
+                    userId = m.userId,
+                    displayName = p.displayName,
+                    login = p.login,
+                    avatarPath = p.avatarPath,
+                    role = m.role,
+                    joinedAt = m.joinedAt,
+                )
+            })
+        )
+    }
+
+    /** Вступ: публічна — одразу учасник; приватна — запит на схвалення. */
+    suspend fun join(groupId: Int, userId: Int): ApiResponse<Boolean> = newSuspendedTransaction {
+        val group = GroupEntity.findById(groupId)
+            ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
+        if (roleOfTx(groupId, userId) != null) {
+            return@newSuspendedTransaction ApiResponse.ok(true) // вже учасник — не помилка
+        }
+        if (group.isPrivate) {
+            if (pendingRequestTx(groupId, userId)) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Запит на вступ уже надіслано", "REQUEST_PENDING",
+                )
+            }
+            GroupJoinRequestEntity.new {
+                this.groupId = groupId
+                this.userId = userId
+                this.createdAt = System.currentTimeMillis()
+            }
+            return@newSuspendedTransaction ApiResponse.fail(
+                "Запит на вступ надіслано — чекай схвалення", "REQUEST_PENDING",
+            )
+        }
+        GroupMemberEntity.new {
+            this.groupId = groupId
+            this.userId = userId
+            this.role = ROLE_MEMBER
+            this.joinedAt = System.currentTimeMillis()
+        }
+        XpLedger.award(userId, XpLedger.GROUP_JOIN)
+        ApiResponse.ok(true)
+    }
+
+    /** Вихід із групи; власник вийти не може — спершу передати роль чи видалити. */
+    suspend fun leave(groupId: Int, userId: Int): ApiResponse<Boolean> = newSuspendedTransaction {
+        val group = GroupEntity.findById(groupId)
+            ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
+        if (group.ownerId == userId) {
+            return@newSuspendedTransaction ApiResponse.fail(
+                "Власник не може вийти: передай роль або видали групу", "OWNER_CANT_LEAVE",
+            )
+        }
+        val membership = GroupMemberEntity.find {
+            (GroupMemberTable.groupId eq groupId) and (GroupMemberTable.userId eq userId)
+        }.firstOrNull() ?: return@newSuspendedTransaction ApiResponse.fail(
+            "Ти не учасник цієї групи", "NOT_MEMBER",
+        )
+        membership.delete()
+        ApiResponse.ok(true)
+    }
+
+    /** Видалення групи — тільки власник; вкладення зникнуть каскадом. */
+    suspend fun delete(groupId: Int, requesterId: Int): ApiResponse<Boolean> = newSuspendedTransaction {
+        val group = GroupEntity.findById(groupId)
+            ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
+        if (group.ownerId != requesterId) {
+            return@newSuspendedTransaction ApiResponse.fail(
+                "Видаляти групу може тільки власник", "NOT_OWNER",
+            )
+        }
+        group.delete()
+        ApiResponse.ok(true)
+    }
+
+    /** Кік учасника: owner або mod; власника і себе кікнути не можна. */
+    suspend fun kick(groupId: Int, requesterId: Int, targetId: Int): ApiResponse<Boolean> =
+        newSuspendedTransaction {
+            val role = roleOfTx(groupId, requesterId)
+            if (role != ROLE_OWNER && role != ROLE_MOD) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Кікати можуть тільки власник і модератори", "NOT_ALLOWED",
+                )
+            }
+            if (targetId == requesterId) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Себе кікають через вихід із групи", "SELF_KICK",
+                )
+            }
+            val target = GroupMemberEntity.find {
+                (GroupMemberTable.groupId eq groupId) and (GroupMemberTable.userId eq targetId)
+            }.firstOrNull() ?: return@newSuspendedTransaction ApiResponse.fail(
+                "Користувач не учасник групи", "NOT_MEMBER",
+            )
+            if (target.role == ROLE_OWNER) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Власника кікнути не можна", "OWNER_KICK",
+                )
+            }
+            target.delete()
+            ApiResponse.ok(true)
+        }
+
+    /**
+     * Призначення ролі: owner може зробити учасника модератором (mod) або
+     * зняти модератора назад у member. Модератори ролі не міняють.
+     */
+    suspend fun setRole(groupId: Int, requesterId: Int, targetId: Int, role: String): ApiResponse<Boolean> =
+        newSuspendedTransaction {
+            val group = GroupEntity.findById(groupId)
+                ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
+            if (group.ownerId != requesterId) {
+                return@newSuspendedTransaction ApiResponse.fail("Ролі міняє тільки власник", "NOT_OWNER")
+            }
+            if (role !in listOf(ROLE_MOD, ROLE_MEMBER)) {
+                return@newSuspendedTransaction ApiResponse.fail("Невідома роль", "BAD_ROLE")
+            }
+            if (targetId == group.ownerId) {
+                return@newSuspendedTransaction ApiResponse.fail("Власника змінити не можна", "IS_OWNER")
+            }
+            val membership = GroupMemberEntity.find {
+                (GroupMemberTable.groupId eq groupId) and (GroupMemberTable.userId eq targetId)
+            }.firstOrNull() ?: return@newSuspendedTransaction ApiResponse.fail(
+                "Користувач не учасник групи", "NOT_MEMBER",
+            )
+            membership.role = role
+            ApiResponse.ok(true)
+        }
+
+    /** Запити на вступ у приватну групу — лише owner/mod. */
+    suspend fun joinRequests(groupId: Int, requesterId: Int): ApiResponse<GroupRequestsResponse> =
+        newSuspendedTransaction {
+            val role = roleOfTx(groupId, requesterId)
+            if (role != ROLE_OWNER && role != ROLE_MOD) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Запити бачать власник і модератори", "NOT_ALLOWED",
+                )
+            }
+            val rows = GroupJoinRequestEntity.find { GroupJoinRequestTable.groupId eq groupId }
+                .orderBy(GroupJoinRequestTable.createdAt to SortOrder.ASC)
+                .toList()
+            ApiResponse.ok(
+                GroupRequestsResponse(rows.map { req ->
+                    GroupJoinRequestDto(
+                        requestId = req.id.value,
+                        groupId = groupId,
+                        user = profileOf(req.userId),
+                        createdAt = req.createdAt,
+                    )
+                })
+            )
+        }
+
+    /** Схвалити запит: користувач стає member. */
+    suspend fun approveRequest(groupId: Int, requestId: Int, requesterId: Int): ApiResponse<Boolean> =
+        newSuspendedTransaction {
+            val role = roleOfTx(groupId, requesterId)
+            if (role != ROLE_OWNER && role != ROLE_MOD) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Схвалюють власник і модератори", "NOT_ALLOWED",
+                )
+            }
+            val request = GroupJoinRequestEntity.findById(requestId)
+                ?: return@newSuspendedTransaction ApiResponse.fail("Запит не знайдено", "NO_REQUEST")
+            if (request.groupId != groupId) {
+                return@newSuspendedTransaction ApiResponse.fail("Запит іншої групи", "WRONG_GROUP")
+            }
+            if (GroupMemberEntity.find {
+                    (GroupMemberTable.groupId eq groupId) and
+                        (GroupMemberTable.userId eq request.userId)
+                }.firstOrNull() == null) {
+                GroupMemberEntity.new {
+                    this.groupId = groupId
+                    this.userId = request.userId
+                    this.role = ROLE_MEMBER
+                    this.joinedAt = System.currentTimeMillis()
+                }
+                XpLedger.award(request.userId, XpLedger.GROUP_JOIN)
+            }
+            request.delete()
+            ApiResponse.ok(true)
+        }
+
+    /** Відхилити запит на вступ. */
+    suspend fun rejectRequest(groupId: Int, requestId: Int, requesterId: Int): ApiResponse<Boolean> =
+        newSuspendedTransaction {
+            val role = roleOfTx(groupId, requesterId)
+            if (role != ROLE_OWNER && role != ROLE_MOD) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Відхиляють власник і модератори", "NOT_ALLOWED",
+                )
+            }
+            GroupJoinRequestEntity.findById(requestId)?.delete()
+            ApiResponse.ok(true)
+        }
+
+    /** Мої запити на вступ (по всіх групах) — для вкладки клієнта. */
+    suspend fun myRequests(viewerId: Int): ApiResponse<GroupRequestsResponse> = newSuspendedTransaction {
+        val mine = GroupJoinRequestEntity.find { GroupJoinRequestTable.userId eq viewerId }
+            .orderBy(GroupJoinRequestTable.createdAt to SortOrder.ASC)
+            .toList()
+        ApiResponse.ok(
+            GroupRequestsResponse(mine.map { req ->
+                GroupJoinRequestDto(
+                    requestId = req.id.value,
+                    groupId = req.groupId,
+                    user = profileOf(req.userId),
+                    createdAt = req.createdAt,
+                )
+            })
+        )
+    }
+
+    // --- внутрішні дрібниці --------------------------------------------------
+
+    /** Роль користувача в групі або null — не учасник. Публічно для інших сервісів. */
+    fun roleOf(groupId: Int, userId: Int): String? = transaction {
+        GroupMemberEntity.find {
+            (GroupMemberTable.groupId eq groupId) and (GroupMemberTable.userId eq userId)
+        }.firstOrNull()?.role
+    }
+
+    /** Чи є користувач учасником групи (для постингу і чатів групи). */
+    fun isMember(groupId: Int, userId: Int): Boolean = roleOf(groupId, userId) != null
+
+    /** Ідентифікатори всіх учасників групи (власник теж). */
+    fun memberIds(groupId: Int): Set<Int> = transaction {
+        GroupMemberEntity.find { GroupMemberTable.groupId eq groupId }.map { it.userId }.toSet()
+    }
+
+    private fun profileOf(userId: Int): ProfileDto =
+        profiles.profileOf(profiles.ensureProfile(userId))
+
+    private fun memberCountTx(groupId: Int): Int =
+        GroupMemberEntity.find { GroupMemberTable.groupId eq groupId }.count().toInt()
+
+    private fun roleOfTx(groupId: Int, userId: Int): String? = GroupMemberEntity.find {
+        (GroupMemberTable.groupId eq groupId) and (GroupMemberTable.userId eq userId)
+    }.firstOrNull()?.role
+
+    private fun pendingRequestTx(groupId: Int, userId: Int): Boolean =
+        GroupJoinRequestEntity.find {
+            (GroupJoinRequestTable.groupId eq groupId) and (GroupJoinRequestTable.userId eq userId)
+        }.firstOrNull() != null
+
+    private fun GroupEntity.toDto(viewerId: Int): GroupDto {
+        val membership = GroupMemberEntity.find {
+            (GroupMemberTable.groupId eq this@toDto.id.value) and (GroupMemberTable.userId eq viewerId)
+        }.firstOrNull()
+        return GroupDto(
+            id = id.value,
+            owner = profileOf(ownerId),
+            name = name,
+            description = description,
+            avatarPath = avatarFile?.let { "/media/photo/$it" },
+            isPrivate = isPrivate,
+            memberCount = memberCountTx(id.value),
+            isMember = membership != null,
+            myRole = membership?.role,
+            createdAt = createdAt,
+        )
+    }
+
+    companion object {
+        const val ROLE_OWNER = "owner"
+        const val ROLE_MOD = "mod"
+        const val ROLE_MEMBER = "member"
+    }
+}

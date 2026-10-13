@@ -464,3 +464,157 @@ data class StoryDto(
     /** Уже прострочена? Сервер віддає лише живі, але клієнт перевіряє сам. */
     val expired: Boolean = false
 )
+
+// ===== 1.6.0: групи =====
+
+@Serializable
+data class GroupDto(
+    val id: Int,
+    val owner: ProfileDto,
+    val name: String,
+    val description: String,
+    /** Відносний шлях аватарки: /media/photo/{file}; null — заглушка з літери. */
+    val avatarPath: String? = null,
+    val isPrivate: Boolean,
+    val memberCount: Int,
+    /** Чи я вже учасник (власник — теж учасник). */
+    val isMember: Boolean = false,
+    /** "owner" | "mod" | "member" | null (не учасник). */
+    val myRole: String? = null,
+    val createdAt: Long
+)
+
+@Serializable
+data class GroupMemberDto(
+    val userId: Int,
+    val displayName: String,
+    val login: String,
+    val avatarPath: String? = null,
+    /** "owner" | "mod" | "member" */
+    val role: String,
+    val joinedAt: Long
+)
+
+@Serializable
+data class GroupCreateRequest(
+    val name: String,
+    val description: String = "",
+    val isPrivate: Boolean = false
+)
+
+@Serializable
+data class GroupCreatedResponse(val groupId: Int)
+
+@Serializable
+data class GroupListResponse(val groups: List<GroupDto>)
+
+@Serializable
+data class GroupDetailDto(
+    val id: Int,
+    val owner: ProfileDto,
+    val name: String,
+    val description: String,
+    val avatarPath: String? = null,
+    val isPrivate: Boolean,
+    val memberCount: Int,
+    /** Чи я вже учасник (для власника теж true). */
+    val isMember: Boolean,
+    /** Роль мене в групі: "owner"|"mod"|"member" або null. */
+    val myRole: String? = null,
+    /** Для приватної: чи висить мій запит на вступ (поки не схвалено). */
+    val myRequestPending: Boolean = false,
+    val createdAt: Long
+)
+
+@Serializable
+data class GroupRequestsResponse(val requests: List<GroupJoinRequestDto>)
+
+@Serializable
+data class GroupMembersResponse(val members: List<GroupMemberDto>)
+
+@Serializable
+data class GroupJoinRequestDto(
+    val requestId: Int,
+    val groupId: Int,
+    val user: ProfileDto,
+    val createdAt: Long
+)
+
+@Serializable
+data class GroupRoleRequest(
+    val userId: Int,
+    val role: String
+)
+
+@Serializable
+data class GroupKickRequest(val userId: Int)
+
+// ===== 1.6.0: чати =====
+
+@Serializable
+data class ChatMessageDto(
+    val id: Int,
+    val from: ProfileDto,
+    /** Для приватного чату — кому; для групового — у яку групу. */
+    val toUserId: Int? = null,
+    val toGroupId: Int? = null,
+    val text: String,
+    /** Відносний шлях фото: /media/photo/{file}; null — текстове повідомлення. */
+    val mediaUrl: String? = null,
+    val createdAt: Long,
+    /** Своє повідомлення — щоб клієнт вмів вирівнювати бульбашки. */
+    val mine: Boolean = false
+)
+
+@Serializable
+data class ChatMessageSendRequest(val text: String)
+
+@Serializable
+data class ChatMessagesResponse(val messages: List<ChatMessageDto>)
+
+/** Рядок списку чатів: співрозмовник (або група) + останнє повідомлення. */
+@Serializable
+data class ChatDialogDto(
+    /** Для приватного — id співрозмовника; для групового — id групи. */
+    val peerId: Int,
+    /** "user" | "group" */
+    val kind: String,
+    val title: String,
+    val avatarPath: String? = null,
+    val lastText: String = "",
+    /** Відносний шлях фото останнього повідомлення. */
+    val lastMediaUrl: String? = null,
+    val lastAt: Long,
+    /** Непрочитані з останнього відкриття. */
+    val unread: Int = 0
+)
+
+@Serializable
+data class ChatDialogsResponse(val dialogs: List<ChatDialogDto>)
+
+/** Контакти для старту діалогу: ті, на кого я підписаний. */
+@Serializable
+data class ChatContactsResponse(val contacts: List<ProfileDto>)
+
+// ===== Рілси (1.6.0) =====
+
+@Serializable
+data class ReelDto(
+    val id: Int,
+    val author: ProfileDto,
+    /** Відносний шлях відео: /media/video/{file}. */
+    val videoUrl: String,
+    val caption: String,
+    val createdAt: Long,
+    val likeCount: Int,
+    val likedByMe: Boolean
+)
+
+@Serializable
+data class ReelsResponse(val reels: List<ReelDto>)
+
+@Serializable
+data class ReelLikeResponse(
+    val liked: Boolean,
+    val likeCount: Int
+)

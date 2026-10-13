@@ -473,6 +473,246 @@ class BackendApi private constructor(
         execute("POST", "auth/google", body, TokenResponse.serializer(), null)
     }
 
+    // ===== Групи (1.6.0) =====
+
+    /** Каталог груп (публічний), [q] — пошук за назвою. */
+    suspend fun getGroups(authHeader: String, q: String? = null): ApiResult =
+        withContext(Dispatchers.IO) {
+            val suffix = if (q.isNullOrBlank()) "" else "?q=" + java.net.URLEncoder.encode(q, "UTF-8")
+            execute("GET", "groups$q", null, GroupListResponse.serializer(), authHeader)
+        }
+
+    /** Мої групи. */
+    suspend fun getMyGroups(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "groups/my", null, GroupListResponse.serializer(), authHeader)
+    }
+
+    /** Мої запити на вступ у приватні групи. */
+    suspend fun getMyJoinRequests(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "groups/my-requests", null, GroupRequestsResponse.serializer(), authHeader)
+    }
+
+    /** Створити групу (30 XP за активність). */
+    suspend fun createGroup(authHeader: String, name: String, description: String, isPrivate: Boolean): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(
+                GroupCreateRequest.serializer(),
+                GroupCreateRequest(name = name, description = description, isPrivate = isPrivate),
+            )
+            execute("POST", "groups", body, GroupCreatedResponse.serializer(), authHeader)
+        }
+
+    /** Деталі групи + мій статус (учасник / запит висить). */
+    suspend fun getGroup(authHeader: String, groupId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "groups/$groupId", null, GroupDetailDto.serializer(), authHeader)
+    }
+
+    /** Аватар групи (власник) — такий самий multipart, як аватар профіля. */
+    suspend fun uploadGroupAvatar(authHeader: String, groupId: Int, bytes: ByteArray): ApiResult =
+        withContext(Dispatchers.IO) {
+            executeMultipart(
+                "groups/$groupId/avatar", authHeader,
+                listOf(
+                    MultipartPart(name = "file", filename = "avatar.jpg", contentType = "image/jpeg", bytes = bytes)
+                ),
+                AvatarResponse.serializer(),
+            )
+        }
+
+    /** Вступ: публічна — одразу учасник; приватна — висилає запит (REQUEST_PENDING). */
+    suspend fun joinGroup(authHeader: String, groupId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("POST", "groups/$groupId/join", null, UnitResult.serializer(), authHeader)
+    }
+
+    /** Вийти з групи (власнику не можна — спершу передати або видалити групу). */
+    suspend fun leaveGroup(authHeader: String, groupId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("POST", "groups/$groupId/leave", null, UnitResult.serializer(), authHeader)
+    }
+
+    /** Видалити групу (тільки власник). */
+    suspend fun deleteGroup(authHeader: String, groupId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("DELETE", "groups/$groupId", null, UnitResult.serializer(), authHeader)
+    }
+
+    /** Учасники групи з ролями. */
+    suspend fun getGroupMembers(authHeader: String, groupId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "groups/$groupId/members", null, GroupMembersResponse.serializer(), authHeader)
+        }
+
+    /** Виключити учасника (власник/модератор). */
+    suspend fun kickMember(authHeader: String, groupId: Int, userId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(GroupKickRequest.serializer(), GroupKickRequest(userId))
+            execute("POST", "groups/$groupId/kick", body, UnitResult.serializer(), authHeader)
+        }
+
+    /** Змінити роль: "mod" або "member" (власник — тільки власник). */
+    suspend fun setGroupRole(authHeader: String, groupId: Int, userId: Int, role: String): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(GroupRoleRequest.serializer(), GroupRoleRequest(userId, role))
+            execute("POST", "groups/$groupId/role", body, GroupMembersResponse.serializer(), authHeader)
+        }
+
+    /** Запити на вступ (для власника/модераторів приватної групи). */
+    suspend fun getJoinRequests(authHeader: String, groupId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "groups/$groupId/requests", null, GroupRequestsResponse.serializer(), authHeader)
+        }
+
+    /** Схвалити запит (rid — id запита). */
+    suspend fun approveJoinRequest(authHeader: String, groupId: Int, requestId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("POST", "groups/$groupId/requests/$requestId/approve", null, UnitResult.serializer(), authHeader)
+        }
+
+    /** Відхилити запит. */
+    suspend fun rejectJoinRequest(authHeader: String, groupId: Int, requestId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("POST", "groups/$groupId/requests/$requestId/reject", null, UnitResult.serializer(), authHeader)
+        }
+
+    /** Лента постів групи (тільки учасникам). */
+    suspend fun getGroupPosts(authHeader: String, groupId: Int, limit: Int = 20, offset: Long = 0): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "groups/$groupId/posts?limit=$limit&offset=$offset", null, FeedResponse.serializer(), authHeader)
+        }
+
+    /**
+     * Пост у групу: той самий multipart, що й звичайний пост
+     * (текст + фото каруселлю/відео), тільки шлях /groups/{id}/posts.
+     */
+    suspend fun createGroupPost(
+        authHeader: String,
+        groupId: Int,
+        text: String,
+        photos: List<ByteArray> = emptyList(),
+        video: ByteArray? = null,
+        imageAspect: String? = null,
+    ): ApiResult = withContext(Dispatchers.IO) {
+        val parts = buildList {
+            add(MultipartPart(name = "text", value = text))
+            if (imageAspect != null) add(MultipartPart(name = "imageAspect", value = imageAspect))
+            photos.forEachIndexed { index, bytes ->
+                add(
+                    MultipartPart(
+                        name = "photo",
+                        filename = "photo$index.jpg",
+                        contentType = "image/jpeg",
+                        bytes = bytes,
+                    )
+                )
+            }
+            if (video != null) {
+                add(MultipartPart(name = "video", filename = "video.mp4", contentType = "video/mp4", bytes = video))
+            }
+        }
+        executeMultipart("groups/$groupId/posts", authHeader, parts, PostCreatedResponse.serializer())
+    }
+
+    // ===== Чати (1.6.0) =====
+
+    /** Список діалогів: приватні + групові, з непрочитаними. Опитується кожні ~15 с. */
+    suspend fun getChats(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "chats", null, ChatDialogsResponse.serializer(), authHeader)
+    }
+
+    /** Контакти для старту діалогу: ті, на кого я підписаний. */
+    suspend fun getChatContacts(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "chats/contacts", null, ChatContactsResponse.serializer(), authHeader)
+    }
+
+    /** Історія приватного діалогу. */
+    suspend fun getPrivateMessages(authHeader: String, userId: Int, limit: Int = 50, offset: Long = 0): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "chats/$userId?limit=$limit&offset=$offset", null, ChatMessagesResponse.serializer(), authHeader)
+        }
+
+    /** Надіслати текст у приватний діалог (+2 XP за повідомлення). */
+    suspend fun sendPrivateMessage(authHeader: String, userId: Int, text: String): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(ChatMessageSendRequest.serializer(), ChatMessageSendRequest(text))
+            execute("POST", "chats/$userId", body, UnitResult.serializer(), authHeader)
+        }
+
+    /** Надіслати фото у приватний діалог. */
+    suspend fun sendPrivatePhoto(authHeader: String, userId: Int, bytes: ByteArray): ApiResult =
+        withContext(Dispatchers.IO) {
+            executeMultipart(
+                "chats/$userId/photo", authHeader,
+                listOf(
+                    MultipartPart(name = "file", filename = "photo.jpg", contentType = "image/jpeg", bytes = bytes)
+                ),
+                UnitResult.serializer(),
+            )
+        }
+
+    /** Позначити приватний діалог прочитаним (при відкритті чату). */
+    suspend fun markChatRead(authHeader: String, userId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("POST", "chats/$userId/read", null, UnitResult.serializer(), authHeader)
+    }
+
+    /** Історія групового чату. */
+    suspend fun getGroupChat(authHeader: String, groupId: Int, limit: Int = 50, offset: Long = 0): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "groups/$groupId/chat?limit=$limit&offset=$offset", null, ChatMessagesResponse.serializer(), authHeader)
+        }
+
+    /** Текст у груповий чат. */
+    suspend fun sendGroupMessage(authHeader: String, groupId: Int, text: String): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(ChatMessageSendRequest.serializer(), ChatMessageSendRequest(text))
+            execute("POST", "groups/$groupId/chat", body, UnitResult.serializer(), authHeader)
+        }
+
+    /** Фото в груповий чат. */
+    suspend fun sendGroupPhoto(authHeader: String, groupId: Int, bytes: ByteArray): ApiResult =
+        withContext(Dispatchers.IO) {
+            executeMultipart(
+                "groups/$groupId/chat/photo", authHeader,
+                listOf(
+                    MultipartPart(name = "file", filename = "photo.jpg", contentType = "image/jpeg", bytes = bytes)
+                ),
+                UnitResult.serializer(),
+            )
+        }
+
+    /** Позначити груповий чат прочитаним. */
+    suspend fun markGroupChatRead(authHeader: String, groupId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("POST", "groups/$groupId/chat/read", null, UnitResult.serializer(), authHeader)
+    }
+
+    // ===== Рілси (1.6.0) =====
+
+    /** Лента рілсів (публічна; для залогінених — лайки «мої»). */
+    suspend fun getReels(authHeader: String?, limit: Int = 20, offset: Long = 0): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("GET", "reels?limit=$limit&offset=$offset", null, ReelsResponse.serializer(), authHeader)
+        }
+
+    /** Опублікувати рилс: відео mp4/webm/mov ≤50 МБ + підпис. */
+    suspend fun createReel(authHeader: String, video: ByteArray, caption: String): ApiResult =
+        withContext(Dispatchers.IO) {
+            executeMultipart(
+                "reels", authHeader,
+                listOf(
+                    MultipartPart(name = "caption", value = caption),
+                    MultipartPart(name = "video", filename = "reel.mp4", contentType = "video/mp4", bytes = video),
+                ),
+                PostCreatedResponse.serializer(),
+            )
+        }
+
+    /** Лайк рилса — toggle, як у постів. */
+    suspend fun toggleReelLike(authHeader: String, reelId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("POST", "reels/$reelId/like", null, ReelLikeResponse.serializer(), authHeader)
+    }
+
+    /** Видалити свій рилс. */
+    suspend fun deleteReel(authHeader: String, reelId: Int): ApiResult = withContext(Dispatchers.IO) {
+        execute("DELETE", "reels/$reelId", null, UnitResult.serializer(), authHeader)
+    }
+
     // ===== Core =====
 
     /**

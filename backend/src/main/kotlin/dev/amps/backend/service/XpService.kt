@@ -24,6 +24,13 @@ object XpLedger {
     const val ANIME_ADD = 10
     const val STORY = 10
 
+    // 1.6.0: активності груп, чатів і рілсів — теж підвищують рівень.
+    const val GROUP_CREATE = 30
+    const val GROUP_JOIN = 5
+    const val GROUP_POST = 20
+    const val CHAT_MESSAGE = 2
+    const val REEL = 20
+
     /** Рівень із накопиченого XP: 1 + xp/100, стеля 100. */
     fun levelFor(xp: Int): Int = (1 + xp / 100).coerceIn(1, 100)
 

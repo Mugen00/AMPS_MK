@@ -407,3 +407,136 @@ data class AnimeListUpsertRequest(
     val status: String,
     val reminder: Boolean = true,
 )
+
+// ===== Групи (1.6.0) =====
+
+@Serializable
+data class GroupDto(
+    val id: Int,
+    val owner: ProfileDto,
+    val name: String,
+    val description: String,
+    val avatarPath: String? = null,
+    val isPrivate: Boolean = false,
+    val memberCount: Int = 0,
+    /** Я — учасник цієї групи? */
+    val isMember: Boolean = false,
+    /** "owner" | "mod" | "member" — моя роль, якщо учасник. */
+    val myRole: String? = null,
+    val createdAt: Long = 0,
+)
+
+@Serializable
+data class GroupCreateRequest(
+    val name: String,
+    val description: String = "",
+    val isPrivate: Boolean = false,
+)
+
+@Serializable
+data class GroupCreatedResponse(val groupId: Int)
+
+@Serializable
+data class GroupListResponse(val groups: List<GroupDto>)
+
+@Serializable
+data class GroupDetailDto(
+    val group: GroupDto,
+    /** Запит у приватну групу вже висілан і чекає схвалення. */
+    val myRequestPending: Boolean = false,
+)
+
+@Serializable
+data class GroupMemberDto(
+    val userId: Int,
+    val displayName: String,
+    val login: String,
+    val avatarPath: String? = null,
+    /** "owner" | "mod" | "member" */
+    val role: String,
+    val joinedAt: Long,
+)
+
+@Serializable
+data class GroupMembersResponse(val members: List<GroupMemberDto>)
+
+@Serializable
+data class GroupJoinRequestDto(
+    val requestId: Int,
+    val groupId: Int,
+    val user: ProfileDto,
+    val createdAt: Long,
+)
+
+@Serializable
+data class GroupRequestsResponse(val requests: List<GroupJoinRequestDto>)
+
+@Serializable
+data class GroupRoleRequest(val userId: Int, val role: String)
+
+@Serializable
+data class GroupKickRequest(val userId: Int)
+
+// ===== Чати (1.6.0) =====
+
+@Serializable
+data class ChatMessageDto(
+    val id: Int,
+    val from: ProfileDto,
+    val toUserId: Int? = null,
+    val toGroupId: Int? = null,
+    val text: String,
+    val mediaUrl: String? = null,
+    val createdAt: Long,
+    /** Своє повідомлення — щоб клієнт вмів вирівнювати бульбашки. */
+    val mine: Boolean = false,
+)
+
+@Serializable
+data class ChatMessagesResponse(val messages: List<ChatMessageDto>)
+
+@Serializable
+data class ChatMessageSendRequest(val text: String)
+
+/** Рядок списку чатів: співрозмовник (або група) + останнє повідомлення. */
+@Serializable
+data class ChatDialogDto(
+    /** Для приватного — id співрозмовника; для групового — id групи. */
+    val peerId: Int,
+    /** "user" | "group" */
+    val kind: String,
+    val title: String,
+    val avatarPath: String? = null,
+    val lastText: String = "",
+    val lastMediaUrl: String? = null,
+    val lastAt: Long,
+    /** Непрочитані з останнього відкриття. */
+    val unread: Int = 0,
+)
+
+@Serializable
+data class ChatDialogsResponse(val dialogs: List<ChatDialogDto>)
+
+/** Контакти для старту діалогу: ті, на кого я підписаний. */
+@Serializable
+data class ChatContactsResponse(val contacts: List<ProfileDto>)
+
+// ===== Рілси (1.6.0) =====
+
+@Serializable
+data class ReelDto(
+    val id: Int,
+    val author: ProfileDto,
+    /** Відносний шлях відео: /media/video/{file}. */
+    val videoUrl: String,
+    val caption: String = "",
+    val createdAt: Long = 0,
+    val likeCount: Int = 0,
+    val likedByMe: Boolean = false,
+)
+
+@Serializable
+data class ReelsResponse(val reels: List<ReelDto>)
+
+@Serializable
+data class ReelLikeResponse(val liked: Boolean, val likeCount: Int)

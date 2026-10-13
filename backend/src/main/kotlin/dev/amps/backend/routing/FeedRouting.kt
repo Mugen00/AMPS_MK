@@ -448,7 +448,7 @@ internal class Upload(val bytes: ByteArray)
  * Читає multipart-запит аватара: перший файл. Повертає null, коли відповідь
  * уже надіслано клієнту (немає файлу, перевищено ліміт, зчитування зірвалося).
  */
-private suspend fun ApplicationCall.receiveUpload(): Upload? {
+internal suspend fun ApplicationCall.receiveUpload(): Upload? {
     var bytes: ByteArray? = null
     var tooLarge = false
     try {
@@ -497,8 +497,9 @@ internal data class PostUpload(
  * Кожен файл обмежений лімітом свого виду (фото 10 МБ, відео 50 МБ) і
  * білим списком розширень; невідомі частини пропускаються. Медіа зберігаються
  * у сховище одразу тут — сервіс отримує лише імена файлів.
+ * 1.6.0: internal — використовується ще й для постів у групах (SocialRouting).
  */
-private suspend fun ApplicationCall.receivePost(media: MediaStorage): PostUpload? {
+internal suspend fun ApplicationCall.receivePost(media: MediaStorage): PostUpload? {
     var text = ""
     var imageAspect: String? = null
     var tooLarge = false
@@ -567,8 +568,9 @@ private suspend fun ApplicationCall.receivePost(media: MediaStorage): PostUpload
 /**
  * Читає канал до [cap] байтів. Повертає null, якщо файл більший —
  * зайве навіть у пам'ять не потрапляє: читається щонайбільше cap+1 байт.
+ * 1.6.0: internal — використовується ще й рілсами (SocialRouting).
  */
-private suspend fun ByteReadChannel.readCapped(cap: Long): ByteArray? {
+internal suspend fun ByteReadChannel.readCapped(cap: Long): ByteArray? {
     val buffer = readBuffer((cap + 1).toInt())
     val bytes = buffer.readByteArray()
     return if (bytes.size.toLong() > cap) null else bytes

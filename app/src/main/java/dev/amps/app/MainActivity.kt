@@ -9,8 +9,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.ImageSearch
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -139,6 +141,10 @@ private object Routes {
     const val WEB_VIEW = "web/{url}"
     const val HISTORY = "history"
     const val UPDATE = "update"
+    // 1.6.0
+    const val GROUPS = "groups"
+    const val CHATS = "chats"
+    const val REELS = "reels"
 }
 
 private data class TabItem(val route: String, val label: String, val icon: ImageVector)
@@ -182,11 +188,22 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
         )
     )
     // 1.1.2: Спільнота і профіль — сесія бекенда спільна з фоновою перевіркою.
+    // 1.1.2: Спільнота і профіль — сесія бекенда спільна з фоновою перевіркою.
     val communityViewModel: CommunityViewModel = viewModel(
         factory = CommunityViewModel.Factory(container.backendApi, container.backendSession)
     )
     val profileViewModel: ProfileViewModel = viewModel(
         factory = ProfileViewModel.Factory(container.backendApi, container.backendSession)
+    )
+    // 1.6.0: групи, чати і рілси — та сама сесія бекенда.
+    val groupsViewModel: dev.amps.app.ui.screens.groups.GroupsViewModel = viewModel(
+        factory = dev.amps.app.ui.screens.groups.GroupsViewModel.Factory(container.backendApi, container.backendSession)
+    )
+    val chatsViewModel: dev.amps.app.ui.screens.chats.ChatsViewModel = viewModel(
+        factory = dev.amps.app.ui.screens.chats.ChatsViewModel.Factory(container.backendApi, container.backendSession)
+    )
+    val reelsViewModel: dev.amps.app.ui.screens.reels.ReelsViewModel = viewModel(
+        factory = dev.amps.app.ui.screens.reels.ReelsViewModel.Factory(container.backendApi, container.backendSession)
     )
 
     // A frame shared from the gallery goes straight into the search screen.
@@ -203,6 +220,10 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
         TabItem(Routes.FRAME, dev.amps.app.core.t("Картинка"), Icons.Default.ImageSearch),
         TabItem(Routes.MUSIC, dev.amps.app.core.t("Музыка"), Icons.Default.MusicNote),
         TabItem(Routes.COMMUNITY, dev.amps.app.core.t("Спільнота"), Icons.Default.Groups),
+        // 1.6.0: Групи, Чати і Рілси — нові розділи спільноти.
+        TabItem(Routes.GROUPS, dev.amps.app.core.t("Групи"), Icons.Default.Groups),
+        TabItem(Routes.CHATS, dev.amps.app.core.t("Чати"), Icons.Default.Chat),
+        TabItem(Routes.REELS, dev.amps.app.core.t("Рілси"), Icons.Default.Movie),
         TabItem(Routes.ANIME, dev.amps.app.core.t("Аніме"), Icons.Default.PlayArrow),
         TabItem(Routes.SETTINGS, dev.amps.app.core.t("Настройки"), Icons.Default.Settings),
     )
@@ -212,12 +233,15 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
         bottomBar = {
             if (currentRoute in tabs.map { it.route }) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    // 1.6.0: вкладок стало 8 — підпис лише в вибраній,
+                    // щоб ряд навігації не тиснився.
                     tabs.forEach { tab ->
                         NavigationBarItem(
                             selected = currentRoute == tab.route,
                             onClick = { navController.navigateToTab(tab.route) },
                             icon = { Icon(tab.icon, contentDescription = tab.label) },
                             label = { Text(tab.label) },
+                            alwaysShowLabel = false,
                         )
                     }
                 }
@@ -293,6 +317,36 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                     ),
                     baseUrl = container.backendApi.effectiveBaseUrl,
                     onBack = { navController.popBackStack() },
+                )
+            }
+            // 1.6.0: Групи — каталог, створення, учасники, пости групи, чат групи.
+            composable(Routes.GROUPS) {
+                dev.amps.app.ui.screens.groups.GroupsScreen(
+                    viewModel = groupsViewModel,
+                    baseUrl = container.backendApi.effectiveBaseUrl,
+                    onOpenAuth = { navController.navigate(Routes.AUTH) },
+                    onOpenUserProfile = { userId -> navController.navigate("user/$userId") },
+                )
+            }
+            // 1.6.0: Чати — приватні діалоги; групові відкривають деталь групи.
+            composable(Routes.CHATS) {
+                dev.amps.app.ui.screens.chats.ChatsScreen(
+                    viewModel = chatsViewModel,
+                    baseUrl = container.backendApi.effectiveBaseUrl,
+                    onOpenAuth = { navController.navigate(Routes.AUTH) },
+                    onOpenGroup = { groupId ->
+                        navController.navigateToTab(Routes.GROUPS)
+                        groupsViewModel.open(groupId)
+                    },
+                )
+            }
+            // 1.6.0: Рілси — вертикальні відео 9:16 у повному екрані.
+            composable(Routes.REELS) {
+                dev.amps.app.ui.screens.reels.ReelsScreen(
+                    viewModel = reelsViewModel,
+                    baseUrl = container.backendApi.effectiveBaseUrl,
+                    onOpenAuth = { navController.navigate(Routes.AUTH) },
+                    onOpenUserProfile = { userId -> navController.navigate("user/$userId") },
                 )
             }
             // 1.2.2: каталог аніме — AniList, мій список, нагадування серій.

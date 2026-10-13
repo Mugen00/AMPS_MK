@@ -133,6 +133,11 @@ object PostTable : IntIdTable("posts") {
     // 1.5.1: формат показу фото, як в Instagram ("original"|"1:1"|"4:5"|"16:9").
     // null — старі пости й оригінальний показ без обрізання.
     val imageAspect = varchar("image_aspect", 12).nullable()
+
+    // 1.6.0: пост належить групі (null — звичайний пост спільноти).
+    // Без FK-декларації: таблиця груп оголошена нижче по файлу, а посилання
+    // на групу чиститься при видаленні групи в сервісі.
+    val groupId = integer("group_id").nullable()
 }
 
 class PostEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -142,6 +147,7 @@ class PostEntity(id: EntityID<Int>) : IntEntity(id) {
     var text by PostTable.text
     var createdAt by PostTable.createdAt
     var imageAspect by PostTable.imageAspect
+    var groupId by PostTable.groupId
 }
 
 // ===== Вкладення поста: фото або відео =====
@@ -401,4 +407,148 @@ class PollVoteEntity(id: EntityID<Int>) : IntEntity(id) {
     var pollId by PollVoteTable.pollId
     var userId by PollVoteTable.userId
     var optionId by PollVoteTable.optionId
+}
+
+// ===== 1.6.0: групи =====
+object GroupTable : IntIdTable("groups") {
+    val ownerId = integer("owner_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val name = varchar("name", 80)
+    val description = varchar("description", 500).default("")
+    /** Ім'я файлу аватарки у сховищі (null — буква-заглушка). */
+    val avatarFile = varchar("avatar_file", 100).nullable()
+    val isPrivate = bool("is_private").default(false)
+    val createdAt = long("created_at")
+}
+
+class GroupEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<GroupEntity>(GroupTable)
+
+    var ownerId by GroupTable.ownerId
+    var name by GroupTable.name
+    var description by GroupTable.description
+    var avatarFile by GroupTable.avatarFile
+    var isPrivate by GroupTable.isPrivate
+    var createdAt by GroupTable.createdAt
+}
+
+// Учасник групи: роль "owner" | "mod" | "member".
+object GroupMemberTable : IntIdTable("group_members") {
+    val groupId = integer("group_id").references(GroupTable.id, ReferenceOption.CASCADE)
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val role = varchar("role", 10)
+    val joinedAt = long("joined_at")
+
+    init {
+        uniqueIndex(groupId, userId)
+    }
+}
+
+class GroupMemberEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<GroupMemberEntity>(GroupMemberTable)
+
+    var groupId by GroupMemberTable.groupId
+    var userId by GroupMemberTable.userId
+    var role by GroupMemberTable.role
+    var joinedAt by GroupMemberTable.joinedAt
+}
+
+// 1.6.0: запити на вступ у приватну групу.
+object GroupJoinRequestTable : IntIdTable("group_join_requests") {
+    val groupId = integer("group_id").references(GroupTable.id, ReferenceOption.CASCADE)
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val createdAt = long("created_at")
+
+    init {
+        uniqueIndex(groupId, userId)
+    }
+}
+
+class GroupJoinRequestEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<GroupJoinRequestEntity>(GroupJoinRequestTable)
+
+    var groupId by GroupJoinRequestTable.groupId
+    var userId by GroupJoinRequestTable.userId
+    var createdAt by GroupJoinRequestTable.createdAt
+}
+
+// ===== 1.6.0: чати =====
+object ChatMessageTable : IntIdTable("chat_messages") {
+    val fromId = integer("from_id").references(UserTable.id, ReferenceOption.CASCADE)
+    /** Отримувач: приватний діалог (1-на-1) або група (одне з двох не null). */
+    val toUserId = integer("to_user_id").references(UserTable.id, ReferenceOption.CASCADE).nullable()
+    val toGroupId = integer("to_group_id").references(GroupTable.id, ReferenceOption.CASCADE).nullable()
+    val text = varchar("text", 1000).default("")
+    /** Фото в чаті: ім'я файлу у сховищі, віддається за /media/photo/{file}. */
+    val mediaFile = varchar("media_file", 100).nullable()
+    val createdAt = long("created_at")
+
+    init {
+        index(false, fromId)
+    }
+}
+
+class ChatMessageEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<ChatMessageEntity>(ChatMessageTable)
+
+    var fromId by ChatMessageTable.fromId
+    var toUserId by ChatMessageTable.toUserId
+    var toGroupId by ChatMessageTable.toGroupId
+    var text by ChatMessageTable.text
+    var mediaFile by ChatMessageTable.mediaFile
+    var createdAt by ChatMessageTable.createdAt
+}
+
+// Позначки прочитання: приватний діалог — пара (хто, співрозмовник),
+// груповий — (користувач, група). Одне з двох peer-полів заповнене.
+object ChatReadTable : IntIdTable("chat_reads") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val peerUserId = integer("peer_user_id").references(UserTable.id, ReferenceOption.CASCADE).nullable()
+    val groupId = integer("group_id").references(GroupTable.id, ReferenceOption.CASCADE).nullable()
+    val lastReadAt = long("last_read_at")
+
+    init {
+        index(false, userId)
+    }
+}
+
+class ChatReadEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<ChatReadEntity>(ChatReadTable)
+
+    var userId by ChatReadTable.userId
+    var peerUserId by ChatReadTable.peerUserId
+    var groupId by ChatReadTable.groupId
+    var lastReadAt by ChatReadTable.lastReadAt
+}
+
+// ===== 1.6.0: рілси — вертикальні відео 9:16 =====
+object ReelTable : IntIdTable("reels") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val videoFile = varchar("video_file", 100)
+    val caption = varchar("caption", 500).default("")
+    val createdAt = long("created_at")
+}
+
+class ReelEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<ReelEntity>(ReelTable)
+
+    var userId by ReelTable.userId
+    var videoFile by ReelTable.videoFile
+    var caption by ReelTable.caption
+    var createdAt by ReelTable.createdAt
+}
+
+object ReelLikeTable : IntIdTable("reel_likes") {
+    val reelId = integer("reel_id").references(ReelTable.id, ReferenceOption.CASCADE)
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+
+    init {
+        uniqueIndex(reelId, userId)
+    }
+}
+
+class ReelLikeEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<ReelLikeEntity>(ReelLikeTable)
+
+    var reelId by ReelLikeTable.reelId
+    var userId by ReelLikeTable.userId
 }

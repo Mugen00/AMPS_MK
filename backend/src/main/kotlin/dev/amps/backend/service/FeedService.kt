@@ -43,7 +43,9 @@ class FeedService(
     /**
      * Створює пост. Медіа до цього моменту вже лежать у сховищі
      * (роутинг зберігає файли до виклику) — сюди приходять пари
-     * «вид вкладення — ім'я файлу».
+     * «вид вкладення — ім'я файлу». 1.6.0: [groupId] — пост у групі
+     * (учасник — перевіряє роутинг через GroupService); XP за пост
+     * у групі окремі (GROUP_POST замість POST).
      */
     suspend fun createPost(
         userId: Int,
@@ -53,6 +55,8 @@ class FeedService(
         pollQuestion: String? = null,
         // 1.5.1: формат показу фото, як в Instagram.
         imageAspect: String? = null,
+        // 1.6.0: пост у групі (null — звичайний пост спільноти).
+        groupId: Int? = null,
     ): ApiResponse<PostCreatedResponse> = newSuspendedTransaction {
         val cleanPoll = pollOptions?.let { polls?.validateOptions(it) }
         if (text.isBlank() && media.isEmpty() && cleanPoll == null) {
@@ -64,6 +68,7 @@ class FeedService(
             this.text = text.trim().take(1000)
             this.createdAt = System.currentTimeMillis()
             this.imageAspect = imageAspect.takeIf { it in KNOWN_ASPECTS }
+            this.groupId = groupId
         }
         media.forEach { (kind, fileName) ->
             PostMediaEntity.new {
@@ -76,8 +81,12 @@ class FeedService(
         if (cleanPoll != null) {
             polls?.createForPost(userId, post.id.value, pollQuestion, cleanPoll)
         }
-        // 1.2.4: XP за пост.
-        dev.amps.backend.service.XpLedger.award(userId, dev.amps.backend.service.XpLedger.POST)
+        // 1.2.4: XP за пост (пост у групі — своя активність).
+        if (groupId != null) {
+            dev.amps.backend.service.XpLedger.award(userId, dev.amps.backend.service.XpLedger.GROUP_POST)
+        } else {
+            dev.amps.backend.service.XpLedger.award(userId, dev.amps.backend.service.XpLedger.POST)
+        }
         // Профіль автора створюється разом із першим постом.
         profiles.ensureProfile(userId)
         ApiResponse.ok(PostCreatedResponse(postId = post.id.value))
@@ -107,6 +116,8 @@ class FeedService(
                 .orderBy(PostTable.createdAt to SortOrder.DESC)
                 .limit(fetch.toInt(), offset = 0)
                 .toList()
+                // 1.6.0: пости груп — у ленті своєї групи, не в загальній.
+                .filter { it.groupId == null }
             // 1.2.2: режим «підписки» — тільки свої й тих, на кого підписаний.
             val posts = if (followingIds != null) {
                 allPosts.filter { it.userId in followingIds }
@@ -211,10 +222,29 @@ class FeedService(
     /**
      * 1.2.5: пости конкретного користувача — чужий профіль.
      * [viewerId] потрібен, щоб у картках було видно власні лайки/голоси.
+     * 1.6.0: пости груп у профілі не показуються (вони в групі).
      */
     suspend fun userPosts(targetId: Int, viewerId: Int): ApiResponse<FeedResponse> = newSuspendedTransaction {
         val posts = PostEntity.find { PostTable.userId eq targetId }
             .orderBy(PostTable.createdAt to SortOrder.DESC)
+            .toList()
+            .filter { it.groupId == null }
+        ok(FeedResponse(items = posts.map { FeedItemDto(KIND_POST, postDto(it, viewerId), null, it.createdAt) }))
+    }
+
+    /**
+     * 1.6.0: лента постів групи — тільки для учасників (перевіряє роутинг
+     * через GroupService.isMember); свіжі зверху, пагінація offset'ом.
+     */
+    suspend fun groupPosts(
+        groupId: Int,
+        viewerId: Int,
+        limit: Int,
+        offset: Long,
+    ): ApiResponse<FeedResponse> = newSuspendedTransaction {
+        val posts = PostEntity.find { PostTable.groupId eq groupId }
+            .orderBy(PostTable.createdAt to SortOrder.DESC)
+            .limit(limit, offset)
             .toList()
         ok(FeedResponse(items = posts.map { FeedItemDto(KIND_POST, postDto(it, viewerId), null, it.createdAt) }))
     }

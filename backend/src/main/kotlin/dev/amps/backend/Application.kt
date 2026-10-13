@@ -21,6 +21,7 @@ import dev.amps.backend.model.VerificationCodeTable
 import dev.amps.backend.routing.authRoutes
 import dev.amps.backend.routing.feedRoutes
 import dev.amps.backend.routing.playlistRoutes
+import dev.amps.backend.routing.socialRoutes
 import dev.amps.backend.service.AuthService
 import dev.amps.backend.service.EmailService
 import dev.amps.backend.service.FeedService
@@ -82,6 +83,10 @@ fun main() {
     // 1.2.2: коментарі та аніме-список акаунта.
     val commentService = dev.amps.backend.service.CommentService(profileService)
     val animeListService = dev.amps.backend.service.AnimeListService()
+    // 1.6.0: групи, чати (приватні + групові) і рілси.
+    val groupService = dev.amps.backend.service.GroupService(profileService)
+    val chatService = dev.amps.backend.service.ChatService(profileService, groupService)
+    val reelService = dev.amps.backend.service.ReelService(profileService)
 
     initDatabase(config)
 
@@ -90,7 +95,7 @@ fun main() {
             config, authService, twoFactorService, syncService,
             feedService, profileService, media, storyService, playlistService,
             commentService, followService, animeListService, pollService,
-            animeWatchService,
+            animeWatchService, groupService, chatService, reelService,
         )
     }.start(wait = true)
 }
@@ -133,6 +138,14 @@ private fun initDatabase(config: AppConfig) {
             dev.amps.backend.model.PollVoteTable,
             // 1.2.4: XP і рівні.
             dev.amps.backend.model.XpTable,
+            // 1.6.0: групи, чати, рілси.
+            dev.amps.backend.model.GroupTable,
+            dev.amps.backend.model.GroupMemberTable,
+            dev.amps.backend.model.GroupJoinRequestTable,
+            dev.amps.backend.model.ChatMessageTable,
+            dev.amps.backend.model.ChatReadTable,
+            dev.amps.backend.model.ReelTable,
+            dev.amps.backend.model.ReelLikeTable,
         )
     }
 }
@@ -152,6 +165,9 @@ fun Application.module(
     animeListService: dev.amps.backend.service.AnimeListService,
     pollService: dev.amps.backend.service.PollService,
     animeWatchService: dev.amps.backend.service.AnimeWatchService,
+    groupService: dev.amps.backend.service.GroupService,
+    chatService: dev.amps.backend.service.ChatService,
+    reelService: dev.amps.backend.service.ReelService,
 ) {
     install(ContentNegotiation) {
         json(kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
@@ -197,4 +213,8 @@ fun Application.module(
     feedRoutes(config, feedService, profileService, media, storyService, commentService, followService, animeListService, pollService, animeWatchService)
     // 1.2.1: свої плейлісти акаунта — у базі, онлайн-слухання в застосунку.
     playlistRoutes(playlistService)
+    // 1.6.0: групи, чати, рілси.
+    socialRoutes(
+        feedService, profileService, media, groupService, chatService, reelService, followService,
+    )
 }
