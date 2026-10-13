@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -36,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -117,18 +119,64 @@ fun ReelsScreen(
         }
     }
 
+    // 1.6.3: запис рілса з камери — до 60 с, низька якість (менше байт),
+    // файл пише у приватний cache/camera через FileProvider.
+    val reelShotDir = remember { java.io.File(context.cacheDir, "camera").apply { mkdirs() } }
+    val reelVideoFile = remember { java.io.File(reelShotDir, "reel.mp4") }
+    val reelCameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val bytes = reelVideoFile.takeIf { it.length() in 1..50L * 1024 * 1024 }?.readBytes()
+            if (bytes != null) {
+                pendingVideoBytes = bytes
+                showCaptionDialog = true
+            }
+        }
+    }
+
+    fun recordReel() {
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.updates", reelVideoFile)
+        val intent = android.content.Intent(android.provider.MediaStore.ACTION_VIDEO_CAPTURE).apply {
+            putExtra(android.provider.MediaStore.EXTRA_DURATION_LIMIT, 60)
+            putExtra(android.provider.MediaStore.EXTRA_VIDEO_QUALITY, 0)
+            putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri)
+            addFlags(
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        runCatching { reelCameraLauncher.launch(intent) }
+    }
+
     Scaffold(
         containerColor = Color.Black,
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    if (state.authorized) videoPicker.launch(arrayOf("video/mp4", "video/webm", "video/quicktime"))
-                    else onOpenAuth()
-                },
-                containerColor = MaterialTheme.colorScheme.primary,
-            ) {
-                Icon(Icons.Default.Add, contentDescription = t("Опублікувати рилс"), tint = MaterialTheme.colorScheme.onPrimary)
+            // 1.6.3: два способи опублікувати рилс — зняти на камеру (≤60 с)
+            // або обрати відео з галереї.
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SmallFloatingActionButton(
+                    onClick = {
+                        if (state.authorized) recordReel() else onOpenAuth()
+                    },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Icon(
+                        Icons.Default.Videocam,
+                        contentDescription = t("Зняти рілс 🎬"),
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+                FloatingActionButton(
+                    onClick = {
+                        if (state.authorized) videoPicker.launch(arrayOf("video/mp4", "video/webm", "video/quicktime"))
+                        else onOpenAuth()
+                    },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = t("Опублікувати рилс"), tint = MaterialTheme.colorScheme.onPrimary)
+                }
             }
         },
     ) { padding ->

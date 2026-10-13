@@ -8,10 +8,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.ImageSearch
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
@@ -22,7 +28,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -37,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -151,6 +160,8 @@ private object Routes {
 
 private data class TabItem(val route: String, val label: String, val icon: ImageVector)
 
+// 1.6.3: ModalBottomSheet — experimental API.
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
     val navController = rememberNavController()
@@ -218,21 +229,22 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
         }
     }
 
-    val tabs = listOf(
-        TabItem(Routes.FRAME, dev.amps.app.core.t("Картинка"), Icons.Default.ImageSearch),
-        TabItem(Routes.MUSIC, dev.amps.app.core.t("Музыка"), Icons.Default.MusicNote),
+    // 1.6.3: у панелі — 4 головні вкладки, решта — у «Ще» (bottom sheet).
+    val primaryTabs = listOf(
         TabItem(Routes.COMMUNITY, dev.amps.app.core.t("Спільнота"), Icons.Default.Groups),
-        // 1.6.0: Групи, Чати і Рілси — нові розділи спільноти.
-        TabItem(Routes.GROUPS, dev.amps.app.core.t("Групи"), Icons.Default.Groups),
         TabItem(Routes.CHATS, dev.amps.app.core.t("Чати"), Icons.Default.Chat),
         TabItem(Routes.REELS, dev.amps.app.core.t("Рілси"), Icons.Default.Movie),
+        TabItem(Routes.MUSIC, dev.amps.app.core.t("Музыка"), Icons.Default.MusicNote),
+    )
+    val moreTabs = listOf(
+        TabItem(Routes.FRAME, dev.amps.app.core.t("Картинка"), Icons.Default.ImageSearch),
+        TabItem(Routes.GROUPS, dev.amps.app.core.t("Групи"), Icons.Default.Group),
         TabItem(Routes.ANIME, dev.amps.app.core.t("Аніме"), Icons.Default.PlayArrow),
         TabItem(Routes.SETTINGS, dev.amps.app.core.t("Настройки"), Icons.Default.Settings),
     )
+    val allTabRoutes = (primaryTabs + moreTabs).map { it.route }
+    var showMoreSheet by remember { mutableStateOf(false) }
 
-    // 1.6.1: сумарні непрочитані чатів — бейдж на вкладці «Чати».
-    // VM чатів живий уся сесія (створений тут) і опитує список кожні ~15 с,
-    // тому бейдж свіжий навіть коли користувач в іншій вкладці.
     // 1.6.1: сумарні непрочитані чатів — бейдж на вкладці «Чати».
     // VM чатів живий уся сесія (створений тут) і опитує список кожні ~15 с,
     // тому бейдж свіжий навіть коли користувач в іншій вкладці.
@@ -242,11 +254,11 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            if (currentRoute in tabs.map { it.route }) {
+            if (currentRoute in allTabRoutes) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    // 1.6.0: вкладок стало 8 — підпис лише в вибраній,
-                    // щоб ряд навігації не тиснився.
-                    tabs.forEach { tab ->
+                    // 1.6.3: 4 головні вкладки + «Ще» — ряд навігації дихає,
+                    // решта розділів — у листку «Ще».
+                    primaryTabs.forEach { tab ->
                         NavigationBarItem(
                             selected = currentRoute == tab.route,
                             onClick = { navController.navigateToTab(tab.route) },
@@ -266,6 +278,18 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                             alwaysShowLabel = false,
                         )
                     }
+                    NavigationBarItem(
+                        selected = currentRoute !in primaryTabs.map { it.route } && currentRoute in allTabRoutes,
+                        onClick = { showMoreSheet = true },
+                        icon = {
+                            Icon(
+                                Icons.Default.MoreHoriz,
+                                contentDescription = dev.amps.app.core.t("Ще"),
+                            )
+                        },
+                        label = { Text(dev.amps.app.core.t("Ще")) },
+                        alwaysShowLabel = false,
+                    )
                 }
             }
         },
@@ -534,6 +558,31 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                     viewModel = trackViewModel,
                     onBack = { navController.popBackStack() },
                 )
+            }
+        }
+    }
+
+    // 1.6.3: листок «Ще» — решта розділів одним дотиком.
+    if (showMoreSheet) {
+        ModalBottomSheet(onDismissRequest = { showMoreSheet = false }) {
+            Column(Modifier.padding(bottom = 24.dp)) {
+                Text(
+                    dev.amps.app.core.t("Ще"),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+                moreTabs.forEach { tab ->
+                    ListItem(
+                        headlineContent = { Text(tab.label) },
+                        leadingContent = { Icon(tab.icon, contentDescription = null) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showMoreSheet = false
+                                navController.navigateToTab(tab.route)
+                            },
+                    )
+                }
             }
         }
     }

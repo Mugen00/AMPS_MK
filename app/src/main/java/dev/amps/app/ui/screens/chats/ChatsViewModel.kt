@@ -271,6 +271,26 @@ class ChatsViewModel(
         }
     }
 
+    // ===== 1.6.3: видалення свого повідомлення =====
+
+    /** Видалити повідомлення: прибираємо його з історії одразу після 200. */
+    fun deleteMessage(messageId: Int) {
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header ->
+                backendApi.deleteChatMessage(header, messageId)
+            }
+            when (result) {
+                is ApiResult.Success -> {
+                    _state.value = _state.value.copy(
+                        messages = _state.value.messages.filter { it.id != messageId },
+                    )
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(error = result.error)
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(error = result.message)
+            }
+        }
+    }
+
     // ===== 1.6.2: блокування =====
 
     /** Заблокувати/розблокувати співрозмовника; при блокуванні — закриваємо чат. */

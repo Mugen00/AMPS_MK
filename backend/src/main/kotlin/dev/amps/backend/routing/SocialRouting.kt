@@ -215,7 +215,13 @@ fun Application.groupRoutes(
                     val upload = call.receiveUpload() ?: return@post
                     // 1.6.2: вкладення чатів — приватний каталог; роздача
                     // лише за участю в листуванні.
-                    val name = media.save(MediaStorage.KIND_PRIVATE, upload.bytes, "jpg")
+                    // 1.6.3: webp від клієнта зберігаємо як webp.
+                    val ext = media.extensionOf(
+                        upload.fileName ?: "photo.jpg",
+                        upload.contentType ?: "image/jpeg",
+                        MediaStorage.KIND_PRIVATE,
+                    )
+                    val name = ext?.let { media.save(MediaStorage.KIND_PRIVATE, upload.bytes, it) }
                     if (name == null) {
                         call.respond(
                             HttpStatusCode.InternalServerError,
@@ -279,6 +285,12 @@ fun Application.chatRoutes(
                     val body = call.receive<dev.amps.backend.model.ChatReactionToggleRequest>()
                     call.respondApi(chats.toggleReaction(uid, messageId, body.emoji))
                 }
+                // 1.6.3: видалити своє повідомлення (реакції — каскадом).
+                delete("/message/{id}") {
+                    val uid = call.requireUid() ?: return@delete
+                    val messageId = call.parameters["id"]?.toIntOrNull() ?: return@delete
+                    call.respondApi(chats.deleteMessage(uid, messageId))
+                }
                 // 1.6.2: «друкує…» — позначка і опитування.
                 post("/typing") {
                     val uid = call.requireUid() ?: return@post
@@ -333,7 +345,13 @@ fun Application.chatRoutes(
                     val peer = call.parameters["userId"]?.toIntOrNull() ?: return@post
                     val upload = call.receiveUpload() ?: return@post
                     // 1.6.2: приватний каталог + роздача за участю в листуванні.
-                    val ext = media.extensionOf("photo.jpg", "image/jpeg", MediaStorage.KIND_PRIVATE)
+                    // 1.6.3: розширення — з реального імені/типу файлу (клієнт
+                    // стискає фото у webp перед відправкою).
+                    val ext = media.extensionOf(
+                        upload.fileName ?: "photo.jpg",
+                        upload.contentType ?: "image/jpeg",
+                        MediaStorage.KIND_PRIVATE,
+                    )
                     val name = ext?.let { media.save(MediaStorage.KIND_PRIVATE, upload.bytes, it) }
                     if (name == null) {
                         call.respond(

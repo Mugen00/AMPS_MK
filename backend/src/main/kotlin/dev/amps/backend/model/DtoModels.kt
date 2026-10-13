@@ -230,7 +230,9 @@ data class PostDto(
     /** 1.5.1: формат показу фото ("original"|"1:1"|"4:5"|"16:9"; null — як раніше). */
     val imageAspect: String? = null,
     /** 1.6.1: дата редагування (null — пост не редагувався); клієнт показує «(ред.)». */
-    val editedAt: Long? = null
+    val editedAt: Long? = null,
+    /** 1.6.3: «кружок» — кругле відео до хвилини; клієнт показує його колом. */
+    val roundVideo: Boolean = false,
 )
 
 /**

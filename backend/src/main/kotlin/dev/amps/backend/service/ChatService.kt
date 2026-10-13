@@ -33,6 +33,8 @@ class ChatService(
     private val groups: GroupService,
     // 1.6.2: блокування — заблокований не зможе написати приватне повідомлення.
     private val blocks: dev.amps.backend.service.BlockService? = null,
+    // 1.6.3: сховище — щоб при видаленні повідомлення стерти його файл.
+    private val mediaStorage: MediaStorage? = null,
 ) {
 
     /** Приватне повідомлення користувачу. XP за активність. */
@@ -228,6 +230,35 @@ class ChatService(
         val data = dialogs(viewerId).data ?: return 0
         return data.dialogs.sumOf { it.unread }
     }
+
+    /**
+     * 1.6.3: видалити своє повідомлення. Дозволено лише автору; реакції
+     * зникають каскадом (FK ON DELETE CASCADE), файл медіа — з диска.
+     */
+    suspend fun deleteMessage(viewerId: Int, messageId: Int): ApiResponse<Unit> =
+        newSuspendedTransaction {
+            val message = ChatMessageEntity.findById(messageId)
+                ?: return@newSuspendedTransaction ApiResponse.fail(
+                    "Повідомлення не знайдено", "NO_MESSAGE",
+                )
+            if (message.fromId != viewerId) {
+                return@newSuspendedTransaction ApiResponse.fail(
+                    "Видаляти можна лише свої повідомлення", "NOT_OWNER",
+                )
+            }
+            val file = message.mediaFile
+            message.delete()
+            // Диск — не база: приватний файл прибираємо після транзакції.
+            if (file != null) {
+                val kind = if (file.startsWith("photo-")) {
+                    dev.amps.backend.service.MediaStorage.KIND_PHOTO
+                } else {
+                    dev.amps.backend.service.MediaStorage.KIND_PRIVATE
+                }
+                mediaStorage?.delete(kind, file)
+            }
+            ok(Unit)
+        }
 
     /**
      * Позначити діалог прочитаним: [peerUserId] — приватний, [groupId] —

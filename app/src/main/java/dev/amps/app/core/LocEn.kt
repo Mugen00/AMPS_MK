@@ -523,4 +523,17 @@ internal val enDict: Map<String, String> = mapOf(
     "Він не зможе писати вам у приватні чати, поки блокування не знято." to "They won't be able to message you privately until unblocked.",
     "Заблокувати 🚫" to "Block 🚫",
     "Скасувати" to "Cancel",
+
+    // 1.6.3
+    "Видалити повідомлення?" to "Delete message?",
+    "Повідомлення зникне у вас і у співрозмовника." to "The message will disappear for you and the recipient.",
+    "Видалити 🗑️" to "Delete 🗑️",
+    "Редактор сторис ✨" to "Story editor ✨",
+    "Написати поверх" to "Text overlay",
+    "Опублікувати" to "Publish",
+    "Записати кружок 📹" to "Record round video 📹",
+    "Зняти рілс 🎬" to "Record reel 🎬",
+    "Кружок надто довгий (ліміт 60 с)" to "Round video is too long (60 s limit)",
+    "Відео порожнє або завелике (ліміт 50 МБ)" to "Video is empty or too large (50 MB limit)",
+    "Ще" to "More",
 )

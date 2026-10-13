@@ -95,7 +95,10 @@ fun ProfileScreen(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
-            readBytesCapped(context, uri, maxBytes = 10L * 1024 * 1024)?.let(viewModel::uploadAvatar)
+            // 1.6.3: аватар стискається у webp (512px досить для 96dp).
+            readBytesCapped(context, uri, maxBytes = 10L * 1024 * 1024)
+                ?.let { dev.amps.app.core.ImageCompress.toWebp(it, maxDim = 512, quality = 85) }
+                ?.let(viewModel::uploadAvatar)
         }
     }
 

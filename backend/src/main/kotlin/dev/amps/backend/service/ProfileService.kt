@@ -90,12 +90,17 @@ class ProfileService(private val media: MediaStorage) {
      * Зберігає аватар і повертає його відносний шлях. Старий файл
      * видаляється: у сховищі не накопичуються аватри минулих версій.
      */
-    suspend fun setAvatar(userId: Int, bytes: ByteArray): ApiResponse<AvatarResponse> {
+    suspend fun setAvatar(
+        userId: Int,
+        bytes: ByteArray,
+        // 1.6.3: клієнт стискає аватар у webp — зберігаємо справжнє розширення.
+        extension: String = "jpg",
+    ): ApiResponse<AvatarResponse> {
         if (bytes.isEmpty()) return ApiResponse.fail("Порожній файл", "EMPTY_FILE")
         if (bytes.size > AppConfig.MAX_PHOTO_BYTES) {
             return ApiResponse.fail("Аватар більший за 10 МБ", "TOO_LARGE")
         }
-        val fileName = media.save(MediaStorage.KIND_AVATAR, bytes, "jpg")
+        val fileName = media.save(MediaStorage.KIND_AVATAR, bytes, extension)
             ?: return ApiResponse.fail("Сховище медіа недоступне", "MEDIA_UNAVAILABLE")
 
         val oldFile = newSuspendedTransaction {

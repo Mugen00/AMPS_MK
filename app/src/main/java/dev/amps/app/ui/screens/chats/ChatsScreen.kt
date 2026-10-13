@@ -137,6 +137,7 @@ fun ChatsScreen(
                     onSendPhoto = viewModel::sendPhoto,
                     onReact = viewModel::reactToMessage,
                     onToggleBlock = viewModel::toggleBlockPeer,
+                    onDeleteMessage = viewModel::deleteMessage,
                 )
                 else -> DialogsList(
                     state = state,
@@ -336,13 +337,17 @@ private fun PrivateChatView(
     // 1.6.2: реакції і блокування.
     onReact: (Int, String) -> Unit = { _, _ -> },
     onToggleBlock: () -> Unit = {},
+    // 1.6.3: видалення свого повідомлення.
+    onDeleteMessage: (Int) -> Unit = {},
 ) {
     val context = LocalContext.current
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
+            // 1.6.3: фото стискається у webp перед відправкою.
             val bytes = readBytesCapped(context, uri, 10L * 1024 * 1024)
+                ?.let(dev.amps.app.core.ImageCompress::toWebp)
             if (bytes != null) onSendPhoto(bytes)
         }
     }
@@ -350,6 +355,8 @@ private fun PrivateChatView(
     var reactionFor by remember { mutableStateOf<Int?>(null) }
     // 1.6.2: підтвердження блокування співрозмовника.
     var confirmBlock by remember { mutableStateOf(false) }
+    // 1.6.3: підтвердження видалення свого повідомлення.
+    var deleteMessageId by remember { mutableStateOf<Int?>(null) }
 
     Column(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -385,6 +392,9 @@ private fun PrivateChatView(
                         onReact(message.id, emoji)
                         reactionFor = null
                     },
+                    // 1.6.3: видалення свого повідомлення — з панелі реакцій.
+                    canDelete = message.mine,
+                    onDelete = { deleteMessageId = message.id },
                 )
             }
             // 1.6.2: «друкує…» — дрібний рядок над полем введення.
@@ -451,6 +461,24 @@ private fun PrivateChatView(
             },
         )
     }
+
+    // 1.6.3: підтвердження видалення свого повідомлення.
+    if (deleteMessageId != null) {
+        AlertDialog(
+            onDismissRequest = { deleteMessageId = null },
+            title = { Text(t("Видалити повідомлення?")) },
+            text = { Text(t("Повідомлення зникне у вас і у співрозмовника.")) },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteMessageId?.let(onDeleteMessage)
+                    deleteMessageId = null
+                }) { Text(t("Видалити 🗑️")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteMessageId = null }) { Text(t("Скасувати")) }
+            },
+        )
+    }
 }
 
 /**
@@ -473,6 +501,9 @@ private fun ChatBubble(
     reactionOpen: Boolean = false,
     onToggleReactionBar: () -> Unit = {},
     onReact: (String) -> Unit = {},
+    // 1.6.3: видалення свого повідомлення з панелі реакцій.
+    canDelete: Boolean = false,
+    onDelete: () -> Unit = {},
 ) {
     val align = if (message.mine) Alignment.CenterEnd else Alignment.CenterStart
     Box(Modifier.fillMaxWidth(), contentAlignment = align) {
@@ -586,6 +617,13 @@ private fun ChatBubble(
                 AssistChip(
                     onClick = { onReact(emoji) },
                     label = { Text(emoji) },
+                )
+            }
+            // 1.6.3: свої повідомлення можна видалити.
+            if (canDelete) {
+                AssistChip(
+                    onClick = onDelete,
+                    label = { Text("🗑️") },
                 )
             }
         }

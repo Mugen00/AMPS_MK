@@ -8,6 +8,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
@@ -131,7 +133,9 @@ fun CommunityScreen(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
+            // 1.6.3: фото стискається у webp перед відправкою.
             readBytesCapped(context, uri, maxBytes = 10L * 1024 * 1024)
+                ?.let(dev.amps.app.core.ImageCompress::toWebp)
                 ?.let(viewModel::attachPhoto)
         }
     }
@@ -149,7 +153,9 @@ fun CommunityScreen(
     ) { uris ->
         if (uris.isNotEmpty()) {
             val list = uris.mapNotNull { uri ->
+                // 1.6.3: webp-стиснення кожного фото каруселі.
                 readBytesCapped(context, uri, maxBytes = 10L * 1024 * 1024)
+                    ?.let(dev.amps.app.core.ImageCompress::toWebp)
             }
             viewModel.attachPhotos(list)
         }
@@ -164,13 +170,16 @@ fun CommunityScreen(
     val storyVideoFile = remember { java.io.File(storyShotDir, "story.mp4") }
     // Що знімати після дозволу камери: true — відео, false — фото.
     var pendingStoryVideo by remember { mutableStateOf(false) }
+    // 1.6.3: чернетка сторіс у редакторі (оригінальні байти + текст поверх).
+    var storyDraft by remember { mutableStateOf<ByteArray?>(null) }
 
     val photoStoryLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicture(),
     ) { ok ->
         if (ok) {
+            // 1.6.3: знімок — у редактор сторис (текст поверх), а не прямо в публікацію.
             val bytes = storyPhotoFile.takeIf { it.length() in 1..10L * 1024 * 1024 }?.readBytes()
-            if (bytes != null) viewModel.publishStory("photo", bytes)
+            if (bytes != null) storyDraft = dev.amps.app.core.ImageCompress.toWebp(bytes)
             else viewModel.publishStoryFailed("Знімок порожній або завеликий (ліміт 10 МБ)")
         }
     }
@@ -204,6 +213,32 @@ fun CommunityScreen(
         }
     }
 
+    // 1.6.3: запис «кружка» — відео до 60 с у cache/camera через FileProvider;
+    // файл більший за 50 МБ сервер не прийме — перевіряємо при читанні.
+    val roundShotFile = remember { java.io.File(storyShotDir, "round.mp4") }
+    val roundVideoLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val bytes = roundShotFile.takeIf { it.length() in 1..50L * 1024 * 1024 }?.readBytes()
+            if (bytes != null) viewModel.attachRoundVideo(bytes)
+        }
+    }
+
+    fun recordRoundVideo() {
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.updates", roundShotFile)
+        val intent = android.content.Intent(android.provider.MediaStore.ACTION_VIDEO_CAPTURE).apply {
+            putExtra(android.provider.MediaStore.EXTRA_DURATION_LIMIT, 60)
+            putExtra(android.provider.MediaStore.EXTRA_VIDEO_QUALITY, 0)
+            putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri)
+            addFlags(
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        runCatching { roundVideoLauncher.launch(intent) }
+    }
+
     fun startStoryCapture(isVideo: Boolean) {
         pendingStoryVideo = isVideo
         val file = if (isVideo) storyVideoFile else storyPhotoFile
@@ -227,15 +262,20 @@ fun CommunityScreen(
     // Вибір фото для сторіс із галереї (минути камеру). 1.2.0 (патч 24):
     // дозволяємо й GIF — сервер тримає .gif у KIND_PHOTO, а Coil 2.7
     // анімує його (патч 23).
+    // Вибір фото для сторіс із галереї (минути камеру). 1.2.0 (патч 24):
+    // дозволяємо й GIF — сервер тримає .gif у KIND_PHOTO, а Coil 2.7
+    // анімує його (патч 23).
     val storyPhotoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) {
+            // 1.6.3: фото — у редактор сторис; без тексту GIF не втрачає анімацію.
             readBytesCapped(context, uri, maxBytes = 10L * 1024 * 1024)
-                ?.let { viewModel.publishStory("photo", it) }
+                ?.let { storyDraft = it }
                 ?: viewModel.publishStoryFailed("Фото завелике (ліміт 10 МБ)")
         }
     }
+
 
     // 1.2.0 (патч 24): відео для сторіс З ГАЛЕРЕЇ (mp4/webm/mov) —
     // раніше відео можна було тільки зняти на камеру.
@@ -313,6 +353,8 @@ fun CommunityScreen(
                         }
                     },
                     onPickVideo = { videoPicker.launch(arrayOf("video/mp4", "video/webm", "video/quicktime")) },
+                    // 1.6.3: запис «кружка» з камери (до 60 с).
+                    onRecordRound = { recordRoundVideo() },
                     onClearAttachments = viewModel::clearAttachments,
                     onPublish = {
                         viewModel.publish()
@@ -462,6 +504,18 @@ fun CommunityScreen(
                 contentDescription = if (showCompose) "Сховати поле поста" else "Написати пост",
             )
         }
+    }
+
+    // 1.6.3: редактор сторис — фото з камери/галереї + напис поверх.
+    storyDraft?.let { draft ->
+        StoryEditorDialog(
+            imageBytes = draft,
+            onPublish = { baked ->
+                storyDraft = null
+                viewModel.publishStory("photo", baked)
+            },
+            onDismiss = { storyDraft = null },
+        )
     }
 
     // --- меню «+» на сторіс: камера чи галерея ---
@@ -863,6 +917,8 @@ private fun ComposeBar(
     onTextChange: (String) -> Unit,
     onPickPhoto: () -> Unit,
     onPickVideo: () -> Unit,
+    // 1.6.3: записати «кружок» — відео до 60 с з камери.
+    onRecordRound: () -> Unit = {},
     onClearAttachments: () -> Unit,
     onPublish: () -> Unit,
     onClose: () -> Unit = {},
@@ -1104,6 +1160,7 @@ private fun ComposeBar(
                                 state.attachMode == "collage" -> "Колаж з ${state.attachedPhotos.size} фото"
                                 state.attachMode == "carousel" -> "Карусель: ${state.attachedPhotos.size} фото"
                                 state.attachedPhotoBytes != null -> "Фото прикріплено"
+                                state.roundVideo -> "Кружок прикріплено (до 60 с) ⭕"
                                 else -> "Відео прикріплено"
                             },
                             style = MaterialTheme.typography.bodySmall,
@@ -1129,6 +1186,18 @@ private fun ComposeBar(
                         contentDescription = "Прикріпити відео",
                         tint = if (state.attachMode == "single") {
                             LocalContentColor.current
+                        } else {
+                            LocalContentColor.current.copy(alpha = 0.38f)
+                        },
+                    )
+                }
+                // 1.6.3: записати «кружок» — відео до 60 с, показується колом.
+                IconButton(onClick = onRecordRound, enabled = state.attachMode == "single") {
+                    Icon(
+                        Icons.Default.FiberManualRecord,
+                        contentDescription = "Записати кружок 📹",
+                        tint = if (state.attachMode == "single") {
+                            MaterialTheme.colorScheme.primary
                         } else {
                             LocalContentColor.current.copy(alpha = 0.38f)
                         },
@@ -1294,13 +1363,14 @@ private fun FeedItemCard(
                 post.media.forEach { media ->
                     Spacer(Modifier.height(8.dp))
                     // 1.5.1: показ фото в обраному при постингу форматі.
-                    MediaView(media, baseUrl, post.imageAspect)
+                    // 1.6.3: кружок — відео в колі.
+                    MediaView(media, baseUrl, post.imageAspect, round = post.roundVideo)
                 }
             }
             // Відео в каруселі не бере участі — покажеться окремо (рідкісний кейс).
             videoMedia.forEach { media ->
                 Spacer(Modifier.height(8.dp))
-                MediaView(media, baseUrl, post.imageAspect)
+                MediaView(media, baseUrl, post.imageAspect, round = post.roundVideo)
             }
             // --- 1.2.3: опитування поста ---
             post.poll?.let { poll ->
@@ -1517,7 +1587,13 @@ private fun AuthorAvatar(post: PostDto, baseUrl: String) {
  * ("1:1"|"4:5"|"16:9"); оригінальний — як раніше, висота 220 dp.
  */
 @Composable
-private fun MediaView(media: MediaDto, baseUrl: String, aspectCode: String? = null) {
+private fun MediaView(
+    media: MediaDto,
+    baseUrl: String,
+    aspectCode: String? = null,
+    // 1.6.3: кружок — відео-повідомлення в колі (як у Telegram).
+    round: Boolean = false,
+) {
     val context = LocalContext.current
     val url = absoluteMediaUrl(baseUrl, media.url)
     if (media.kind == "photo") {
@@ -1536,12 +1612,19 @@ private fun MediaView(media: MediaDto, baseUrl: String, aspectCode: String? = nu
                 .clickable { openExternally(context, url, "image/*") },
         )
     } else {
+        // 1.6.3: кружок — 240dp коло; звичайне відео — повна ширина.
         dev.amps.app.ui.components.InlineVideo(
             url = url,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(240.dp)
-                .clip(RoundedCornerShape(10.dp)),
+            modifier = if (round) {
+                Modifier
+                    .size(240.dp)
+                    .clip(CircleShape)
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .height(240.dp)
+                    .clip(RoundedCornerShape(10.dp))
+            },
         )
     }
 }
@@ -1690,6 +1773,140 @@ private fun PollBlock(
 /** Дата публікації: «12 березня 2025, 18:40». */
 private fun formatDate(epochMillis: Long): String =
     SimpleDateFormat("d MMMM yyyy, HH:mm", Locale("uk")).format(Date(epochMillis))
+
+// ===== 1.6.3: редактор сторис — напис поверх фото =====
+
+private val STORY_TEXT_COLORS = listOf(
+    0xFFFFFFFF.toInt(), // білий
+    0xFF111111.toInt(), // чорний
+    0xFFFFD54F.toInt(), // жовтий
+    0xFF80CBC4.toInt(), // бірюзовий
+    0xFFF48FB1.toInt(), // рожевий
+)
+
+@Composable
+private fun StoryEditorDialog(
+    imageBytes: ByteArray,
+    onPublish: (ByteArray) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var overlay by remember { mutableStateOf("") }
+    var colorIndex by remember { mutableStateOf(0) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(t("Редактор сторис ✨")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                AsyncImage(
+                    model = imageBytes,
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
+                )
+                OutlinedTextField(
+                    value = overlay,
+                    onValueChange = { overlay = it.take(120) },
+                    label = { Text(t("Написати поверх")) },
+                    maxLines = 2,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                // Палітра кольору напису.
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    STORY_TEXT_COLORS.forEachIndexed { index, colorInt ->
+                        androidx.compose.foundation.layout.Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .background(androidx.compose.ui.graphics.Color(colorInt))
+                                .then(
+                                    if (colorIndex == index) {
+                                        Modifier.border(
+                                            2.dp, MaterialTheme.colorScheme.primary, CircleShape,
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
+                                )
+                                .clickable { colorIndex = index },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val baked = bakeStoryTextOnImage(imageBytes, overlay, STORY_TEXT_COLORS[colorIndex])
+                onPublish(baked ?: imageBytes)
+            }) { Text(t("Опублікувати")) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(t("Скасувати")) }
+        },
+    )
+}
+
+/**
+ * 1.6.3: запікає напис у бітову карту (до 2 рядків, тінь для читабельності).
+ * Порожній текст — байти лишаються як є (GIF не втрачає анімацію).
+ */
+private fun bakeStoryTextOnImage(imageBytes: ByteArray, overlay: String, argb: Int): ByteArray? {
+    if (overlay.isBlank()) return imageBytes
+    val bitmap = runCatching {
+        android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+    }.getOrNull() ?: return null
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = argb
+        textSize = bitmap.width / 15f
+        textAlign = android.graphics.Paint.Align.CENTER
+        setShadowLayer(
+            bitmap.width / 50f, 0f, bitmap.width / 100f,
+            0xFF000000.toInt(),
+        )
+    }
+    val maxWidth = bitmap.width * 0.88f
+    val lines = wrapStoryTextLines(paint, overlay.take(120), maxWidth)
+    val canvas = android.graphics.Canvas(bitmap)
+    val centerX = bitmap.width / 2f
+    val baseY = bitmap.height - bitmap.width / 15f
+    lines.forEachIndexed { index, line ->
+        canvas.drawText(
+            line,
+            centerX,
+            baseY - (lines.size - 1 - index) * paint.textSize * 1.3f,
+            paint,
+        )
+    }
+    val out = java.io.ByteArrayOutputStream()
+    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+    bitmap.recycle()
+    return out.toByteArray()
+}
+
+/** Переносить текст на рядки за шириною Paint'а (максимум 2). */
+private fun wrapStoryTextLines(
+    paint: android.graphics.Paint,
+    text: String,
+    maxWidth: Float,
+): List<String> {
+    val words = text.trim().split(Regex("\\s+"))
+    val lines = mutableListOf<String>()
+    var current = StringBuilder()
+    for (word in words) {
+        val candidate = if (current.isEmpty()) word else "$current $word"
+        if (paint.measureText(candidate) <= maxWidth || current.isEmpty()) {
+            current = StringBuilder(candidate)
+        } else {
+            lines.add(current.toString())
+            current = StringBuilder(word)
+            if (lines.size == 2) break
+        }
+    }
+    if (lines.size < 2 && current.isNotEmpty()) lines.add(current.toString())
+    return lines.take(2)
+}
 
 /** Читає вміст документа з обмеженням розміру; понад ліміт — null. */
 private fun readBytesCapped(context: android.content.Context, uri: Uri, maxBytes: Long): ByteArray? =

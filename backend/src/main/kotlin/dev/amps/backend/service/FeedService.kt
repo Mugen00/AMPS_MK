@@ -58,6 +58,8 @@ class FeedService(
         imageAspect: String? = null,
         // 1.6.0: пост у групі (null — звичайний пост спільноти).
         groupId: Int? = null,
+        // 1.6.3: «кружок» — кругле відео-повідомлення до хвилини.
+        roundVideo: Boolean = false,
     ): ApiResponse<PostCreatedResponse> = newSuspendedTransaction {
         // 1.6.1: антиспам — не більше 10 постів за хвилину (постинг у групи теж).
         if (!RateLimiter.allow("post:$userId", max = 10, windowMs = 60_000L)) {
@@ -75,6 +77,7 @@ class FeedService(
             this.createdAt = System.currentTimeMillis()
             this.imageAspect = imageAspect.takeIf { it in KNOWN_ASPECTS }
             this.groupId = groupId
+            this.roundVideo = roundVideo
         }
         media.forEach { (kind, fileName) ->
             PostMediaEntity.new {
@@ -372,6 +375,8 @@ class FeedService(
                 imageAspect = post.imageAspect,
                 // 1.6.1: мітка редагування.
                 editedAt = post.editedAt,
+                // 1.6.3: «кружок» — кругле відео до хвилини.
+                roundVideo = post.roundVideo,
             )
         }
         return result

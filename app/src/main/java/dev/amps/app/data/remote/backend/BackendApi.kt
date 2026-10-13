@@ -235,11 +235,16 @@ class BackendApi private constructor(
         photos: List<ByteArray> = emptyList(),
         video: ByteArray? = null,
         imageAspect: String? = null,
+        // 1.6.3: «кружок» — кругле відео-повідомлення до хвилини (як у Telegram).
+        roundVideo: Boolean = false,
     ): ApiResult = withContext(Dispatchers.IO) {
         val parts = buildList {
             add(MultipartPart(name = "text", value = text))
             if (imageAspect != null) {
                 add(MultipartPart(name = "imageAspect", value = imageAspect))
+            }
+            if (roundVideo) {
+                add(MultipartPart(name = "roundVideo", value = "true"))
             }
             photos.forEachIndexed { index, bytes ->
                 add(
@@ -614,10 +619,13 @@ class BackendApi private constructor(
         photos: List<ByteArray> = emptyList(),
         video: ByteArray? = null,
         imageAspect: String? = null,
+        // 1.6.3: «кружок» — кругле відео до хвилини (пост у групі теж може).
+        roundVideo: Boolean = false,
     ): ApiResult = withContext(Dispatchers.IO) {
         val parts = buildList {
             add(MultipartPart(name = "text", value = text))
             if (imageAspect != null) add(MultipartPart(name = "imageAspect", value = imageAspect))
+            if (roundVideo) add(MultipartPart(name = "roundVideo", value = "true"))
             photos.forEachIndexed { index, bytes ->
                 add(
                     MultipartPart(
@@ -681,6 +689,12 @@ class BackendApi private constructor(
     suspend fun markChatRead(authHeader: String, userId: Int): ApiResult = withContext(Dispatchers.IO) {
         execute("POST", "chats/$userId/read", null, UnitResult.serializer(), authHeader)
     }
+
+    // 1.6.3: видалити своє повідомлення (файл медіа — теж).
+    suspend fun deleteChatMessage(authHeader: String, messageId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("DELETE", "chats/message/$messageId", null, UnitResult.serializer(), authHeader)
+        }
 
     /** Історія групового чату. */
     suspend fun getGroupChat(authHeader: String, groupId: Int, limit: Int = 50, offset: Long = 0): ApiResult =

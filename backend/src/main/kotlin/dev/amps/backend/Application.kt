@@ -85,9 +85,10 @@ fun main() {
     val animeListService = dev.amps.backend.service.AnimeListService()
     // 1.6.0: групи, чати (приватні + групові) і рілси.
     // 1.6.2: групи і рілси отримали сховище — видаляють свої файли.
+    // 1.6.3: чати отримали сховище — видаляють файл разом з повідомленням.
     val groupService = dev.amps.backend.service.GroupService(profileService, media)
     val blockService = dev.amps.backend.service.BlockService()
-    val chatService = dev.amps.backend.service.ChatService(profileService, groupService, blockService)
+    val chatService = dev.amps.backend.service.ChatService(profileService, groupService, blockService, media)
     val reelService = dev.amps.backend.service.ReelService(profileService, media)
 
     initDatabase(config)

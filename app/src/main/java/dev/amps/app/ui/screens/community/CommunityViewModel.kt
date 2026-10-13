@@ -44,6 +44,8 @@ data class CommunityUiState(
     val collageBytes: ByteArray? = null,
     /** Колаж зараз збирається. */
     val collageBuilding: Boolean = false,
+    /** 1.6.3: прикріплене відео — «кружок» (до 60 с), показується колом. */
+    val roundVideo: Boolean = false,
     /** Пости, у яких зараз перемикається лайк або репост. */
     val busyPostIds: Set<Int> = emptySet(),
     val loadingMore: Boolean = false,
@@ -140,6 +142,7 @@ class CommunityViewModel(
             attachedPhotoBytes = bytes,
             attachedVideoBytes = null,
             attachAspect = "original",
+            roundVideo = false,
         )
     }
 
@@ -148,6 +151,19 @@ class CommunityViewModel(
             attachedVideoBytes = bytes,
             attachedPhotoBytes = null,
             attachAspect = "original",
+            roundVideo = false,
+        )
+    }
+
+    /** 1.6.3: прикріпити записаний з камери «кружок» (до 60 с). */
+    fun attachRoundVideo(bytes: ByteArray) {
+        _state.value = _state.value.copy(
+            attachedVideoBytes = bytes,
+            attachedPhotoBytes = null,
+            attachedPhotos = emptyList(),
+            attachMode = "single",
+            attachAspect = "original",
+            roundVideo = true,
         )
     }
 
@@ -171,6 +187,7 @@ class CommunityViewModel(
             collageBytes = null,
             collageBuilding = false,
             attachAspect = "original",
+            roundVideo = false,
         )
     }
 
@@ -339,6 +356,8 @@ class CommunityViewModel(
                     photos = photos,
                     video = current.attachedVideoBytes.takeIf { current.attachMode == "single" },
                     imageAspect = imageAspect,
+                    // 1.6.3: кружок — показується колом у стрічці.
+                    roundVideo = current.roundVideo && current.attachMode == "single",
                 )
             }
             val createdPost = (result as? ApiResult.Success)
@@ -370,6 +389,7 @@ class CommunityViewModel(
                         collageBytes = null,
                         collageBuilding = false,
                         attachAspect = "original",
+                        roundVideo = false,
                         pollEnabled = false,
                         pollDraftOptions = listOf("", ""),
                         notice = if (current.pollEnabled && pollFailed) {

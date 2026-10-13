@@ -445,10 +445,15 @@ private fun GroupDetailView(
     val group = state.selected?.group ?: return
     val context = LocalContext.current
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) onAttach(readBytesCapped(context, uri, 10L * 1024 * 1024))
+        // 1.6.3: фото стискається у webp перед відправкою.
+        if (uri != null) onAttach(readBytesCapped(context, uri, 10L * 1024 * 1024)?.let(dev.amps.app.core.ImageCompress::toWebp))
     }
     val chatPhotoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) readBytesCapped(context, uri, 10L * 1024 * 1024)?.let(onSendChatPhoto)
+        if (uri != null) {
+            readBytesCapped(context, uri, 10L * 1024 * 1024)
+                ?.let(dev.amps.app.core.ImageCompress::toWebp)
+                ?.let(onSendChatPhoto)
+        }
     }
 
     Column(

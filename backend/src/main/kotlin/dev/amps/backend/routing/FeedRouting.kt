@@ -112,7 +112,13 @@ fun Application.feedRoutes(
             post("/profile/avatar") {
                 val uid = call.requireUid() ?: return@post
                 val upload = call.receiveUpload() ?: return@post
-                call.respondApi(profileService.setAvatar(uid, upload.bytes))
+                // 1.6.3: клієнтський webp зберігається як webp.
+                val ext = media.extensionOf(
+                    upload.fileName ?: "avatar.jpg",
+                    upload.contentType ?: "image/jpeg",
+                    dev.amps.backend.service.MediaStorage.KIND_AVATAR,
+                ) ?: "jpg"
+                call.respondApi(profileService.setAvatar(uid, upload.bytes, ext))
             }
 
             // 1.6.1: пошук людей за ім'ям/логіном — нові діалоги і підписки.
@@ -151,6 +157,7 @@ fun Application.feedRoutes(
             }
 
             // --- стрічка: створення — лише з токеном ---
+            // --- стрічка: створення — лише з токеном ---
             post("/feed") {
                 val uid = call.requireUid() ?: return@post
                 val upload = call.receivePost(media) ?: return@post
@@ -159,6 +166,8 @@ fun Application.feedRoutes(
                         uid, upload.text, upload.files,
                         // 1.5.1: формат показу фото (Instagram-стиль).
                         imageAspect = upload.imageAspect,
+                        // 1.6.3: «кружок» — кругле відео до хвилини.
+                        roundVideo = upload.roundVideo,
                     )
                 )
             }
@@ -520,7 +529,13 @@ fun Application.feedRoutes(
 }
 
 /** Вміст завантаженого файлу — уже прочитаний у пам'ять. */
-internal class Upload(val bytes: ByteArray)
+internal class Upload(
+    val bytes: ByteArray,
+    // 1.6.3: оригінальне ім'я і Content-Type — щоб клієнтські webp
+    // зберігалися як webp, а не перейменовувались у jpg.
+    val fileName: String? = null,
+    val contentType: String? = null,
+)
 
 /**
  * Читає multipart-запит аватара: перший файл. Повертає null, коли відповідь
@@ -528,6 +543,8 @@ internal class Upload(val bytes: ByteArray)
  */
 internal suspend fun ApplicationCall.receiveUpload(): Upload? {
     var bytes: ByteArray? = null
+    var fileName: String? = null
+    var contentType: String? = null
     var tooLarge = false
     try {
         receiveMultipart().forEachPart { part ->
@@ -537,6 +554,8 @@ internal suspend fun ApplicationCall.receiveUpload(): Upload? {
                     tooLarge = true
                 } else {
                     bytes = read
+                    fileName = part.originalFileName
+                    contentType = part.contentType?.toString()
                 }
             }
             part.dispose()
@@ -558,7 +577,7 @@ internal suspend fun ApplicationCall.receiveUpload(): Upload? {
             return null
         }
     }
-    return Upload(bytes!!)
+    return Upload(bytes!!, fileName, contentType)
 }
 
 /** Текст поста і вже збережені вкладення: пари «вид — ім'я файлу». */
@@ -567,6 +586,8 @@ internal data class PostUpload(
     val files: List<Pair<String, String>>,
     // 1.5.1: формат показу фото ("original"|"1:1"|"4:5"|"16:9").
     val imageAspect: String? = null,
+    // 1.6.3: «кружок» — кругле відео-повідомлення до хвилини.
+    val roundVideo: Boolean = false,
 )
 
 /**
@@ -580,6 +601,7 @@ internal data class PostUpload(
 internal suspend fun ApplicationCall.receivePost(media: MediaStorage): PostUpload? {
     var text = ""
     var imageAspect: String? = null
+    var roundVideo = false
     var tooLarge = false
     var failed = false
     val files = mutableListOf<Pair<String, String>>()
@@ -590,6 +612,8 @@ internal suspend fun ApplicationCall.receivePost(media: MediaStorage): PostUploa
                     "text" -> text = part.value
                     // 1.5.1: формат показу фото — текстове поле multipart'а.
                     "imageAspect" -> imageAspect = part.value.trim().take(12)
+                    // 1.6.3: прапорець «кружка» — "true"/"1" при записі з камери.
+                    "roundVideo" -> roundVideo = part.value.trim() == "true" || part.value.trim() == "1"
                 }
                 is PartData.FileItem -> {
                     val kind = when (part.name) {
@@ -640,7 +664,7 @@ internal suspend fun ApplicationCall.receivePost(media: MediaStorage): PostUploa
             return null
         }
     }
-    return PostUpload(text = text, files = files, imageAspect = imageAspect)
+    return PostUpload(text = text, files = files, imageAspect = imageAspect, roundVideo = roundVideo)
 }
 
 /**

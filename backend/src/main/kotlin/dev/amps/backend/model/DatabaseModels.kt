@@ -146,6 +146,9 @@ object PostTable : IntIdTable("posts") {
     // (було 6 запитів на пост). Оновлюються при лайку/репості, бекфіл на старті.
     val likeCount = integer("like_count").default(0)
     val repostCount = integer("repost_count").default(0)
+
+    // 1.6.3: «кружок» — кругле відео-повідомлення до хвилини (як у Telegram).
+    val roundVideo = bool("round_video").default(false)
 }
 
 class PostEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -159,6 +162,7 @@ class PostEntity(id: EntityID<Int>) : IntEntity(id) {
     var editedAt by PostTable.editedAt
     var likeCount by PostTable.likeCount
     var repostCount by PostTable.repostCount
+    var roundVideo by PostTable.roundVideo
 }
 
 // ===== Вкладення поста: фото або відео =====
