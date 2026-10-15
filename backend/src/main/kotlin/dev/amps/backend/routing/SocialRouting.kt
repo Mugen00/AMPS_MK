@@ -3,8 +3,11 @@ package dev.amps.backend.routing
 import dev.amps.backend.model.ApiError
 import dev.amps.backend.model.ChatMessageSendRequest
 import dev.amps.backend.model.GroupCreateRequest
+import dev.amps.backend.model.GroupInviteRequest
 import dev.amps.backend.model.GroupKickRequest
+import dev.amps.backend.model.GroupPinRequest
 import dev.amps.backend.model.GroupRoleRequest
+import dev.amps.backend.model.GroupTransferRequest
 import dev.amps.backend.model.GroupUpdateRequest
 import dev.amps.backend.service.ChatService
 import dev.amps.backend.service.FeedService
@@ -153,6 +156,24 @@ fun Application.groupRoutes(
                     val id = call.parameters["id"]?.toIntOrNull() ?: return@post
                     call.respondApi(groups.join(id, uid))
                 }
+                // 1.6.5: посилання-запрошення — створення + вступ за кодом
+                // (членство не потрібне: приватна група, один клік по запрошенню).
+                authenticate("auth-jwt") {
+                    route("/{id}/invite") {
+                        post {
+                            val uid = call.requireUid() ?: return@post
+                            val id = call.parameters["id"]?.toIntOrNull() ?: return@post
+                            val body = call.receive<GroupInviteRequest>()
+                            call.respondApi(groups.createInvite(id, uid, body.maxUses, body.expiresAt))
+                        }
+                    }
+                }
+                post("/{id}/invite/{code}/join") {
+                    val uid = call.requireUid() ?: return@post
+                    val id = call.parameters["id"]?.toIntOrNull() ?: return@post
+                    val code = call.parameters["code"] ?: return@post
+                    call.respondApi(groups.joinByInvite(id, uid, code))
+                }
                 post("/{id}/leave") {
                     val uid = call.requireUid() ?: return@post
                     val id = call.parameters["id"]?.toIntOrNull() ?: return@post
@@ -174,6 +195,21 @@ fun Application.groupRoutes(
                     val id = call.parameters["id"]?.toIntOrNull() ?: return@post
                     val body = call.receive<GroupRoleRequest>()
                     call.respondApi(groups.setRole(id, uid, body.userId, body.role))
+                }
+                // 1.6.5: передати роль власника іншому учаснику.
+                post("/{id}/transfer") {
+                    val uid = call.requireUid() ?: return@post
+                    val id = call.parameters["id"]?.toIntOrNull() ?: return@post
+                    val body = call.receive<GroupTransferRequest>()
+                    call.respondApi(groups.transferOwnership(id, uid, body.userId))
+                }
+                // 1.6.5: закріпити/розкріпити пост у спільноті.
+                post("/{id}/posts/{pid}/pin") {
+                    val uid = call.requireUid() ?: return@post
+                    val gid = call.parameters["id"]?.toIntOrNull() ?: return@post
+                    val pid = call.parameters["pid"]?.toIntOrNull() ?: return@post
+                    val body = call.receive<GroupPinRequest>()
+                    call.respondApi(groups.pinPost(gid, uid, pid, body.pin))
                 }
                 get("/{id}/requests") {
                     val uid = call.requireUid() ?: return@get

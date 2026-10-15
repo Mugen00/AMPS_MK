@@ -5,6 +5,8 @@ import dev.amps.backend.model.GroupCreatedResponse
 import dev.amps.backend.model.GroupDetailDto
 import dev.amps.backend.model.GroupDto
 import dev.amps.backend.model.GroupEntity
+import dev.amps.backend.model.GroupInviteCodeEntity
+import dev.amps.backend.model.GroupInviteCodeTable
 import dev.amps.backend.model.GroupJoinRequestDto
 import dev.amps.backend.model.GroupJoinRequestEntity
 import dev.amps.backend.model.GroupJoinRequestTable
@@ -417,6 +419,121 @@ class GroupService(
                 )
             })
         )
+    }
+
+    // --- 1.6.5: нові можливості спільнот ------------------------------------
+
+    /**
+     * 1.6.5: передати роль власника іншому учаснику. Тільки власник може;
+     * ціль — модератор або учасник (не сам власник). Попередньо назначаємо
+     * новому власнику модератора (щоб не залишити групу без адмінів).
+     */
+    suspend fun transferOwnership(groupId: Int, ownerId: Int, targetId: Int): ApiResponse<Boolean> =
+        newSuspendedTransaction {
+            val group = GroupEntity.findById(groupId)
+                ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
+            if (group.ownerId != ownerId) {
+                return@newSuspendedTransaction ApiResponse.fail("Передати роль може тільки власник", "NOT_OWNER")
+            }
+            if (targetId == ownerId) {
+                return@newSuspendedTransaction ApiResponse.fail("Сам собі передати роль не можна", "SELF_TRANSFER")
+            }
+            val target = GroupMemberEntity.find {
+                (GroupMemberTable.groupId eq groupId) and (GroupMemberTable.userId eq targetId)
+            }.firstOrNull() ?: return@newSuspendedTransaction ApiResponse.fail(
+                "Користувач не учасник цієї групи", "NOT_MEMBER",
+            )
+            if (target.role == ROLE_OWNER) {
+                return@newSuspendedTransaction ApiResponse.fail("Вже власник", "ALREADY_OWNER")
+            }
+            // Клеймо попереднього власника модератором, а нового — власником.
+            val oldOwnerMember = GroupMemberEntity.find {
+                (GroupMemberTable.groupId eq groupId) and (GroupMemberTable.userId eq group.ownerId)
+            }.firstOrNull()
+            oldOwnerMember?.role = ROLE_MOD
+            group.ownerId = targetId
+            target.role = ROLE_OWNER
+            ApiResponse.ok(true)
+        }
+
+    /**
+     * 1.6.5: закріпити/розкріпити пост у спільноті. owner/mod.
+     * При закріпленні старі закріплення знімаємо (один закріплено — як у ВК).
+     */
+    suspend fun pinPost(groupId: Int, requesterId: Int, postId: Int, pin: Boolean): ApiResponse<Boolean> =
+        newSuspendedTransaction {
+            val role = roleOfTx(groupId, requesterId)
+            if (role != ROLE_OWNER && role != ROLE_MOD) {
+                return@newSuspendedTransaction ApiResponse.fail("Закріплює адмін", "NOT_ADMIN")
+            }
+            val post = PostEntity.findById(postId)
+                ?: return@newSuspendedTransaction ApiResponse.fail("Пост не знайдено", "NO_POST")
+            if (post.groupId != groupId) {
+                return@newSuspendedTransaction ApiResponse.fail("Пост іншої групи", "WRONG_GROUP")
+            }
+            if (pin) {
+                PostEntity.find { (PostTable.groupId eq groupId) and (PostTable.pinned eq true) }.forEach { it.pinned = false }
+            }
+            post.pinned = pin
+            ApiResponse.ok(true)
+        }
+
+    /** 1.6.5: створити посилання-запрошення в групу (owner/mod). maxUses=0 = безстроково/безлімітно. */
+    suspend fun createInvite(
+        groupId: Int,
+        creatorId: Int,
+        maxUses: Int,
+        expiresAt: Long,
+    ): ApiResponse<String> = newSuspendedTransaction {
+        val role = roleOfTx(groupId, creatorId)
+        if (role != ROLE_OWNER && role != ROLE_MOD) {
+            return@newSuspendedTransaction ApiResponse.fail("Посилання створює адмін", "NOT_ADMIN")
+        }
+        val code = generateCode()
+        GroupInviteCodeEntity.new {
+            this.groupId = groupId
+            this.code = code
+            this.creatorId = creatorId
+            this.usedCount = 0
+            this.maxUses = maxUses
+            this.expiresAt = expiresAt
+            this.createdAt = System.currentTimeMillis()
+        }
+        // 1.6.3: коротка назва спільноти для QR/посилання — owner+1 символ для унікальності.
+        ApiResponse.ok(code)
+    }
+
+    /** 1.6.5: вступ за посиланням-запрошенням (один раз для one-shot). */
+    suspend fun joinByInvite(groupId: Int, userId: Int, code: String): ApiResponse<Boolean> =
+        newSuspendedTransaction {
+            if (roleOfTx(groupId, userId) != null) {
+                return@newSuspendedTransaction ApiResponse.fail("Ти вже учасник цієї групи", "ALREADY_MEMBER")
+            }
+            val invite = GroupInviteCodeEntity.find {
+                (GroupInviteCodeTable.groupId eq groupId) and (GroupInviteCodeTable.code eq code)
+            }.firstOrNull() ?: return@newSuspendedTransaction ApiResponse.fail("Невірний код", "BAD_CODE")
+            val now = System.currentTimeMillis()
+            if (invite.expiresAt != 0L && invite.expiresAt < now) {
+                return@newSuspendedTransaction ApiResponse.fail("Посилання застаріло", "EXPIRED")
+            }
+            if (invite.maxUses > 0 && invite.usedCount >= invite.maxUses) {
+                return@newSuspendedTransaction ApiResponse.fail("Всі сканування використані", "USED_UP")
+            }
+            GroupMemberEntity.new {
+                this.groupId = groupId
+                this.userId = userId
+                this.role = ROLE_MEMBER
+                this.joinedAt = now
+            }
+            invite.usedCount = invite.usedCount + 1
+            XpLedger.award(userId, XpLedger.GROUP_JOIN)
+            ApiResponse.ok(true)
+        }
+
+    private fun generateCode(): String {
+        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        val r = java.util.Random()
+        return (1..8).map { chars[r.nextInt(chars.length)] }.joinToString("")
     }
 
     // --- внутрішні дрібниці --------------------------------------------------

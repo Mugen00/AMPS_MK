@@ -149,6 +149,9 @@ object PostTable : IntIdTable("posts") {
 
     // 1.6.3: «кружок» — кругле відео-повідомлення до хвилини (як у Telegram).
     val roundVideo = bool("round_video").default(false)
+
+    // 1.6.5: закріплений пост спільноти (першим у ленті групи).
+    val pinned = bool("pinned").default(false)
 }
 
 class PostEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -163,6 +166,7 @@ class PostEntity(id: EntityID<Int>) : IntEntity(id) {
     var likeCount by PostTable.likeCount
     var repostCount by PostTable.repostCount
     var roundVideo by PostTable.roundVideo
+    var pinned by PostTable.pinned
 }
 
 // ===== Вкладення поста: фото або відео =====
@@ -487,6 +491,33 @@ class GroupJoinRequestEntity(id: EntityID<Int>) : IntEntity(id) {
     var groupId by GroupJoinRequestTable.groupId
     var userId by GroupJoinRequestTable.userId
     var createdAt by GroupJoinRequestTable.createdAt
+}
+
+// 1.6.5: посилання-запрошення в приватну/публічну групу.
+object GroupInviteCodeTable : IntIdTable("group_invite_codes") {
+    val groupId = integer("group_id").references(GroupTable.id, ReferenceOption.CASCADE)
+    /** Короткий одноразовий/багаторазовий код. */
+    val code = varchar("code", 32).uniqueIndex()
+    /** Хто створив посилання (власник або модератор). */
+    val creatorId = integer("creator_id").references(UserTable.id)
+    /** Кількість сканувань, які вже викорістали (one-shot — maxUses=1). */
+    val usedCount = integer("used_count").default(0)
+    val maxUses = integer("max_uses").default(0)
+    /** 0 = безстроково. */
+    val expiresAt = long("expires_at").default(0)
+    val createdAt = long("created_at")
+}
+
+class GroupInviteCodeEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<GroupInviteCodeEntity>(GroupInviteCodeTable)
+
+    var groupId by GroupInviteCodeTable.groupId
+    var code by GroupInviteCodeTable.code
+    var creatorId by GroupInviteCodeTable.creatorId
+    var usedCount by GroupInviteCodeTable.usedCount
+    var maxUses by GroupInviteCodeTable.maxUses
+    var expiresAt by GroupInviteCodeTable.expiresAt
+    var createdAt by GroupInviteCodeTable.createdAt
 }
 
 // ===== 1.6.0: чати =====

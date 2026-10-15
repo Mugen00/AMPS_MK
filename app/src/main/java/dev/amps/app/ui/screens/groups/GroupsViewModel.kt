@@ -72,6 +72,12 @@ data class GroupsUiState(
     val authHeader: String? = null,
     /** 1.6.4: хтось друкує у груповому чаті. */
     val peerTyping: Boolean = false,
+    /** 1.6.5: код запрошення, створений адміном. */
+    val inviteCode: String? = null,
+    /** 1.6.5: id учасника, якому передається власство. */
+    val transferring: Int? = null,
+    /** 1.6.5: чи закріплюється/розкріплюється пост. */
+    val pinning: Set<Int> = emptySet(),
 ) {
     /** Мій id (щоб не кікнути себе і ховати свої кнопки). */
     val myRole: String? get() = selected?.group?.myRole
@@ -335,6 +341,78 @@ class GroupsViewModel(
         }
     }
 
+    // ===== 1.6.5: керування спільнотою (власник/модератор) =====
+
+    /** Передати роль власника іншому учаснику (власник → мод, мод → власник). */
+    fun transferOwner(userId: Int) {
+        val gid = _state.value.selected?.group?.id ?: return
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header -> backendApi.transferGroupOwner(header, gid, userId) }
+            when (result) {
+                is ApiResult.Success -> {
+                    _state.value = _state.value.copy(
+                        transferring = null,
+                        notice = Loc.translate("Роль власника передано 👑"),
+                    )
+                    open(gid)
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(
+                    transferring = null, error = result.error
+                )
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(
+                    transferring = null, error = result.message
+                )
+            }
+        }
+    }
+
+    /** Закріпити/розкріпити пост спільноти (власник/модератор). */
+    fun pinPost(postId: Int, pin: Boolean) {
+        val gid = _state.value.selected?.group?.id ?: return
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header -> backendApi.pinGroupPost(header, gid, postId, pin) }
+            if (result is ApiResult.Success) {
+                _state.value = _state.value.copy(pinning = _state.value.pinning - postId)
+                loadGroupPosts(gid)
+            } else {
+                _state.value = _state.value.copy(pinning = _state.value.pinning - postId, error = (result as? ApiResult.Failure)?.error)
+            }
+        }
+    }
+
+    /** Створити посилання-запрошення (власник/модератор). maxUses=0 — безліміт. */
+    fun createInvite(maxUses: Int, expiresAt: Long) {
+        val gid = _state.value.selected?.group?.id ?: return
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header ->
+                backendApi.createGroupInvite(header, gid, maxUses, expiresAt)
+            }
+            when (result) {
+                is ApiResult.Success -> {
+                    val resp = result.data as? dev.amps.app.data.remote.backend.dto.GroupInviteCodeResponse
+                    _state.value = _state.value.copy(inviteCode = resp?.code)
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(error = result.error)
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(error = result.message)
+            }
+        }
+    }
+
+    /** Вступ за посиланням-запрошенням (приватні групи — один клік). */
+    fun joinByInvite(groupId: Int, code: String) {
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header -> backendApi.joinByInvite(header, groupId, code) }
+            when (result) {
+                is ApiResult.Success -> {
+                    _state.value = _state.value.copy(notice = Loc.translate("Ви вступили до групи 🎉"))
+                    open(groupId); load()
+                }
+                is ApiResult.Failure -> _state.value = _state.value.copy(notice = result.error)
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(error = result.message)
+            }
+        }
+    }
+
     // ===== Пости групи =====
 
     private fun loadGroupPosts(groupId: Int) {
@@ -526,6 +604,9 @@ class GroupsViewModel(
             backendSession.authedCall { header -> backendApi.markGroupChatRead(header, groupId) }
         }
     }
+
+    /** Закрити діалос запрошення (код уже показано/скопійовано). */
+    fun consumeInvite() { _state.value = _state.value.copy(inviteCode = null) }
 
     fun consumeNotice() { _state.value = _state.value.copy(notice = null) }
     fun consumeError() { _state.value = _state.value.copy(error = null) }

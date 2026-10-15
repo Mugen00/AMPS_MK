@@ -233,6 +233,8 @@ data class PostDto(
     val editedAt: Long? = null,
     /** 1.6.3: «кружок» — кругле відео до хвилини; клієнт показує його колом. */
     val roundVideo: Boolean = false,
+    /** 1.6.5: закріплений пост спільноти (першим у ленті групи). */
+    val pinned: Boolean = false,
 )
 
 /**
@@ -584,6 +586,20 @@ data class GroupRoleRequest(
 
 @Serializable
 data class GroupKickRequest(val userId: Int)
+
+// 1.6.5: нові запити для керування спільнотою.
+@Serializable
+data class GroupTransferRequest(val userId: Int)
+
+@Serializable
+data class GroupPinRequest(val pin: Boolean)
+
+@Serializable
+data class GroupInviteRequest(
+    /** 0 = безкінечна кількість сканувань. */
+    val maxUses: Int,
+    val expiresAt: Long,
+)
 
 // ===== 1.6.0: чати =====
 

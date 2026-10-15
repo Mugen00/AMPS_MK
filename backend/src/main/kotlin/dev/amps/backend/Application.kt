@@ -146,6 +146,8 @@ private fun initDatabase(config: AppConfig) {
             dev.amps.backend.model.GroupTable,
             dev.amps.backend.model.GroupMemberTable,
             dev.amps.backend.model.GroupJoinRequestTable,
+            // 1.6.5: посилання-запрошення в спільноти.
+            dev.amps.backend.model.GroupInviteCodeTable,
             dev.amps.backend.model.ChatMessageTable,
             dev.amps.backend.model.ChatReadTable,
             dev.amps.backend.model.ReelTable,

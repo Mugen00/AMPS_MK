@@ -296,7 +296,7 @@ class FeedService(
         offset: Long,
     ): ApiResponse<FeedResponse> = newSuspendedTransaction {
         val posts = PostEntity.find { PostTable.groupId eq groupId }
-            .orderBy(PostTable.createdAt to SortOrder.DESC)
+            .orderBy(PostTable.createdAt to SortOrder.DESC, PostTable.pinned to SortOrder.DESC)
             .limit(limit, offset)
             .toList()
         ok(FeedResponse(items = posts.map { FeedItemDto(KIND_POST, postDto(it, viewerId), null, it.createdAt) }))
@@ -377,6 +377,8 @@ class FeedService(
                 editedAt = post.editedAt,
                 // 1.6.3: «кружок» — кругле відео до хвилини.
                 roundVideo = post.roundVideo,
+                // 1.6.5: закріплений пост спільноти.
+                pinned = post.pinned,
             )
         }
         return result

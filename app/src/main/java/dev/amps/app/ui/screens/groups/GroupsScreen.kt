@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -196,6 +197,11 @@ fun GroupsScreen(
                 onDeleteMessage = viewModel::deleteMessage,
                 onSendTyping = viewModel::sendTyping,
                 onPollTyping = viewModel::pollTyping,
+                // 1.6.5: передача власства, закріплення, запрошення.
+                onTransfer = viewModel::transferOwner,
+                onPin = viewModel::pinPost,
+                onInviteClick = { viewModel.createInvite(0, 0L) },
+                onCloseInvite = viewModel::consumeInvite,
             )
             else -> GroupsListView(
                 state = state,
@@ -488,6 +494,11 @@ private fun GroupDetailView(
     onDeleteMessage: (Int) -> Unit = {},
     onSendTyping: () -> Unit = {},
     onPollTyping: () -> Unit = {},
+    // 1.6.5: передача власства, закріплення постів, запрошення.
+    onTransfer: (Int) -> Unit = {},
+    onPin: (Int, Boolean) -> Unit = { _, _ -> },
+    onInviteClick: () -> Unit = {},
+    onCloseInvite: () -> Unit = {},
 ) {
     val group = state.selected?.group ?: return
     val context = LocalContext.current
@@ -635,7 +646,7 @@ private fun GroupDetailView(
             Spacer(Modifier.height(8.dp))
 
             when (state.detailTab) {
-                "members" -> MembersTab(state, onOpenUser, onKick, onRole)
+                "members" -> MembersTab(state, onOpenUser, onKick, onRole, onTransfer = onTransfer)
                 "requests" -> RequestsTab(state, onApprove, onReject)
                 "chat" -> GroupChatTab(
                     state, baseUrl,
@@ -652,6 +663,8 @@ private fun GroupDetailView(
                     onDraft, onAttach, onPublish,
                     onOpenUser = onOpenUser,
                     onRecordRound = onRecordRound,
+                    onPin = onPin,
+                    onInviteClick = onInviteClick,
                 )
             }
         } else {
@@ -701,6 +714,35 @@ private fun GroupDetailView(
             },
         )
     }
+
+    // 1.6.5: діалос запрошення — код + копіювання.
+    state.inviteCode?.let { code ->
+        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onCloseInvite,
+            title = { Text(t("Запрошення в спільноту 🔗")) },
+            text = {
+                Column {
+                    Text(t("Передай цей код учасникам — він додає їх у спільноту одразу:"))
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        code,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(code))
+                    onCloseInvite()
+                }) { Text(t("Копіювати")) }
+            },
+            dismissButton = {
+                TextButton(onClick = onCloseInvite) { Text(t("Готово")) }
+            },
+        )
+    }
 }
 
 // ===== Вкладка постів групи =====
@@ -716,6 +758,9 @@ private fun GroupPostsTab(
     onOpenUser: (Int) -> Unit,
     // 1.6.4: записати кружок (кругле відео до 60 с).
     onRecordRound: () -> Unit = {},
+    // 1.6.5: UI закріплення постів + інвайти.
+    onPin: (Int, Boolean) -> Unit = { _, _ -> },
+    onInviteClick: () -> Unit = {},
 ) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -763,6 +808,23 @@ private fun GroupPostsTab(
                             )
                         }
                         Spacer(Modifier.weight(1f))
+                        if (state.isModOrOwner) {
+                            // 1.6.5: швидка кнопка «Подорожуй обом» → створює інвайт.
+                            IconButton(
+                                onClick = onInviteClick,
+                                enabled = state.inviteCode.isNullOrEmpty(),
+                            ) {
+                                Icon(
+                                    Icons.Default.Share,
+                                    contentDescription = t("Запрошення 🔗"),
+                                    tint = if (state.inviteCode.isNullOrEmpty()) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.tertiary
+                                    },
+                                )
+                            }
+                        }
                         Button(onClick = onPublish, enabled = state.canPublish) {
                             if (state.posting) {
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -782,15 +844,26 @@ private fun GroupPostsTab(
             }
         }
         items(state.posts, key = { "${it.kind}-${it.post.id}" }) { item ->
-            GroupPostCard(item, baseUrl, onOpenUser)
+            GroupPostCard(
+                item, baseUrl, onOpenUser,
+                isAdmin = state.isModOrOwner,
+                onPin = onPin,
+            )
         }
         item { Spacer(Modifier.height(80.dp)) }
     }
 }
 
-/** Картка поста групи: автор, дата, текст, фото; 1.6.4: кружок — коло. */
+/** Картка поста групи: автор, дата, текст, фото; 1.6.4: кружок — коло.
+ *  1.6.5: 📌 закріплення постів — власник/мод. */
 @Composable
-private fun GroupPostCard(item: FeedItemDto, baseUrl: String, onOpenUser: (Int) -> Unit) {
+private fun GroupPostCard(
+    item: FeedItemDto,
+    baseUrl: String,
+    onOpenUser: (Int) -> Unit,
+    isAdmin: Boolean = false,
+    onPin: (Int, Boolean) -> Unit = { _, _ -> },
+) {
     val post = item.post
     Card(
         shape = RoundedCornerShape(18.dp),
@@ -809,6 +882,24 @@ private fun GroupPostCard(item: FeedItemDto, baseUrl: String, onOpenUser: (Int) 
                     Text(post.author.displayName, style = MaterialTheme.typography.titleSmall)
                     Text(
                         java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(post.createdAt)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // 1.6.5: позначка закріпленого поста.
+                    if (post.pinned) {
+                        Text(
+                            "📌 " + t("Закріплено"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                    }
+                }
+            }
+            // 1.6.5: кнопка закріплення для адмінів спільноти.
+            if (isAdmin) {
+                TextButton(onClick = { onPin(post.id, !post.pinned) }) {
+                    Text(
+                        if (post.pinned) "📌 " + t("Розкріпити") else "📌 " + t("Закріпити"),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -856,10 +947,12 @@ private fun MembersTab(
     onOpenUser: (Int) -> Unit,
     onKick: (Int) -> Unit,
     onRole: (Int, String) -> Unit,
+    // 1.6.5: передати роль власника.
+    onTransfer: (Int) -> Unit = {},
 ) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
         items(state.members, key = { it.userId }) { member ->
-            MemberRow(member, state, onOpenUser, onKick, onRole)
+            MemberRow(member, state, onOpenUser, onKick, onRole, onTransfer)
         }
         item { Spacer(Modifier.height(60.dp)) }
     }
@@ -872,6 +965,8 @@ private fun MemberRow(
     onOpenUser: (Int) -> Unit,
     onKick: (Int) -> Unit,
     onRole: (Int, String) -> Unit,
+    // 1.6.5: передати роль власника (тільки власнику — для модераторів/учасників).
+    onTransfer: (Int) -> Unit = {},
 ) {
     var menu by remember { mutableStateOf(false) }
     val roleLabel = when (member.role) {
@@ -903,12 +998,22 @@ private fun MemberRow(
             Box {
                 TextButton(onClick = { menu = true }) { Text("⋮") }
                 androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    if (state.isOwner) {
+                    if (state.isOwner && member.role != "mod") {
                         androidx.compose.material3.DropdownMenuItem(
-                            text = { Text(if (member.role == "mod") t("Зняти модератора") else t("Зробити модератором 🛡")) },
+                            text = { Text(t("Зробити модератором 🛡")) },
                             onClick = {
                                 menu = false
-                                onRole(member.userId, if (member.role == "mod") "member" else "mod")
+                                onRole(member.userId, "mod")
+                            },
+                        )
+                    }
+                    if (state.isOwner) {
+                        // 1.6.5: передати власство — попередньо зняти модера якщо є.
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(t("Передати власство 👑"), color = MaterialTheme.colorScheme.primary) },
+                            onClick = {
+                                menu = false
+                                onTransfer(member.userId)
                             },
                         )
                     }

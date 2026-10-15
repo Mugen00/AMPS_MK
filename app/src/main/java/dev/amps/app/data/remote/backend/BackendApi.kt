@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -665,6 +666,37 @@ class BackendApi private constructor(
         executeMultipart("groups/$groupId/posts", authHeader, parts, PostCreatedResponse.serializer())
     }
 
+    // ===== 1.6.5: керування спільнотою (власник/модератор) =====
+
+    /** Передати роль власника іншому учаснику. */
+    suspend fun transferGroupOwner(authHeader: String, groupId: Int, userId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(GroupTransferRequest.serializer(), GroupTransferRequest(userId))
+            execute("POST", "groups/$groupId/transfer", body, UnitResult.serializer(), authHeader)
+        }
+
+    /** Закріпити/розкріпити пост спільноти (власник/модератор). */
+    suspend fun pinGroupPost(authHeader: String, groupId: Int, postId: Int, pin: Boolean): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(GroupPinRequest.serializer(), GroupPinRequest(pin))
+            execute("POST", "groups/$groupId/posts/$postId/pin", body, UnitResult.serializer(), authHeader)
+        }
+
+    /** Створити посилання-запрошення (власник/модератор). maxUses=0 — нескінченність. */
+    suspend fun createGroupInvite(authHeader: String, groupId: Int, maxUses: Int, expiresAt: Long): ApiResult =
+        withContext(Dispatchers.IO) {
+            val body = json.encodeToString(
+                GroupInviteRequest.serializer(), GroupInviteRequest(maxUses = maxUses, expiresAt = expiresAt),
+            )
+            execute("POST", "groups/$groupId/invite", body, GroupInviteCodeResponse.serializer(), authHeader)
+        }
+
+    /** Вступ за посиланням-запрошенням (приватні групи — один клік). */
+    suspend fun joinByInvite(authHeader: String, groupId: Int, code: String): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("POST", "groups/$groupId/invite/$code/join", null, UnitResult.serializer(), authHeader)
+        }
+
     // ===== Чати (1.6.0) =====
 
     /** Список діалогів: приватні + групові, з непрочитаними. Опитується кожні ~15 с. */
@@ -966,12 +998,26 @@ class BackendApi private constructor(
                 envelope.errorCode,
             )
         }
+        // 1.6.5: Unit-відповіді (повідомлення, фото, реакції) більше не валяться,
+        // коли сервер повертає у data щось зайве (true, об'єкт) або нічого:
+        // 2xx + success = операція вдалась, як bi й без розбору data.
+        val isUnitCall = dataSerializer == UnitResult.serializer()
         val element = envelope.data
-            ?: return ApiResult.Failure(response.code, "Порожня відповідь сервера", "EMPTY_DATA")
+        if (element == null || element is JsonNull) {
+            return if (isUnitCall) {
+                ApiResult.Success(UnitResult(true))
+            } else {
+                ApiResult.Failure(response.code, "Порожня відповідь сервера", "EMPTY_DATA")
+            }
+        }
         return try {
             ApiResult.Success(json.decodeFromJsonElement(dataSerializer, element))
         } catch (e: Exception) {
-            ApiResult.Failure(response.code, "Незрозумілий формат відповіді", "BAD_DATA")
+            if (isUnitCall) {
+                ApiResult.Success(UnitResult(true))
+            } else {
+                ApiResult.Failure(response.code, "Незрозумілий формат відповіді", "BAD_DATA")
+            }
         }
     }
 }

@@ -550,4 +550,16 @@ internal val enDict: Map<String, String> = mapOf(
     "Керування групою" to "Group management",
     "Записати кружок 📹" to "Record round video 📹",
     "Кружок прикріплено (до 60 с) ⭕" to "Round video attached (up to 60 s) ⭕",
+
+    // 1.6.5
+    "Закріплено" to "Pinned",
+    "Закріпити" to "Pin",
+    "Розкріпити" to "Unpin",
+    "Передати власство 👑" to "Transfer ownership 👑",
+    "Роль власника передано 👑" to "Ownership transferred 👑",
+    "Запрошення 🔗" to "Invite 🔗",
+    "Запрошення в спільноту 🔗" to "Community invite 🔗",
+    "Передай цей код учасникам — він додає їх у спільноту одразу:" to "Share this code — it adds people to the community instantly:",
+    "Копіювати" to "Copy",
+    "Готово" to "Done",
 )

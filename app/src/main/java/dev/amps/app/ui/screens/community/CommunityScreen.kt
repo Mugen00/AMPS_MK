@@ -1360,17 +1360,19 @@ private fun FeedItemCard(
                 Spacer(Modifier.height(8.dp))
                 CarouselView(photoMedia, baseUrl, post.imageAspect)
             } else {
+                // 1.6.3: кружок — окреме відео в колі (не дублюється подалі).
                 post.media.forEach { media ->
                     Spacer(Modifier.height(8.dp))
-                    // 1.5.1: показ фото в обраному при постингу форматі.
-                    // 1.6.3: кружок — відео в колі.
                     MediaView(media, baseUrl, post.imageAspect, round = post.roundVideo)
                 }
             }
-            // Відео в каруселі не бере участі — покажеться окремо (рідкісний кейс).
-            videoMedia.forEach { media ->
-                Spacer(Modifier.height(8.dp))
-                MediaView(media, baseUrl, post.imageAspect, round = post.roundVideo)
+            // 1.6.3: відео в каруселі не бере участі — покажеться окремо (рідкісний кейс),
+            // лише коли вже показана карусель (одинина відео не має дублявати).
+            if (photoMedia.size > 1) {
+                videoMedia.forEach { media ->
+                    Spacer(Modifier.height(8.dp))
+                    MediaView(media, baseUrl, post.imageAspect, round = post.roundVideo)
+                }
             }
             // --- 1.2.3: опитування поста ---
             post.poll?.let { poll ->
