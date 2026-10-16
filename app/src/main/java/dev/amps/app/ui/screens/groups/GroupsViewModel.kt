@@ -510,33 +510,71 @@ class GroupsViewModel(
         }
     }
 
-    /** Надіслати текст у груповий чат (+2 XP за повідомлення). */
+    /** Надіслати текст у груповий чат (+2 XP за повідомлення).
+     *  1.6.6: optimistic — бульбашка з'являється миттєво. */
     fun sendChat() {
         val s = _state.value
         val gid = s.selected?.group?.id ?: return
         val text = s.chatDraft.trim()
-        if (text.isEmpty() || s.sendingChat) return
+        if (text.isEmpty()) return
+        val optimisticId = -(System.currentTimeMillis()).toInt()
+        _state.value = _state.value.copy(
+            chatDraft = "",
+            sendingChat = true,
+            chat = _state.value.chat + dev.amps.app.data.remote.backend.dto.ChatMessageDto(
+                id = optimisticId,
+                from = ME_PROFILE,
+                toGroupId = gid,
+                text = text,
+                createdAt = System.currentTimeMillis(),
+                mine = true,
+            ),
+        )
         viewModelScope.launch {
-            _state.value = s.copy(sendingChat = true)
             val result = backendSession.authedCall { header -> backendApi.sendGroupMessage(header, gid, text) }
             if (result is ApiResult.Success) {
-                _state.value = _state.value.copy(chatDraft = "", sendingChat = false)
+                _state.value = _state.value.copy(sendingChat = false)
                 loadGroupChat(gid)
             } else {
-                _state.value = _state.value.copy(sendingChat = false, error = (result as? ApiResult.Failure)?.error)
+                _state.value = _state.value.copy(
+                    chat = _state.value.chat.filterNot { it.id == optimisticId },
+                    chatDraft = text,
+                    sendingChat = false,
+                    error = (result as? ApiResult.Failure)?.error ?: (result as? ApiResult.NetworkError)?.message,
+                )
             }
         }
     }
 
-    /** Фото в груповий чат. */
+    /** Фото в груповий чат. 1.6.6: optimistic — видно одразу. */
     fun sendChatPhoto(bytes: ByteArray) {
         val gid = _state.value.selected?.group?.id ?: return
+        val optimisticId = -(System.currentTimeMillis()).toInt()
+        _state.value = _state.value.copy(
+            chat = _state.value.chat + dev.amps.app.data.remote.backend.dto.ChatMessageDto(
+                id = optimisticId,
+                from = ME_PROFILE,
+                toGroupId = gid,
+                text = "",
+                createdAt = System.currentTimeMillis(),
+                mine = true,
+                localBytes = bytes,
+            ),
+        )
         viewModelScope.launch {
             val result = backendSession.authedCall { header -> backendApi.sendGroupPhoto(header, gid, bytes) }
             if (result is ApiResult.Success) loadGroupChat(gid)
-            else _state.value = _state.value.copy(error = (result as? ApiResult.Failure)?.error)
+            else _state.value = _state.value.copy(
+                chat = _state.value.chat.filterNot { it.id == optimisticId },
+                error = (result as? ApiResult.Failure)?.error ?: (result as? ApiResult.NetworkError)?.message,
+            )
         }
     }
+
+    /** 1.6.6: заглушка мого профілю для optimistic-повідомлень. */
+    private val ME_PROFILE = dev.amps.app.data.remote.backend.dto.ProfileDto(
+        userId = -1, login = "me", displayName = "Я",
+    )
 
     // ===== 1.6.4: реакції / видалення / друкує у груповому чаті =====
 

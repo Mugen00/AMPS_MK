@@ -50,6 +50,8 @@ fun Application.feedRoutes(
     comments: dev.amps.backend.service.CommentService,
     follows: dev.amps.backend.service.FollowService,
     animeList: dev.amps.backend.service.AnimeListService,
+    // 1.6.6: колекції аніме-персонажів (Gemini-аналіз → збереження).
+    animeCollections: dev.amps.backend.service.AnimeCollectionService,
     // 1.2.3: опитування під постами.
     polls: dev.amps.backend.service.PollService,
     // 1.4.0: резолвер «Дивитись» — сторінка тайтла на yummyani.
@@ -522,6 +524,42 @@ fun Application.feedRoutes(
                     call.respondApi(dev.amps.backend.model.ApiResponse.ok(
                         dev.amps.backend.model.AnimeListResponse(animeList.list(uid))
                     ))
+                }
+            }
+
+            // --- 1.6.6: колекції аніме-персонажів (Gemini-аналіз → збереження) ---
+            get("/collections") {
+                val uid = call.requireUid() ?: return@get
+                call.respondApi(dev.amps.backend.model.ApiResponse.ok(animeCollections.list(uid)))
+            }
+            post("/collections/character") {
+                val uid = call.requireUid() ?: return@post
+                val body = call.receive<dev.amps.backend.model.SaveCharacterRequest>()
+                call.respondApi(
+                    animeCollections.saveCharacter(
+                        uid = uid,
+                        animeTitle = body.animeTitle,
+                        characterName = body.characterName,
+                        note = body.note,
+                    )
+                )
+            }
+            delete("/collections/{collectionId}") {
+                val uid = call.requireUid() ?: return@delete
+                val cid = call.parameters["collectionId"]?.toIntOrNull()
+                if (cid == null) {
+                    call.respond(HttpStatusCode.BadRequest, ApiError(error = "Невірний ідентифікатор колекції"))
+                } else {
+                    call.respondApi(animeCollections.deleteCollection(uid, cid))
+                }
+            }
+            delete("/collections/character/{characterId}") {
+                val uid = call.requireUid() ?: return@delete
+                val chid = call.parameters["characterId"]?.toIntOrNull()
+                if (chid == null) {
+                    call.respond(HttpStatusCode.BadRequest, ApiError(error = "Невірний ідентифікатор персонажа"))
+                } else {
+                    call.respondApi(animeCollections.deleteCharacter(uid, chid))
                 }
             }
         }

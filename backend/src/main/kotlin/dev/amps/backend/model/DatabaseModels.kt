@@ -291,6 +291,50 @@ class AnimeListEntity(id: EntityID<Int>) : IntEntity(id) {
     var updatedAt by AnimeListTable.updatedAt
 }
 
+// ===== 1.6.6: колекції аніме-персонажів (Gemini-аналіз → збереження) =====
+
+/** Картка аніме в колекції: одна на назву аніме (унікально на користувача). */
+object AnimeCollectionTable : IntIdTable("anime_collections") {
+    val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)
+    val animeTitle = varchar("anime_title", 250)
+    val createdAt = long("created_at")
+    val updatedAt = long("updated_at")
+
+    init {
+        uniqueIndex(userId, animeTitle)
+    }
+}
+
+class AnimeCollectionEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<AnimeCollectionEntity>(AnimeCollectionTable)
+
+    var userId by AnimeCollectionTable.userId
+    var animeTitle by AnimeCollectionTable.animeTitle
+    var createdAt by AnimeCollectionTable.createdAt
+    var updatedAt by AnimeCollectionTable.updatedAt
+}
+
+/** Персонаж, збережений у картку аніме (унікально на назву в колекції). */
+object AnimeCollectionCharacterTable : IntIdTable("anime_collection_characters") {
+    val collectionId = integer("collection_id").references(AnimeCollectionTable.id, ReferenceOption.CASCADE)
+    val name = varchar("name", 150)
+    val note = varchar("note", 600).default("")
+    val createdAt = long("created_at")
+
+    init {
+        uniqueIndex(collectionId, name)
+    }
+}
+
+class AnimeCollectionCharacterEntity(id: EntityID<Int>) : IntEntity(id) {
+    companion object : IntEntityClass<AnimeCollectionCharacterEntity>(AnimeCollectionCharacterTable)
+
+    var collectionId by AnimeCollectionCharacterTable.collectionId
+    var name by AnimeCollectionCharacterTable.name
+    var note by AnimeCollectionCharacterTable.note
+    var createdAt by AnimeCollectionCharacterTable.createdAt
+}
+
 // ===== Сторіс (1.2.0): фото/відео на 24 години =====
 object StoryTable : IntIdTable("stories") {
     val userId = integer("user_id").references(UserTable.id, ReferenceOption.CASCADE)

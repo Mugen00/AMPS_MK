@@ -922,18 +922,19 @@ private fun GroupPostCard(
             }
             if (video != null) {
                 Spacer(Modifier.height(8.dp))
-                // 1.6.4: кружок — кругле відео-повідомлення до хвилини.
-                dev.amps.app.ui.components.InlineVideo(
-                    url = absoluteMediaUrl(baseUrl, video.url),
-                    modifier = if (post.roundVideo) {
-                        Modifier
-                            .size(240.dp)
-                            .clip(CircleShape)
-                            .align(Alignment.CenterHorizontally)
-                    } else {
-                        Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(12.dp))
-                    },
-                )
+                // 1.6.6: кружок — повне відео в колі без обрізання.
+                if (post.roundVideo) {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        dev.amps.app.ui.components.RoundVideoPlayer(
+                            url = absoluteMediaUrl(baseUrl, video.url),
+                        )
+                    }
+                } else {
+                    dev.amps.app.ui.components.InlineVideo(
+                        url = absoluteMediaUrl(baseUrl, video.url),
+                        modifier = Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(12.dp)),
+                    )
+                }
             }
         }
     }
@@ -1217,7 +1218,15 @@ private fun ChatBubble(
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
-            if (message.mediaUrl != null) {
+            if (message.localBytes != null) {
+                // 1.6.6: optimistic фото — локальні байти поки вантажиться.
+                AsyncImage(
+                    model = message.localBytes,
+                    contentDescription = t("Фото повідомлення"),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().height(180.dp).clip(RoundedCornerShape(10.dp)),
+                )
+            } else if (message.mediaUrl != null) {
                 val url = absoluteMediaUrl(baseUrl, message.mediaUrl)
                 if (message.mediaUrl.startsWith("/media/private/") && authHeader != null) {
                     AsyncImage(

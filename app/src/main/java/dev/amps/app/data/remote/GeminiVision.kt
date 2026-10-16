@@ -9,6 +9,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -216,6 +218,119 @@ object GeminiVision {
         })
         val root = buildJsonObject { put("contents", JsonArray(contents)) }
         runWithFallback(root, trimmed)
+    }
+
+    // ===== 1.6.6: структурований аналіз для колекцій персонажів =====
+
+    /** Результат structured-аналізу: персонаж + аніме для збереження. */
+    data class StructuredVerdict(
+        val isCharacter: Boolean,
+        val animeTitle: String,
+        val characterName: String,
+        val note: String,
+    )
+
+    private const val STRUCTURED_PROMPT =
+        "Проаналізуй зображення. Визнач, чи на ньому впізнаваний персонаж " +
+            "аніме, манґи або аніме-гри. Якщо так — у полі animeTitle назви " +
+            "джерело (офіційна українська/романдзі-назва, наприклад " +
+            "\"Токійський гул\"), у characterName — ім'я персонажа, у note — " +
+            "коротку нотатку українською (до 2 речень: хто він, чим впізнаваний). " +
+            "Якщо персонажа впізнати не можна — isCharacter=false та порожні поля."
+
+    /**
+     * 1.6.6: JSON-режим Gemini (responseMimeType application/json +
+     * responseSchema) — для кнопки «Зберегти персонажа в колекцію».
+     * Повертає поля, а не Markdown.
+     */
+    suspend fun analyzeStructured(imageBytes: ByteArray, apiKey: String): StructuredVerdict =
+        withContext(Dispatchers.IO) {
+            val trimmed = apiKey.trim()
+            if (trimmed.isEmpty()) {
+                throw IllegalStateException("Ключ Gemini не заданий — додайте його в Налаштуваннях")
+            }
+            val compact = toJpegForApi(imageBytes)
+                ?: throw IllegalStateException("Не вдалося обробити зображення для AI")
+            val base64 = Base64.encodeToString(compact, Base64.NO_WRAP)
+            val root = buildJsonObject {
+                put(
+                    "contents",
+                    JsonArray(listOf(
+                        buildJsonObject {
+                            put(
+                                "parts",
+                                JsonArray(listOf(
+                                    buildJsonObject {
+                                        put(
+                                            "inline_data",
+                                            buildJsonObject {
+                                                put("mime_type", "image/jpeg")
+                                                put("data", base64)
+                                            },
+                                        )
+                                    },
+                                    buildJsonObject { put("text", STRUCTURED_PROMPT) },
+                                )),
+                            )
+                        },
+                    )),
+                )
+                // JSON-режим: структура гарантована схемою відповіді.
+                put(
+                    "generationConfig",
+                    buildJsonObject {
+                        put("responseMimeType", "application/json")
+                        put("temperature", 0.2)
+                        put(
+                            "responseSchema",
+                            buildJsonObject {
+                                put("type", "OBJECT")
+                                put(
+                                    "properties",
+                                    buildJsonObject {
+                                        put("isCharacter", buildJsonObject { put("type", "BOOLEAN") })
+                                        put("animeTitle", buildJsonObject { put("type", "STRING") })
+                                        put("characterName", buildJsonObject { put("type", "STRING") })
+                                        put("note", buildJsonObject { put("type", "STRING") })
+                                    },
+                                )
+                                put(
+                                    "required",
+                                    JsonArray(
+                                        listOf(
+                                            JsonPrimitive("isCharacter"),
+                                            JsonPrimitive("animeTitle"),
+                                            JsonPrimitive("characterName"),
+                                            JsonPrimitive("note"),
+                                        )
+                                    ),
+                                )
+                            },
+                        )
+                    },
+                )
+            }
+            val text = runWithFallback(root, trimmed)
+            parseStructured(text)
+        }
+
+    /** Розбір JSON-відповіді; терпить ```json-огортання моделі. */
+    private fun parseStructured(text: String): StructuredVerdict {
+        val cleaned = text.trim()
+            .removePrefix("```json").removePrefix("```")
+            .removeSuffix("```")
+            .trim()
+        val root = json.parseToJsonElement(cleaned).jsonObject
+        fun str(key: String): String =
+            ((root[key] as? JsonPrimitive)?.content ?: "").trim()
+        val isCharacter = (root["isCharacter"] as? JsonPrimitive)?.booleanOrNull
+            ?: str("isCharacter").equals("true", ignoreCase = true)
+        return StructuredVerdict(
+            isCharacter = isCharacter,
+            animeTitle = str("animeTitle"),
+            characterName = str("characterName"),
+            note = str("note"),
+        )
     }
 
     /** Спільний виконавчий шлях: ланцюжок моделей + safety-варіанти + ретраї. */

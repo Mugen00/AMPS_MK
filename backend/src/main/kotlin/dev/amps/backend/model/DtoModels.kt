@@ -363,6 +363,44 @@ data class AnimeListUpsertRequest(
     val reminder: Boolean = true
 )
 
+// ===== 1.6.6: колекції аніме-персонажів =====
+
+@Serializable
+data class CollectionCharacterDto(
+    val id: Int,
+    val name: String,
+    val note: String,
+    val createdAt: Long
+)
+
+@Serializable
+data class AnimeCollectionDto(
+    val id: Int,
+    val animeTitle: String,
+    /** Персонажі, відкриті в цій картці (всередині картки видно список). */
+    val characters: List<CollectionCharacterDto> = emptyList(),
+    val characterCount: Int = 0,
+    val updatedAt: Long
+)
+
+@Serializable
+data class AnimeCollectionsResponse(val collections: List<AnimeCollectionDto>)
+
+/** Запит збереження персонажа з Gemini-аналізу: створює/оновлює картку аніме. */
+@Serializable
+data class SaveCharacterRequest(
+    val animeTitle: String,
+    val characterName: String,
+    val note: String = ""
+)
+
+@Serializable
+data class SaveCharacterResponse(
+    val collection: AnimeCollectionDto,
+    /** false — персонаж уже був у колекції (оновлено нотатку). */
+    val added: Boolean
+)
+
 // ===== Опитування (1.2.3) =====
 
 @Serializable

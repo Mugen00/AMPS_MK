@@ -534,7 +534,19 @@ private fun ChatBubble(
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
-            if (message.mediaUrl != null) {
+            if (message.localBytes != null) {
+                // 1.6.6: optimistic фото — локальні байти, поки сервер
+                // не відповів (Coil рендерить ByteArray напряму).
+                AsyncImage(
+                    model = message.localBytes,
+                    contentDescription = t("Фото повідомлення"),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                )
+            } else if (message.mediaUrl != null) {
                 // 1.6.2: приватні вкладення (private-*) — із токеном у заголовку.
                 val url = dev.amps.app.ui.screens.groups.absoluteMediaUrl(baseUrl, message.mediaUrl)
                 if (message.mediaUrl.startsWith("/media/private/") && authHeader != null) {

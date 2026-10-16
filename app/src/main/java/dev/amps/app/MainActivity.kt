@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.CollectionsBookmark
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.ImageSearch
@@ -156,6 +157,8 @@ private object Routes {
     const val GROUPS = "groups"
     const val CHATS = "chats"
     const val REELS = "reels"
+    // 1.6.6: колекції аніме-персонажів (Gemini-аналіз → збереження).
+    const val COLLECTIONS = "collections"
 }
 
 private data class TabItem(val route: String, val label: String, val icon: ImageVector)
@@ -174,6 +177,9 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
             appContext = context.applicationContext,
             settings = container.settings,
             chatStore = container.geminiChatStore,
+            // 1.6.6: збереження персонажів у колекції аніме.
+            backendApi = container.backendApi,
+            backendSession = container.backendSession,
         )
     )
     val wikiViewModel: WikiViewModel = viewModel(factory = WikiViewModel.Factory(container.frameRepository))
@@ -240,6 +246,8 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
         TabItem(Routes.FRAME, dev.amps.app.core.t("Картинка"), Icons.Default.ImageSearch),
         TabItem(Routes.GROUPS, dev.amps.app.core.t("Групи"), Icons.Default.Group),
         TabItem(Routes.ANIME, dev.amps.app.core.t("Аніме"), Icons.Default.PlayArrow),
+        // 1.6.6: колекції персонажів — картки аніме з відкритими персонажами.
+        TabItem(Routes.COLLECTIONS, dev.amps.app.core.t("Колекції"), Icons.Default.CollectionsBookmark),
         TabItem(Routes.SETTINGS, dev.amps.app.core.t("Настройки"), Icons.Default.Settings),
     )
     val allTabRoutes = (primaryTabs + moreTabs).map { it.route }
@@ -298,25 +306,54 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
             navController = navController,
             startDestination = Routes.FRAME,
             modifier = Modifier.padding(padding),
-            // 1.3.0: плавні переходи між екранами — легкий fade + зсув.
+            // 1.6.6: глобальний редизайн переходів — shared-axis фізика
+            // (Material Motion): легкий зсув + масштаб + fade на spring.
             enterTransition = {
                 androidx.compose.animation.fadeIn(
-                    androidx.compose.animation.core.tween(220)
+                    androidx.compose.animation.core.spring(
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+                    )
                 ) + androidx.compose.animation.slideInHorizontally(
-                    androidx.compose.animation.core.tween(220)
-                ) { it / 12 }
+                    animationSpec = androidx.compose.animation.core.spring(
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+                    ),
+                    initialOffsetX = { it / 8 }
+                ) + androidx.compose.animation.scaleIn(
+                    animationSpec = androidx.compose.animation.core.spring(
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium,
+                    ),
+                    initialScale = 0.96f,
+                )
             },
             exitTransition = {
-                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(180))
+                androidx.compose.animation.fadeOut(
+                    androidx.compose.animation.core.tween(150)
+                ) + androidx.compose.animation.scaleOut(
+                    animationSpec = androidx.compose.animation.core.tween(200),
+                    targetScale = 0.97f,
+                )
             },
             popEnterTransition = {
-                androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220))
+                androidx.compose.animation.fadeIn(
+                    androidx.compose.animation.core.spring(
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+                    )
+                ) + androidx.compose.animation.scaleIn(
+                    animationSpec = androidx.compose.animation.core.spring(
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium,
+                    ),
+                    initialScale = 0.96f,
+                )
             },
             popExitTransition = {
-                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(180)) +
-                    androidx.compose.animation.slideOutHorizontally(
-                        androidx.compose.animation.core.tween(220)
-                    ) { it / 12 }
+                androidx.compose.animation.fadeOut(
+                    androidx.compose.animation.core.tween(150)
+                ) + androidx.compose.animation.slideOutHorizontally(
+                    animationSpec = androidx.compose.animation.core.spring(
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+                    ),
+                    targetOffsetX = { it / 8 }
+                )
             },
         ) {
             composable(Routes.FRAME) {
@@ -393,6 +430,19 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                     baseUrl = container.backendApi.effectiveBaseUrl,
                     onOpenAuth = { navController.navigate(Routes.AUTH) },
                     onOpenUserProfile = { userId -> navController.navigate("user/$userId") },
+                )
+            }
+            // 1.6.6: Колекції — картки аніме з персонажами (Gemini-аналіз).
+            composable(Routes.COLLECTIONS) {
+                val collectionsVm: dev.amps.app.ui.screens.collections.CollectionsViewModel =
+                    androidx.lifecycle.viewmodel.compose.viewModel(
+                        factory = dev.amps.app.ui.screens.collections.CollectionsViewModel.Factory(
+                            backendApi = container.backendApi,
+                            backendSession = container.backendSession,
+                        ),
+                    )
+                dev.amps.app.ui.screens.collections.CollectionsScreen(
+                    viewModel = collectionsVm,
                 )
             }
             // 1.2.2: каталог аніме — AniList, мій список, нагадування серій.

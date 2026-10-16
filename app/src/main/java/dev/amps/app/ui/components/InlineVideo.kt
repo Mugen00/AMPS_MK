@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -140,5 +141,41 @@ fun InlineVideo(
                 )
             }
         }
+    }
+}
+
+/**
+ * 1.6.6: кружок — відео, вписане ВЕСЬ у коло, без обрізання.
+ *
+ * Раніше відео 9:16 кліпалось кругом по краях: PlayerView у квадраті
+ * 240dp вписує кадр як 135×240, і його кути (радіус ~138dp) виходили
+ * за межі кола (радіус 120dp) — кадр різався дугами. Тепер відео
+ * рендериться у квадраті 0.7×D, який ЦІЛКОМ вписується в коло
+ * (діагональ ≈ 0.99·D < D), а решта кола — чорний фон, як у Telegram.
+ */
+@Composable
+fun RoundVideoPlayer(
+    url: String,
+    modifier: Modifier = Modifier,
+    diameter: androidx.compose.ui.unit.Dp = 240.dp,
+    mutedByDefault: Boolean = true,
+    loop: Boolean = true,
+    active: Boolean = true,
+) {
+    androidx.compose.foundation.layout.Box(
+        modifier
+            .size(diameter)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(Color.Black),
+    ) {
+        InlineVideo(
+            url = url,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(diameter * 0.7f),
+            mutedByDefault = mutedByDefault,
+            loop = loop,
+            active = active,
+        )
     }
 }

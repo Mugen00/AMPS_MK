@@ -10,6 +10,8 @@ import dev.amps.app.core.GeminiChatSession
 import dev.amps.app.core.GeminiChatStore
 import dev.amps.app.core.SettingsStore
 import dev.amps.app.data.remote.GeminiVision
+import dev.amps.app.data.remote.backend.BackendApi
+import dev.amps.app.data.remote.backend.BackendSession
 import dev.amps.app.util.ImageLoader
 import dev.amps.app.util.PreparedImage
 import dev.amps.app.util.readableMessage
@@ -34,17 +36,26 @@ data class FrameSearchState(
     val error: String? = null,
     /** id поточної сесії (після першої відповіді сесія зберігається). */
     val sessionId: String? = null,
+    /** 1.6.6: триває збереження персонажа в колекцію. */
+    val savingToCollection: Boolean = false,
+    /** 1.6.6: тост успішного збереження (показ і зчитування з екрана). */
+    val savedToast: String? = null,
 )
 
 /**
  * 1.3.0: Frame Search повністю переписаний на AI-чат: зворотний пошук
  * по базах (IQDB/SauceNAO) прибрано — Gemini веде переписку про фото,
  * кожен аналіз зберігається в історію на пристрої.
+ *
+ * 1.6.6: кнопка «Зберегти персонажа» — structured-аналіз фото (JSON)
+ * → картка аніме в колекціях на сервері.
  */
 class FrameSearchViewModel(
     private val appContext: Context,
     private val settings: SettingsStore,
     private val chatStore: GeminiChatStore,
+    private val backendApi: BackendApi,
+    private val backendSession: BackendSession,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(FrameSearchState())
@@ -136,6 +147,70 @@ class FrameSearchViewModel(
         _state.value = FrameSearchState()
     }
 
+    /**
+     * 1.6.6: зберегти персонажа з фото в колекцію аніме.
+     *
+     * Окремий structured-запит до Gemini (JSON-режим): {isCharacter,
+     * animeTitle, characterName, note}. Персонаж → картка аніме на
+     * сервері; колекція оновлюється одразу при наступному відкритті
+     * розділу «Колекції» (і кожні 5 с, поки він відкритий).
+     */
+    fun saveToCollection() {
+        val image = _state.value.image ?: return
+        if (_state.value.savingToCollection) return
+        _state.value = _state.value.copy(savingToCollection = true, error = null, savedToast = null)
+        viewModelScope.launch {
+            val key = settings.settings.first().geminiApiKey
+            val verdict = runCatching { GeminiVision.analyzeStructured(image.bytes, key) }
+                .getOrElse { failure ->
+                    _state.value = _state.value.copy(
+                        savingToCollection = false,
+                        error = failure.readableMessage(),
+                    )
+                    return@launch
+                }
+            if (!verdict.isCharacter || verdict.characterName.isBlank() || verdict.animeTitle.isBlank()) {
+                _state.value = _state.value.copy(
+                    savingToCollection = false,
+                    error = "На фото не вдалося впізнати персонажа аніме",
+                )
+                return@launch
+            }
+            val result = backendSession.authedCall { header ->
+                backendApi.saveCollectionCharacter(
+                    header,
+                    verdict.animeTitle,
+                    verdict.characterName,
+                    verdict.note,
+                )
+            }
+            val saved = (result as? dev.amps.app.data.remote.backend.ApiResult.Success)?.data
+                as? dev.amps.app.data.remote.backend.dto.SaveCharacterResponse
+            if (saved != null) {
+                _state.value = _state.value.copy(
+                    savingToCollection = false,
+                    savedToast = if (saved.added) {
+                        "Персонажа ${verdict.characterName} додано до колекції «${verdict.animeTitle}»"
+                    } else {
+                        "Персонаж ${verdict.characterName} уже є в «${verdict.animeTitle}» — нотатку оновлено"
+                    },
+                )
+            } else {
+                _state.value = _state.value.copy(
+                    savingToCollection = false,
+                    error = (result as? dev.amps.app.data.remote.backend.ApiResult.Failure)?.error
+                        ?: (result as? dev.amps.app.data.remote.backend.ApiResult.NetworkError)?.message
+                        ?: "Не вдалося зберегти персонажа",
+                )
+            }
+        }
+    }
+
+    /** Еcran показав тост — прибираємо зі стану. */
+    fun consumeSavedToast() {
+        _state.value = _state.value.copy(savedToast = null)
+    }
+
     /** Автозбереження після кожної відповіді моделі. */
     private fun persistSession() {
         val snapshot = _state.value
@@ -168,9 +243,11 @@ class FrameSearchViewModel(
         private val appContext: Context,
         private val settings: SettingsStore,
         private val chatStore: GeminiChatStore,
+        private val backendApi: BackendApi,
+        private val backendSession: BackendSession,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            FrameSearchViewModel(appContext, settings, chatStore) as T
+            FrameSearchViewModel(appContext, settings, chatStore, backendApi, backendSession) as T
     }
 }

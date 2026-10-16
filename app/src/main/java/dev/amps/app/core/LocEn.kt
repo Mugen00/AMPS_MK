@@ -562,4 +562,16 @@ internal val enDict: Map<String, String> = mapOf(
     "Передай цей код учасникам — він додає їх у спільноту одразу:" to "Share this code — it adds people to the community instantly:",
     "Копіювати" to "Copy",
     "Готово" to "Done",
+
+    // 1.6.6: anime character collections
+    "Колекції" to "Collections",
+    "Колекції аніме" to "Anime collections",
+    "Поки що порожньо" to "Nothing here yet",
+    "Проаналізуй фото у розділі «Картинка» і збережи персонажа — тут з'явиться картка його аніме" to "Analyze a photo in the «Picture» tab and save the character — their anime card appears here",
+    "персонажів відкрито" to "characters collected",
+    "Жодного персонажа" to "No characters yet",
+    "Видалити колекцію" to "Delete collection",
+    "Прибрати персонажа" to "Remove character",
+    "Зберегти персонажа в колекцію" to "Save character to collection",
+    "Зберігаю персонажа…" to "Saving character…",
 )

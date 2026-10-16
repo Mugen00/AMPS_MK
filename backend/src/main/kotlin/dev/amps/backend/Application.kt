@@ -83,6 +83,8 @@ fun main() {
     // 1.2.2: коментарі та аніме-список акаунта.
     val commentService = dev.amps.backend.service.CommentService(profileService)
     val animeListService = dev.amps.backend.service.AnimeListService()
+    // 1.6.6: колекції аніме-персонажів (Gemini-аналіз → збереження).
+    val animeCollectionService = dev.amps.backend.service.AnimeCollectionService()
     // 1.6.0: групи, чати (приватні + групові) і рілси.
     // 1.6.2: групи і рілси отримали сховище — видаляють свої файли.
     // 1.6.3: чати отримали сховище — видаляють файл разом з повідомленням.
@@ -97,7 +99,7 @@ fun main() {
         module(
             config, authService, twoFactorService, syncService,
             feedService, profileService, media, storyService, playlistService,
-            commentService, followService, animeListService, pollService,
+            commentService, followService, animeListService, animeCollectionService, pollService,
             animeWatchService, groupService, chatService, reelService,
             blockService,
         )
@@ -155,6 +157,9 @@ private fun initDatabase(config: AppConfig) {
             // 1.6.2: реакції на повідомлення і блокування.
             dev.amps.backend.model.ChatReactionTable,
             dev.amps.backend.model.BlockTable,
+            // 1.6.6: колекції аніме-персонажів (Gemini-аналіз → збереження).
+            dev.amps.backend.model.AnimeCollectionTable,
+            dev.amps.backend.model.AnimeCollectionCharacterTable,
         )
         // 1.6.2: самолікування кеш-лічильників постів — синхронізуємо
         // кеш із фактами (лайки/репости), щоб стрічка читала колонку
@@ -180,6 +185,7 @@ fun Application.module(
     commentService: dev.amps.backend.service.CommentService,
     followService: dev.amps.backend.service.FollowService,
     animeListService: dev.amps.backend.service.AnimeListService,
+    animeCollectionService: dev.amps.backend.service.AnimeCollectionService,
     pollService: dev.amps.backend.service.PollService,
     animeWatchService: dev.amps.backend.service.AnimeWatchService,
     groupService: dev.amps.backend.service.GroupService,
@@ -227,8 +233,8 @@ fun Application.module(
 
     authRoutes(authService, twoFactorService, syncService, media)
     // 1.1.2: спільнота, профіль і роздача медіа; 1.2.0: сторіс;
-    // 1.2.2: коментарі, підписки, аніме-список.
-    feedRoutes(config, feedService, profileService, media, storyService, commentService, followService, animeListService, pollService, animeWatchService)
+    // 1.2.2: коментарі, підписки, аніме-список; 1.6.6: колекції.
+    feedRoutes(config, feedService, profileService, media, storyService, commentService, followService, animeListService, animeCollectionService, pollService, animeWatchService)
     // 1.2.1: свої плейлісти акаунта — у базі, онлайн-слухання в застосунку.
     playlistRoutes(playlistService)
     // 1.6.0: групи, чати, рілси.

@@ -409,6 +409,43 @@ class BackendApi private constructor(
             execute("DELETE", "anime/list/$anilistId", null, AnimeListResponse.serializer(), authHeader)
         }
 
+    // ===== 1.6.6: колекції аніме-персонажів (Gemini-аналіз → збереження) =====
+
+    /** Усі мої картки аніме з персонажами. */
+    suspend fun getCollections(authHeader: String): ApiResult = withContext(Dispatchers.IO) {
+        execute("GET", "collections", null, AnimeCollectionsResponse.serializer(), authHeader)
+    }
+
+    /** Зберегти персонажа: картка аніме створюється за потреби. */
+    suspend fun saveCollectionCharacter(
+        authHeader: String,
+        animeTitle: String,
+        characterName: String,
+        note: String,
+    ): ApiResult = withContext(Dispatchers.IO) {
+        val body = json.encodeToString(
+            SaveCharacterRequest.serializer(),
+            SaveCharacterRequest(
+                animeTitle = animeTitle,
+                characterName = characterName,
+                note = note,
+            ),
+        )
+        execute("POST", "collections/character", body, SaveCharacterResponse.serializer(), authHeader)
+    }
+
+    /** Видалити картку аніме з усіма персонажами. */
+    suspend fun deleteCollection(authHeader: String, collectionId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("DELETE", "collections/$collectionId", null, UnitResult.serializer(), authHeader)
+        }
+
+    /** Видалити одного персонажа з картки. */
+    suspend fun deleteCollectionCharacter(authHeader: String, characterId: Int): ApiResult =
+        withContext(Dispatchers.IO) {
+            execute("DELETE", "collections/character/$characterId", null, UnitResult.serializer(), authHeader)
+        }
+
     // ===== Сторіс (1.2.0) =====
 
     /** Живі сторіс усіх користувачів; публічно — як і стрічка. */

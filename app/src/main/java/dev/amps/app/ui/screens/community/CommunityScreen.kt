@@ -1614,20 +1614,21 @@ private fun MediaView(
                 .clickable { openExternally(context, url, "image/*") },
         )
     } else {
-        // 1.6.3: кружок — 240dp коло; звичайне відео — повна ширина.
-        dev.amps.app.ui.components.InlineVideo(
-            url = url,
-            modifier = if (round) {
-                Modifier
-                    .size(240.dp)
-                    .clip(CircleShape)
-            } else {
-                Modifier
+        // 1.6.6: кружок — повне відео в колі без обрізання (RoundVideoPlayer);
+        // звичайне відео — повна ширина.
+        if (round) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                dev.amps.app.ui.components.RoundVideoPlayer(url = url)
+            }
+        } else {
+            dev.amps.app.ui.components.InlineVideo(
+                url = url,
+                modifier = Modifier
                     .fillMaxWidth()
                     .height(240.dp)
-                    .clip(RoundedCornerShape(10.dp))
-            },
-        )
+                    .clip(RoundedCornerShape(10.dp)),
+            )
+        }
     }
 }
 

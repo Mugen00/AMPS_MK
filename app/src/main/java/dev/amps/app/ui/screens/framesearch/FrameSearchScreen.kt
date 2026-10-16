@@ -104,6 +104,13 @@ fun FrameSearchScreen(
     LaunchedEffect(state.error) {
         state.error?.let { snackbar.showSnackbar(it) }
     }
+    // 1.6.6: тост успішного збереження персонажа в колекцію.
+    LaunchedEffect(state.savedToast) {
+        state.savedToast?.let {
+            snackbar.showSnackbar(it)
+            viewModel.consumeSavedToast()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -150,6 +157,7 @@ fun FrameSearchScreen(
                         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
                     onClear = viewModel::clear,
+                    onSaveCollection = viewModel::saveToCollection,
                 )
             }
         }
@@ -175,6 +183,8 @@ private fun ChatBody(
     onInput: (String) -> Unit,
     onReplace: () -> Unit,
     onClear: () -> Unit,
+    // 1.6.6: зберегти персонажа з фото в колекцію аніме.
+    onSaveCollection: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         FramePreviewCard(
@@ -228,6 +238,27 @@ private fun ChatBody(
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(vertical = 6.dp),
             )
+        }
+
+        // 1.6.6: зберегти персонажа з фото в колекцію аніме — з'являється
+        // після першої відповіді моделі (фото вже проаналізоване).
+        if (state.messages.any { it.role == "model" }) {
+            FilledTonalButton(
+                onClick = { if (!state.savingToCollection) onSaveCollection() },
+                enabled = !state.savingToCollection && !state.busy,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                shape = RoundedCornerShape(14.dp),
+            ) {
+                if (state.savingToCollection) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(t("Зберігаю персонажа…"))
+                } else {
+                    Text("💾 " + t("Зберегти персонажа в колекцію"))
+                }
+            }
         }
 
         Row(

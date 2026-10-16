@@ -214,34 +214,87 @@ class ChatsViewModel(
         }
     }
 
-    /** Надіслати текст у приватний чат (+2 XP за повідомлення). */
+    /**
+     * Надіслати текст у приватний чат (+2 XP за повідомлення).
+     * 1.6.6: optimistic — бульбашка з'являється миттєво, без чекання
+     * сервера; після відповіді історія перечитується (реальні id).
+     */
     fun sendMessage() {
         val peer = _state.value.openPeerId ?: return
         val text = _state.value.draft.trim()
-        if (text.isEmpty() || _state.value.sending) return
+        if (text.isEmpty()) return
+        val optimisticId = -(System.currentTimeMillis()).toInt()
+        _state.value = _state.value.copy(
+            draft = "",
+            sending = true,
+            messages = _state.value.messages + dev.amps.app.data.remote.backend.dto.ChatMessageDto(
+                id = optimisticId,
+                from = ME_PROFILE,
+                toUserId = peer,
+                text = text,
+                createdAt = System.currentTimeMillis(),
+                mine = true,
+            ),
+        )
         viewModelScope.launch {
-            _state.value = _state.value.copy(sending = true)
             val result = backendSession.authedCall { header -> backendApi.sendPrivateMessage(header, peer, text) }
             when (result) {
                 is ApiResult.Success -> {
-                    _state.value = _state.value.copy(draft = "", sending = false)
+                    _state.value = _state.value.copy(sending = false)
                     loadHistory()
                 }
-                is ApiResult.Failure -> _state.value = _state.value.copy(sending = false, error = result.error)
-                is ApiResult.NetworkError -> _state.value = _state.value.copy(sending = false, error = result.message)
+                is ApiResult.Failure -> _state.value = _state.value.copy(
+                    messages = _state.value.messages.filterNot { it.id == optimisticId },
+                    draft = text,
+                    sending = false,
+                    error = result.error,
+                )
+                is ApiResult.NetworkError -> _state.value = _state.value.copy(
+                    messages = _state.value.messages.filterNot { it.id == optimisticId },
+                    draft = text,
+                    sending = false,
+                    error = result.message,
+                )
             }
         }
     }
 
-    /** Фото в приватний чат. */
+    /**
+     * Фото в приватний чат.
+     * 1.6.6: optimistic — фото видно одразу з локальних байтів
+     * (Coil рендерить ByteArray), після відповіді — серверний URL.
+     */
     fun sendPhoto(bytes: ByteArray) {
         val peer = _state.value.openPeerId ?: return
+        val optimisticId = -(System.currentTimeMillis()).toInt()
+        _state.value = _state.value.copy(
+            messages = _state.value.messages + dev.amps.app.data.remote.backend.dto.ChatMessageDto(
+                id = optimisticId,
+                from = ME_PROFILE,
+                toUserId = peer,
+                text = "",
+                createdAt = System.currentTimeMillis(),
+                mine = true,
+                localBytes = bytes,
+            ),
+        )
         viewModelScope.launch {
             val result = backendSession.authedCall { header -> backendApi.sendPrivatePhoto(header, peer, bytes) }
-            if (result is ApiResult.Success) loadHistory()
-            else _state.value = _state.value.copy(error = (result as? ApiResult.Failure)?.error)
+            if (result !is ApiResult.Success) {
+                _state.value = _state.value.copy(
+                    messages = _state.value.messages.filterNot { it.id == optimisticId },
+                    error = (result as? ApiResult.Failure)?.error ?: (result as? ApiResult.NetworkError)?.message,
+                )
+            } else {
+                loadHistory()
+            }
         }
     }
+
+    /** 1.6.6: заглушка мого профілю для optimistic-повідомлень. */
+    private val ME_PROFILE = dev.amps.app.data.remote.backend.dto.ProfileDto(
+        userId = -1, login = "me", displayName = "Я",
+    )
 
     // ===== 1.6.2: реакції на повідомлення =====
 
