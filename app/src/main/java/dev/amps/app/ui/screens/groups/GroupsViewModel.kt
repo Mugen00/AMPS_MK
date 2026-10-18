@@ -196,14 +196,22 @@ class GroupsViewModel(
         viewModelScope.launch {
             val result = backendSession.authedCall { header -> backendApi.getGroup(header, groupId) }
             val detail = (result as? ApiResult.Success)?.data as? GroupDetailDto
+            if (detail == null) {
+                // 1.6.7: раніше тут був тихий фейл — клік по групі нічого
+                // не робив; тепер причина видно на екрані.
+                _state.value = _state.value.copy(
+                    error = (result as? ApiResult.Failure)?.error
+                        ?: (result as? ApiResult.NetworkError)?.message
+                        ?: Loc.translate("Не вдалося відкрити групу — спробуйте ще раз"),
+                )
+                return@launch
+            }
             _state.value = _state.value.copy(selected = detail, detailTab = "posts", posts = emptyList(), chat = emptyList(), members = emptyList(), requests = emptyList())
-            if (detail != null) {
-                loadMembers(groupId)
-                loadGroupPosts(groupId)
-                if (detail.group.isMember) {
-                    loadGroupChat(groupId)
-                    markChatRead(groupId)
-                }
+            loadMembers(groupId)
+            loadGroupPosts(groupId)
+            if (detail.group.isMember) {
+                loadGroupChat(groupId)
+                markChatRead(groupId)
             }
         }
     }

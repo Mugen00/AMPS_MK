@@ -162,21 +162,11 @@ class GroupService(
             ?: return@newSuspendedTransaction ApiResponse.fail("Групу не знайдено", "NO_GROUP")
         val role = roleOfTx(groupId, viewerId)
         val pending = pendingRequestTx(groupId, viewerId)
+        // 1.6.7: вкладена обгортка group — як чекає клієнт.
         ApiResponse.ok(
             GroupDetailDto(
-                id = group.id.value,
-                owner = profileOf(group.ownerId),
-                name = group.name,
-                description = group.description,
-                avatarPath = group.avatarFile?.let { "/media/photo/$it" },
-                // 1.6.4: обкладинка спільноти.
-                coverPath = group.coverFile?.let { "/media/photo/$it" },
-                isPrivate = group.isPrivate,
-                memberCount = memberCountTx(groupId),
-                isMember = role != null,
-                myRole = role,
+                group = group.toDto(viewerId),
                 myRequestPending = group.isPrivate && role == null && pending,
-                createdAt = group.createdAt,
             )
         )
     }
@@ -484,7 +474,7 @@ class GroupService(
         creatorId: Int,
         maxUses: Int,
         expiresAt: Long,
-    ): ApiResponse<String> = newSuspendedTransaction {
+    ): ApiResponse<dev.amps.backend.model.GroupInviteCodeResponse> = newSuspendedTransaction {
         val role = roleOfTx(groupId, creatorId)
         if (role != ROLE_OWNER && role != ROLE_MOD) {
             return@newSuspendedTransaction ApiResponse.fail("Посилання створює адмін", "NOT_ADMIN")
@@ -499,8 +489,8 @@ class GroupService(
             this.expiresAt = expiresAt
             this.createdAt = System.currentTimeMillis()
         }
-        // 1.6.3: коротка назва спільноти для QR/посилання — owner+1 символ для унікальності.
-        ApiResponse.ok(code)
+        // 1.6.7: обгортка {code} — контракт із клієнтом.
+        ApiResponse.ok(dev.amps.backend.model.GroupInviteCodeResponse(code))
     }
 
     /** 1.6.5: вступ за посиланням-запрошенням (один раз для one-shot). */

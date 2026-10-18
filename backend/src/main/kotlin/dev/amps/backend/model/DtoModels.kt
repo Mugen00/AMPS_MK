@@ -569,6 +569,10 @@ data class GroupCreateRequest(
 @Serializable
 data class GroupCreatedResponse(val groupId: Int)
 
+// 1.6.7: код-запрошення В ОБГОРТЦІ — клієнт чекає {code}, а не голий рядок.
+@Serializable
+data class GroupInviteCodeResponse(val code: String)
+
 // 1.6.4: оновлення групи (назва/опис) + відповідь.
 @Serializable
 data class GroupUpdateRequest(
@@ -582,24 +586,14 @@ data class GroupUpdatedResponse(val group: GroupDto)
 @Serializable
 data class GroupListResponse(val groups: List<GroupDto>)
 
+// 1.6.7: контракт вирівняно з клієнтом — група ВКЛАДЕНА в поле group
+// (раніше сервер віддавав плоский DTO, клієнт чекав обгортку, і картка
+// групи тихо не відкривалась — разом з усіма функціями управління).
 @Serializable
 data class GroupDetailDto(
-    val id: Int,
-    val owner: ProfileDto,
-    val name: String,
-    val description: String,
-    val avatarPath: String? = null,
-    /** 1.6.4: обкладинка спільноти (як у ВК); null — градієнт-заглушка. */
-    val coverPath: String? = null,
-    val isPrivate: Boolean,
-    val memberCount: Int,
-    /** Чи я вже учасник (для власника теж true). */
-    val isMember: Boolean,
-    /** Роль мене в групі: "owner"|"mod"|"member" або null. */
-    val myRole: String? = null,
+    val group: GroupDto,
     /** Для приватної: чи висить мій запит на вступ (поки не схвалено). */
-    val myRequestPending: Boolean = false,
-    val createdAt: Long
+    val myRequestPending: Boolean = false
 )
 
 @Serializable
