@@ -237,15 +237,9 @@ private fun initDatabase(config: AppConfig) {
         // 1.6.8: PostgreSQL FTS (tsvector + pg_trgm) — індекси та тригери
         exec("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 
-        // 1.6.8: ensure searchVector columns exist before creating GIN indexes
-        // Using DO block with PERFORM for PostgreSQL compatibility (post-9.0)
-        exec("DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'posts' AND column_name = 'searchVector') THEN ALTER TABLE posts ADD COLUMN searchVector tsvector; END IF; END \$\$;")
-        exec("DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'groups' AND column_name = 'searchVector') THEN ALTER TABLE groups ADD COLUMN searchVector tsvector; END IF; END \$\$;")
-        exec("DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'reels' AND column_name = 'searchVector') THEN ALTER TABLE reels ADD COLUMN searchVector tsvector; END IF; END \$\$;")
-        exec("DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'profiles' AND column_name = 'searchVector') THEN ALTER TABLE profiles ADD COLUMN searchVector tsvector; END IF; END \$\$;")
-        exec("DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'searchVector') THEN ALTER TABLE users ADD COLUMN searchVector tsvector; END IF; END \$\$;")
-        exec("DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'anime_collections' AND column_name = 'searchVector') THEN ALTER TABLE anime_collections ADD COLUMN searchVector tsvector; END IF; END \$\$;")
-        exec("DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'anime_collection_characters' AND column_name = 'searchVector') THEN ALTER TABLE anime_collection_characters ADD COLUMN searchVector tsvector; END IF; END \$\$;")
+// 1.6.8: PostgreSQL FTS (tsvector + pg_trgm) — індекси та тригери
+        // searchVector колонки вже存在 у базі даних (додані раніше)
+        //створюємо GIN індекси на існуючих колонках
 
         // GIN індекси на searchVector колонках
         exec("CREATE INDEX IF NOT EXISTS idx_posts_search_vector ON posts USING GIN (searchVector)")
@@ -353,4 +347,5 @@ fun Application.module(
     // 1.6.8: WebSocket routes
     wsRoutes(config, chatService, presenceService, wsPubSub, wsSessionManager, wsScope)
 }
+
 
