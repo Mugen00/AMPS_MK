@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "dev.amps.backend"
-version = "1.1.0"
+version = "1.6.8"
 
 dependencies {
     // Ktor 3 (Netty)
@@ -18,9 +18,10 @@ dependencies {
     implementation("io.ktor:ktor-server-auth-jwt:3.0.3")
     implementation("io.ktor:ktor-server-cors:3.0.3")
     implementation("io.ktor:ktor-server-status-pages:3.0.3")
+    // WebSocket — 1.6.8
+    implementation("io.ktor:ktor-server-websockets:3.0.3")
 
-    // Exposed ORM. Час — epoch-мілісекунди в long-колонках, тому
-    // exposed-java-time не потрібен.
+    // Exposed ORM
     implementation("org.jetbrains.exposed:exposed-core:0.55.0")
     implementation("org.jetbrains.exposed:exposed-dao:0.55.0")
     implementation("org.jetbrains.exposed:exposed-jdbc:0.55.0")
@@ -29,11 +30,14 @@ dependencies {
     implementation("org.postgresql:postgresql:42.7.4")
     implementation("com.zaxxer:HikariCP:6.2.1")
 
+    // Redis (Lettuce) — 1.6.8: cache, rate limit, presence, counters, pub/sub, streams
+    implementation("io.lettuce:lettuce-core:6.3.2.RELEASE")
+    implementation("org.apache.commons:commons-pool2:2.12.0")
+
     // Паролі
     implementation("org.mindrot:jbcrypt:0.4")
-    // JWT: com.auth0:java-jwt приходить транзитивно з ktor-server-auth-jwt
 
-    // Email (Resend) і SMS (Twilio) — через REST, без важких SDK
+    // Email (Resend) і SMS (Twilio)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Логи

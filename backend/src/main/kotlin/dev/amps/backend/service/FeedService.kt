@@ -18,6 +18,10 @@ import dev.amps.backend.model.PostTable
 import dev.amps.backend.model.RepostEntity
 import dev.amps.backend.model.RepostResponse
 import dev.amps.backend.model.RepostTable
+import dev.amps.backend.service.CacheService
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
@@ -32,6 +36,7 @@ import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransacti
  * дата публікації.
  *
  * Медіа зберігаються файлами через [MediaStorage]; у базі лише імена.
+ * 1.6.8: кешування стрічки через CacheService (TTL 30с).
  */
 class FeedService(
     private val media: MediaStorage,
@@ -39,6 +44,8 @@ class FeedService(
     private val follows: FollowService? = null,
     // 1.2.3: опитування під постами.
     private val polls: PollService? = null,
+    // 1.6.8: кеш стрічки
+    private val cache: CacheService? = null,
 ) {
 
     /**
@@ -105,63 +112,90 @@ class FeedService(
      *
      * 1.2.2: [scope] = "following" — тільки пости/репости тих, на кого
      * підписаний [viewerId] (власні пости теж видимі — так зручно).
+     * 1.6.8: кешування першої сторінки загальної стрічки (TTL 30с).
      */
     suspend fun feed(
         viewerId: Int,
         limit: Int,
         offset: Long,
         scope: String = "all",
-    ): ApiResponse<FeedResponse> =
-        newSuspendedTransaction {
+    ): ApiResponse<FeedResponse> {
+        // Кешуємо тільки першу сторінку загальної стрічки (scope=all, offset=0, гостьовий перегляд)
+        val useCache = cache != null && scope == "all" && offset == 0L && viewerId == 0
+        val cacheKey = "feed:all:limit=$limit"
+        
+        val response = if (useCache) {
+            cache!!.getOrPut(
+                key = cacheKey,
+                serializer = dev.amps.backend.model.FeedResponse.serializer(),
+                ttlSeconds = 30,
+                namespace = "feed"
+            ) {
+                computeFeed(viewerId, limit, offset, scope, followingIds = null)
+            }
+        } else {
             val followingIds: Set<Int>? = if (scope == "following" && follows != null) {
                 follows.followingIds(viewerId).toSet() + viewerId
             } else {
                 null
             }
-            // Охоплюємо на третину більше записів, ніж потрібно: частина
-            // піде на злиття з репостами, і відрізання робиться після сортування.
-            val fetch = (limit.toLong() * 2 + offset + 32L).coerceAtMost(Int.MAX_VALUE.toLong())
-            val allPosts = PostEntity.all()
-                .orderBy(PostTable.createdAt to SortOrder.DESC)
-                .limit(fetch.toInt(), offset = 0)
-                .toList()
-                // 1.6.0: пости груп — у ленті своєї групи, не в загальній.
-                .filter { it.groupId == null }
-            // 1.2.2: режим «підписки» — тільки свої й тих, на кого підписаний.
-            val posts = if (followingIds != null) {
-                allPosts.filter { it.userId in followingIds }
-            } else {
-                allPosts
-            }
-            val allReposts = RepostEntity.all()
-                .orderBy(RepostTable.createdAt to SortOrder.DESC)
-                .limit(fetch.toInt(), offset = 0)
-                .toList()
-            val reposts = if (followingIds != null) {
-                allReposts.filter { it.userId in followingIds }
-            } else {
-                allReposts
-            }
-
-            val items = buildList {
-                posts.forEach { add(FeedItemDto(KIND_POST, postDto(it, viewerId), null, it.createdAt)) }
-                reposts.forEach { repost ->
-                    val original = PostEntity.findById(repost.postId) ?: return@forEach
-                    add(
-                        FeedItemDto(
-                            kind = KIND_REPOST,
-                            post = postDto(original, viewerId),
-                            repostBy = profiles.profileOf(profiles.ensureProfile(repost.userId)),
-                            at = repost.createdAt,
-                        )
-                    )
-                }
-            }
-                .sortedByDescending { it.at }
-                .drop(offset.toInt())
-                .take(limit)
-            ok(FeedResponse(items))
+            computeFeed(viewerId, limit, offset, scope, followingIds)
         }
+        return ok(response)
+    }
+
+    /** Розрахунок стрічки (винесено для кешування). Повертає FeedResponse без ApiResponse обгортки. */
+    private suspend fun computeFeed(
+        viewerId: Int,
+        limit: Int,
+        offset: Long,
+        scope: String,
+        followingIds: Set<Int>?,
+    ): FeedResponse = newSuspendedTransaction {
+        // Охоплюємо на третину більше записів, ніж потрібно: частина
+        // піде на злиття з репостами, і відрізання робиться після сортування.
+        val fetch = (limit.toLong() * 2 + offset + 32L).coerceAtMost(Int.MAX_VALUE.toLong())
+        val allPosts = PostEntity.all()
+            .orderBy(PostTable.createdAt to SortOrder.DESC)
+            .limit(fetch.toInt(), offset = 0)
+            .toList()
+            // 1.6.0: пости груп — у ленті своєї групи, не в загальній.
+            .filter { it.groupId == null }
+        // 1.2.2: режим «підписки» — тільки свої й тих, на кого підписаний.
+        val posts = if (followingIds != null) {
+            allPosts.filter { it.userId in followingIds }
+        } else {
+            allPosts
+        }
+        val allReposts = RepostEntity.all()
+            .orderBy(RepostTable.createdAt to SortOrder.DESC)
+            .limit(fetch.toInt(), offset = 0)
+            .toList()
+        val reposts = if (followingIds != null) {
+            allReposts.filter { it.userId in followingIds }
+        } else {
+            allReposts
+        }
+
+        val items = buildList {
+            posts.forEach { add(FeedItemDto(KIND_POST, postDto(it, viewerId), null, it.createdAt)) }
+            reposts.forEach { repost ->
+                val original = PostEntity.findById(repost.postId) ?: return@forEach
+                add(
+                    FeedItemDto(
+                        kind = KIND_REPOST,
+                        post = postDto(original, viewerId),
+                        repostBy = profiles.profileOf(profiles.ensureProfile(repost.userId)),
+                        at = repost.createdAt,
+                    )
+                )
+            }
+        }
+            .sortedByDescending { it.at }
+            .drop(offset.toInt())
+            .take(limit)
+        FeedResponse(items)
+    }
 
     /**
      * 1.6.1: редагування власного поста. Медіа й опитування лишаються
@@ -319,6 +353,16 @@ class FeedService(
         ok(FeedResponse(items))
     }
 
+    /** 1.6.8: інвалідуати кеш стрічки (викликається з EventConsumer). */
+    suspend fun invalidateFeedCache() {
+        cache?.invalidateNamespace("feed")
+    }
+
+    /** Синхронна версія для виклику з не-suspend контексту (EventConsumer). */
+    fun invalidateFeedCacheSync() {
+        cache?.invalidateNamespaceSync("feed")
+    }
+
     // --- складання рядка стрічки --------------------------------------------
 
     /**
@@ -385,7 +429,7 @@ class FeedService(
     }
 
     /** DTO одного поста (обгортка над батчем). */
-    private fun postDto(post: PostEntity, viewerId: Int): PostDto =
+    internal fun postDto(post: PostEntity, viewerId: Int): PostDto =
         postsToDtos(listOf(post), viewerId).getValue(post.id.value)
 
     companion object {

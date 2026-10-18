@@ -23,6 +23,8 @@ class AppConfig(
     val twilioAuthToken: String? = env("TWILIO_AUTH_TOKEN"),
     val twilioFromNumber: String? = env("TWILIO_FROM_NUMBER"),
     val frontendBaseUrl: String = env("FRONTEND_BASE_URL") ?: "",
+    /** 1.6.8: Redis URL (Railway Redis plugin). Формат: redis://[:password@]host:port */
+    val redisUrl: String? = env("REDIS_URL"),
 
     /**
      * 1.1.2: корінь сховища медіа (аватри, фото і відео постів).

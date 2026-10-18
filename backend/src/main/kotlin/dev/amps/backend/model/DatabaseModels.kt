@@ -26,6 +26,9 @@ object UserTable : IntIdTable("users") {
     val twoFactorSecret = varchar("two_factor_secret", 255).nullable()
     val createdAt = long("created_at")
     val updatedAt = long("updated_at")
+
+    // 1.6.8: FTS — tsvector для пошуку користувачів за логіном.
+    val searchVector = text("search_vector").nullable()
 }
 
 class UserEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -41,6 +44,7 @@ class UserEntity(id: EntityID<Int>) : IntEntity(id) {
     var twoFactorSecret by UserTable.twoFactorSecret
     var createdAt by UserTable.createdAt
     var updatedAt by UserTable.updatedAt
+    var searchVector by UserTable.searchVector
 }
 
 // ===== Коди підтвердження (email / SMS / скидання пароля) =====
@@ -110,6 +114,9 @@ object ProfileTable : IntIdTable("profiles") {
     val favGenres = varchar("fav_genres", 500).nullable()
     val favAnime = varchar("fav_anime", 2500).nullable()
     val updatedAt = long("updated_at")
+
+    // 1.6.8: FTS — tsvector для пошуку профілів за ім'ям та біо.
+    val searchVector = text("search_vector").nullable()
 }
 
 class ProfileEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -122,6 +129,7 @@ class ProfileEntity(id: EntityID<Int>) : IntEntity(id) {
     var favGenres by ProfileTable.favGenres
     var favAnime by ProfileTable.favAnime
     var updatedAt by ProfileTable.updatedAt
+    var searchVector by ProfileTable.searchVector
 }
 
 // ===== Спільнота: пости =====
@@ -152,6 +160,9 @@ object PostTable : IntIdTable("posts") {
 
     // 1.6.5: закріплений пост спільноти (першим у ленті групи).
     val pinned = bool("pinned").default(false)
+
+    // 1.6.8: FTS — tsvector для повнотекстового пошуку (ukrainian/russian/english).
+    val searchVector = text("search_vector").nullable()
 }
 
 class PostEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -167,6 +178,7 @@ class PostEntity(id: EntityID<Int>) : IntEntity(id) {
     var repostCount by PostTable.repostCount
     var roundVideo by PostTable.roundVideo
     var pinned by PostTable.pinned
+    var searchVector by PostTable.searchVector
 }
 
 // ===== Вкладення поста: фото або відео =====
@@ -303,6 +315,9 @@ object AnimeCollectionTable : IntIdTable("anime_collections") {
     init {
         uniqueIndex(userId, animeTitle)
     }
+
+    // 1.6.8: FTS — tsvector для пошуку колекцій за назвою аніме.
+    val searchVector = text("search_vector").nullable()
 }
 
 class AnimeCollectionEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -312,6 +327,7 @@ class AnimeCollectionEntity(id: EntityID<Int>) : IntEntity(id) {
     var animeTitle by AnimeCollectionTable.animeTitle
     var createdAt by AnimeCollectionTable.createdAt
     var updatedAt by AnimeCollectionTable.updatedAt
+    var searchVector by AnimeCollectionTable.searchVector
 }
 
 /** Персонаж, збережений у картку аніме (унікально на назву в колекції). */
@@ -324,6 +340,9 @@ object AnimeCollectionCharacterTable : IntIdTable("anime_collection_characters")
     init {
         uniqueIndex(collectionId, name)
     }
+
+    // 1.6.8: FTS — tsvector для пошуку персонажів за ім'ям та нотаткою.
+    val searchVector = text("search_vector").nullable()
 }
 
 class AnimeCollectionCharacterEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -333,6 +352,7 @@ class AnimeCollectionCharacterEntity(id: EntityID<Int>) : IntEntity(id) {
     var name by AnimeCollectionCharacterTable.name
     var note by AnimeCollectionCharacterTable.note
     var createdAt by AnimeCollectionCharacterTable.createdAt
+    var searchVector by AnimeCollectionCharacterTable.searchVector
 }
 
 // ===== Сторіс (1.2.0): фото/відео на 24 години =====
@@ -483,6 +503,9 @@ object GroupTable : IntIdTable("groups") {
     val coverFile = varchar("cover_file", 100).nullable()
     val isPrivate = bool("is_private").default(false)
     val createdAt = long("created_at")
+
+    // 1.6.8: FTS — tsvector для пошуку груп за назвою та описом.
+    val searchVector = text("search_vector").nullable()
 }
 
 class GroupEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -495,6 +518,7 @@ class GroupEntity(id: EntityID<Int>) : IntEntity(id) {
     var coverFile by GroupTable.coverFile
     var isPrivate by GroupTable.isPrivate
     var createdAt by GroupTable.createdAt
+    var searchVector by GroupTable.searchVector
 }
 
 // Учасник групи: роль "owner" | "mod" | "member".
@@ -659,6 +683,9 @@ object ReelTable : IntIdTable("reels") {
     val videoFile = varchar("video_file", 100)
     val caption = varchar("caption", 500).default("")
     val createdAt = long("created_at")
+
+    // 1.6.8: FTS — tsvector для пошуку рілсів за описом.
+    val searchVector = text("search_vector").nullable()
 }
 
 class ReelEntity(id: EntityID<Int>) : IntEntity(id) {
@@ -668,6 +695,7 @@ class ReelEntity(id: EntityID<Int>) : IntEntity(id) {
     var videoFile by ReelTable.videoFile
     var caption by ReelTable.caption
     var createdAt by ReelTable.createdAt
+    var searchVector by ReelTable.searchVector
 }
 
 object ReelLikeTable : IntIdTable("reel_likes") {

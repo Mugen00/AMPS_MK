@@ -747,3 +747,26 @@ data class ReelLikeResponse(
     val liked: Boolean,
     val likeCount: Int
 )
+
+// ===== 1.6.8: рекомендації (SQL-based Collaborative Filtering) =====
+
+/** Рекомендований пост: той самий FeedItemDto але спрощений для рекомендацій. */
+@Serializable
+data class RecommendedPostDto(
+    val id: Int,
+    val author: ProfileDto,
+    val text: String,
+    val media: List<MediaDto>,
+    val createdAt: Long,
+    val likeCount: Int,
+    val repostCount: Int,
+    val imageAspect: String? = null,
+    val editedAt: Long? = null,
+    val roundVideo: Boolean = false,
+    val pinned: Boolean = false,
+)
+
+@Serializable
+data class RecommendationsResponse(
+    val posts: List<RecommendedPostDto>
+)

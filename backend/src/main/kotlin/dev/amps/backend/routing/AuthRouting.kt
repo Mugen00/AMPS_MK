@@ -4,8 +4,11 @@ import dev.amps.backend.model.ApiError
 import dev.amps.backend.model.ApiResponse
 import dev.amps.backend.model.TwoFactorVerifyRequest
 import dev.amps.backend.service.AuthService
+import dev.amps.backend.service.SessionBlacklist
 import dev.amps.backend.service.SyncService
 import dev.amps.backend.service.TwoFactorService
+import dev.amps.backend.service.RedisRateLimiter
+import dev.amps.backend.service.RedisRateLimitConfig
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
@@ -32,6 +35,9 @@ fun Application.authRoutes(
     twoFactor: TwoFactorService,
     sync: SyncService,
     storage: dev.amps.backend.service.MediaStorage,
+    // 1.6.8: Redis сервіси
+    redisRateLimiter: RedisRateLimiter,
+    sessionBlacklist: SessionBlacklist,
 ) {
     routing {
         get("/health") {
@@ -40,15 +46,41 @@ fun Application.authRoutes(
             call.respond(
                 mapOf(
                     "status" to "ok",
-                    "version" to "1.6.7",
+                    "version" to "1.6.8",
                     "storage" to storage.kind,
                 )
             )
         }
 
         route("/auth") {
-            post("/register") { call.respondApi(auth.register(call.receive())) }
-            post("/login") { call.respondApi(auth.login(call.receive())) }
+            post("/register") {
+                // 1.6.8: rate limiting на реєстрацію (за IP)
+                val ip = getClientIp(call)
+                val limit = redisRateLimiter.tryAcquire("register", ip, RedisRateLimitConfig.REGISTER.max, RedisRateLimitConfig.REGISTER.windowSec)
+                if (!limit.allowed) {
+                    call.respond(
+                        HttpStatusCode.TooManyRequests,
+                        ApiError(error = "Забагато спроб реєстрації. Спробуйте пізніше.", errorCode = "RATE_LIMITED")
+                    )
+                    return@post
+                }
+                call.respondApi(auth.register(call.receive()))
+            }
+            post("/login") {
+                // 1.6.8: rate limiting на вхід (за IP + логін)
+                val ip = getClientIp(call)
+                val body = call.receive<dev.amps.backend.model.LoginRequest>()
+                val identifier = "$ip:${body.login.orEmpty()}"
+                val limit = redisRateLimiter.tryAcquire("login", identifier, RedisRateLimitConfig.LOGIN.max, RedisRateLimitConfig.LOGIN.windowSec)
+                if (!limit.allowed) {
+                    call.respond(
+                        HttpStatusCode.TooManyRequests,
+                        ApiError(error = "Забагато спроб входу. Спробуйте пізніше.", errorCode = "RATE_LIMITED")
+                    )
+                    return@post
+                }
+                call.respondApi(auth.login(body))
+            }
             // 1.2.0: вхід/реєстрація через Google — ID-токен Credential Manager.
             post("/google") { call.respondApi(auth.googleLogin(call.receive())) }
             post("/verify") { call.respondApi(auth.verifyCode(call.receive())) }
@@ -69,6 +101,22 @@ fun Application.authRoutes(
                 post("/sync") {
                     val body = call.receive<dev.amps.backend.model.SyncRequest>()
                     call.requireUid()?.let { call.respondApi(sync.push(it, body)) }
+                }
+                // 1.6.8: вихід — відкликає поточний access токен (jti) та refresh токен
+                post("/logout") {
+                    val uid = call.requireUid() ?: return@post
+                    val principal = call.principal<JWTPrincipal>()
+                    val jti = principal?.payload?.getClaim("jti")?.asString()
+                    val token = call.request.headers["Authorization"]?.removePrefix("Bearer ") ?: ""
+                    if (jti != null) {
+                        sessionBlacklist.revoke(jti)
+                    }
+                    if (token.isNotBlank()) {
+                        sessionBlacklist.revokePair(jti ?: "", sha256(token))
+                    }
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.UnitResult(true)
+                    ))
                 }
             }
         }
@@ -110,3 +158,12 @@ internal suspend inline fun <reified T : Any> ApplicationCall.respondApi(result:
         respond(status, result)
     }
 }
+
+/** SHA-256 хеш рядка (для logout — хеш refresh токена). */
+private fun sha256(text: String): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+
+/** Отримати IP клієнта (підтримка X-Forwarded-For за проксі). */
+private fun getClientIp(call: ApplicationCall): String =
+    call.request.headers["X-Forwarded-For"]?.split(",")?.firstOrNull()?.trim()
+        ?: "unknown"

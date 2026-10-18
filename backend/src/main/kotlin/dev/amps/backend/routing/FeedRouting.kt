@@ -7,6 +7,7 @@ import dev.amps.backend.model.ProfileUpdateRequest
 import dev.amps.backend.service.FeedService
 import dev.amps.backend.service.MediaStorage
 import dev.amps.backend.service.ProfileService
+import dev.amps.backend.service.RecommendationService
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.PartData
 import io.ktor.http.content.forEachPart
@@ -56,6 +57,8 @@ fun Application.feedRoutes(
     polls: dev.amps.backend.service.PollService,
     // 1.4.0: резолвер «Дивитись» — сторінка тайтла на yummyani.
     animeWatch: dev.amps.backend.service.AnimeWatchService,
+    // 1.6.8: рекомендації
+    recommendationService: RecommendationService,
 ) {
     routing {
         // 1.4.0: публічний резолвер — знаходить сторінку тайтла на
@@ -560,6 +563,49 @@ fun Application.feedRoutes(
                     call.respond(HttpStatusCode.BadRequest, ApiError(error = "Невірний ідентифікатор персонажа"))
                 } else {
                     call.respondApi(animeCollections.deleteCharacter(uid, chid))
+                }
+            }
+
+            // 1.6.8: рекомендації — CF-based, user-based cosine similarity
+            get("/recommendations") {
+                val uid = call.requireUid() ?: return@get
+                val limit = (call.request.queryParameters["limit"]?.toIntOrNull() ?: 20).coerceIn(1, 50)
+                val offset = (call.request.queryParameters["offset"]?.toIntOrNull() ?: 0).coerceAtLeast(0)
+
+                val postIds = recommendationService.getRecommendations(uid, limit, offset)
+                if (postIds.isEmpty()) {
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.RecommendationsResponse(posts = emptyList())
+                    ))
+                } else {
+                    // Батч-завантаження постів
+                    val posts = postIds.mapNotNull { pid ->
+                        org.jetbrains.exposed.sql.transactions.transaction {
+                            dev.amps.backend.model.PostEntity.findById(pid)
+                        }
+                    }
+                    // Конвертуємо в DTO (використовуємо існуючий метод feedService)
+                    val postDtos = posts.map { post ->
+                        val dto = org.jetbrains.exposed.sql.transactions.transaction {
+                            feedService.postDto(post, uid)
+                        }
+                        dev.amps.backend.model.RecommendedPostDto(
+                            id = dto.id,
+                            author = dto.author,
+                            text = dto.text,
+                            media = dto.media,
+                            createdAt = dto.createdAt,
+                            likeCount = dto.likeCount,
+                            repostCount = dto.repostCount,
+                            imageAspect = dto.imageAspect,
+                            editedAt = dto.editedAt,
+                            roundVideo = dto.roundVideo,
+                            pinned = dto.pinned,
+                        )
+                    }
+                    call.respondApi(dev.amps.backend.model.ApiResponse.ok(
+                        dev.amps.backend.model.RecommendationsResponse(posts = postDtos)
+                    ))
                 }
             }
         }
