@@ -237,6 +237,15 @@ private fun initDatabase(config: AppConfig) {
         // 1.6.8: PostgreSQL FTS (tsvector + pg_trgm) — індекси та тригери
         exec("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 
+        // 1.6.8: ensure searchVector columns exist before creating GIN indexes
+        exec("ALTER TABLE IF NOT EXISTS posts ADD COLUMN IF NOT EXISTS searchVector tsvector")
+        exec("ALTER TABLE IF NOT EXISTS groups ADD COLUMN IF NOT EXISTS searchVector tsvector")
+        exec("ALTER TABLE IF NOT EXISTS reels ADD COLUMN IF NOT EXISTS searchVector tsvector")
+        exec("ALTER TABLE IF NOT EXISTS profiles ADD COLUMN IF NOT EXISTS searchVector tsvector")
+        exec("ALTER TABLE IF NOT EXISTS users ADD COLUMN IF NOT EXISTS searchVector tsvector")
+        exec("ALTER TABLE IF NOT EXISTS anime_collections ADD COLUMN IF NOT EXISTS searchVector tsvector")
+        exec("ALTER TABLE IF NOT EXISTS anime_collection_characters ADD COLUMN IF NOT EXISTS searchVector tsvector")
+
         // GIN індекси на searchVector колонках
         exec("CREATE INDEX IF NOT EXISTS idx_posts_search_vector ON posts USING GIN (searchVector)")
         exec("CREATE INDEX IF NOT EXISTS idx_groups_search_vector ON groups USING GIN (searchVector)")
@@ -256,43 +265,11 @@ private fun initDatabase(config: AppConfig) {
         exec("CREATE INDEX IF NOT EXISTS idx_anime_coll_title_trgm ON anime_collections USING GIN (anime_title gin_trgm_ops)")
         exec("CREATE INDEX IF NOT EXISTS idx_anime_chars_name_trgm ON anime_collection_characters USING GIN (name gin_trgm_ops)")
 
-        // Функція оновлення tsvector для постів
-        exec("""
-            CREATE OR REPLACE FUNCTION update_posts_search_vector()
-            RETURNS trigger AS \$\$
-            BEGIN
-                NEW.searchVector :=
-                    setweight(to_tsvector('ukrainian', coalesce(NEW.text, '')), 'A') ||
-                    setweight(to_tsvector('russian', coalesce(NEW.text, '')), 'B') ||
-                    setweight(to_tsvector('english', coalesce(NEW.text, '')), 'C');
-                RETURN NEW;
-            END
-            \$\$ LANGUAGE plpgsql;
-        """)
-        exec("DROP TRIGGER IF EXISTS trigger_update_posts_search_vector ON posts")
-        exec("CREATE TRIGGER trigger_update_posts_search_vector BEFORE INSERT OR UPDATE ON posts FOR EACH ROW EXECUTE FUNCTION update_posts_search_vector()")
+        // Функція оновлення tsvector для постів (створюється пізніше, коли база даних стабільна)
 
-        // Групи
-        exec("""
-            CREATE OR REPLACE FUNCTION update_groups_search_vector()
-            RETURNS trigger AS \$\$
-            BEGIN
-                NEW.searchVector :=
-                    setweight(to_tsvector('ukrainian', coalesce(NEW.name, '')), 'A') ||
-                    setweight(to_tsvector('russian', coalesce(NEW.name, '')), 'B') ||
-                    setweight(to_tsvector('english', coalesce(NEW.name, '')), 'C') ||
-                    setweight(to_tsvector('ukrainian', coalesce(NEW.description, '')), 'D') ||
-                    setweight(to_tsvector('russian', coalesce(NEW.description, '')), 'D') ||
-                    setweight(to_tsvector('english', coalesce(NEW.description, '')), 'D');
-                RETURN NEW;
-            END
-            \$\$ LANGUAGE plpgsql;
-        """)
-        exec("DROP TRIGGER IF EXISTS trigger_update_groups_search_vector ON groups")
-        exec("CREATE TRIGGER trigger_update_groups_search_vector BEFORE INSERT OR UPDATE ON groups FOR EACH ROW EXECUTE FUNCTION update_groups_search_vector()")
+// Групи
 
-        // Рілси
-        exec("""
+// Рілси
             CREATE OR REPLACE FUNCTION update_reels_search_vector()
             RETURNS trigger AS \$\$
             BEGIN
