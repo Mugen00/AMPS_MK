@@ -192,6 +192,7 @@ fun GroupsScreen(
                 // 1.6.4: VK-стиль — обкладинка/редагування, кружки, реакції.
                 onEditGroup = viewModel::updateGroup,
                 onUploadCover = viewModel::uploadCover,
+                onUploadAvatar = viewModel::uploadAvatar,
                 onRecordRound = { recordRoundVideo() },
                 onReact = viewModel::reactToMessage,
                 onDeleteMessage = viewModel::deleteMessage,
@@ -486,9 +487,10 @@ private fun GroupDetailView(
     onChatDraft: (String) -> Unit,
     onSendChat: () -> Unit,
     onSendChatPhoto: (ByteArray) -> Unit,
-    // 1.6.4: VK-стиль спільноти — обкладинка, редагування, кружки, реакції.
+    // 1.6.4: VK-стиль спільноти — обкладинка, аватарка, редагування, кружки, реакції.
     onEditGroup: (String, String) -> Unit = { _, _ -> },
     onUploadCover: (ByteArray) -> Unit = {},
+    onUploadAvatar: (ByteArray) -> Unit = {},
     onRecordRound: () -> Unit = {},
     onReact: (Int, String) -> Unit = { _, _ -> },
     onDeleteMessage: (Int) -> Unit = {},
@@ -519,6 +521,14 @@ private fun GroupDetailView(
             readBytesCapped(context, uri, 10L * 1024 * 1024)
                 ?.let { dev.amps.app.core.ImageCompress.toWebp(it, maxDim = 1280, quality = 80) }
                 ?.let(onUploadCover)
+        }
+    }
+    // 1.6.8: аватарка спільноти — стискається у webp (256px досить для круглої іконки).
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            readBytesCapped(context, uri, 10L * 1024 * 1024)
+                ?.let { dev.amps.app.core.ImageCompress.toWebp(it, maxDim = 256, quality = 80) }
+                ?.let(onUploadAvatar)
         }
     }
     // 1.6.4: діалог редагування спільноти (назва + опис).
@@ -577,6 +587,13 @@ private fun GroupDetailView(
                             onClick = {
                                 adminMenu = false
                                 coverPicker.launch(arrayOf("image/*"))
+                            },
+                        )
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text("👤 " + t("Аватарка")) },
+                            onClick = {
+                                adminMenu = false
+                                avatarPicker.launch(arrayOf("image/*"))
                             },
                         )
                         androidx.compose.material3.DropdownMenuItem(

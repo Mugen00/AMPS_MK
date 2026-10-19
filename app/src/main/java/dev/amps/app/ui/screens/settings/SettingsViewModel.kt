@@ -19,7 +19,6 @@ data class SettingsUiState(
     /** 1.1.3: ключ Gemini; порожній — AI-аналіз фото недоступний. */
     val geminiApiKey: String = "",
     /** 1.2.0: Google Web Client ID; порожній — кнопка Google захована. */
-    /** 1.2.0: Google Web Client ID; порожній — кнопка Google захована. */
     val googleWebClientId: String = "",
     /** 1.2.3: приховувати 18+ у Frame Wiki. */
     val hideNsfw: Boolean = true,

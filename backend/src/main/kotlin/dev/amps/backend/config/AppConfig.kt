@@ -77,8 +77,8 @@ class AppConfig(
     companion object {
         const val ISSUER = "amps-backend"
 
-        /** Обмеження розміру вкладень: фото 10 МБ, відео 50 МБ. */
-        const val MAX_PHOTO_BYTES = 10L * 1024 * 1024
+        /** Обмеження розміру вкладень: фото 20 МБ (для 1080p), відео 50 МБ. */
+        const val MAX_PHOTO_BYTES = 20L * 1024 * 1024
         const val MAX_VIDEO_BYTES = 50L * 1024 * 1024
 
         private fun env(name: String): String? =

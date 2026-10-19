@@ -478,6 +478,16 @@ class GroupsViewModel(
         }
     }
 
+    /** Аватарка спільноти (тільки власник) — webp стискається заздалегідь. */
+    fun uploadAvatar(bytes: ByteArray) {
+        val gid = _state.value.selected?.group?.id ?: return
+        viewModelScope.launch {
+            val result = backendSession.authedCall { header -> backendApi.uploadGroupAvatar(header, gid, bytes) }
+            if (result is ApiResult.Success) open(gid)
+            else _state.value = _state.value.copy(error = (result as? ApiResult.Failure)?.error)
+        }
+    }
+
     /** Публікація поста в групу (тільки учасникам, +20 XP). */
     fun publishInGroup() {
         val s = _state.value

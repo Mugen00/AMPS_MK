@@ -652,7 +652,7 @@ internal suspend fun ApplicationCall.receiveUpload(): Upload? {
         tooLarge -> {
             respond(
                 HttpStatusCode.PayloadTooLarge,
-                ApiError(error = "Аватар більший за 10 МБ", errorCode = "TOO_LARGE"),
+                ApiError(error = "Аватар більший за 20 МБ", errorCode = "TOO_LARGE"),
             )
             return null
         }
@@ -820,7 +820,7 @@ private suspend fun ApplicationCall.receiveStory(media: MediaStorage): StoryUplo
         tooLarge -> {
             respond(
                 HttpStatusCode.PayloadTooLarge,
-                ApiError(error = "Сторіс більша за дозволений ліміт (фото 10 МБ, відео 50 МБ)", errorCode = "TOO_LARGE"),
+                ApiError(error = "Сторіс більша за дозволений ліміт (фото 20 МБ, відео 50 МБ)", errorCode = "TOO_LARGE"),
             )
             return null
         }

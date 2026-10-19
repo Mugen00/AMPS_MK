@@ -55,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -73,6 +74,7 @@ import dev.amps.app.core.t
  * з аватаром і статистикою, сітка власних постів мініатюрами, полиця
  * улюблених аніме (пошук з AniList) і улюблені жанри; редагування імені
  * та біо — у діалозі. Кнопка «Оновити» — те саме, що свайп зверху.
+ * 1.6.8: повноекранний перегляд аватара при кліку.
  */
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
@@ -90,6 +92,9 @@ fun ProfileScreen(
     var showAnimeSearch by remember { mutableStateOf(false) }
     // 1.6.2: діалог лідерборду рівнів.
     var showLeaderboard by remember { mutableStateOf(false) }
+    // 1.6.8: повноекранний перегляд аватара.
+    var showAvatarViewer by remember { mutableStateOf(false) }
+    var avatarViewerUrl by remember { mutableStateOf<String?>(null) }
 
     val avatarPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -144,17 +149,38 @@ fun ProfileScreen(
                 Box(contentAlignment = Alignment.BottomEnd) {
                     val path = state.avatarPath
                     if (path != null) {
-                        AsyncImage(
-                            model = if (path.startsWith("http")) path else baseUrl.trimEnd('/') + path,
-                            contentDescription = "Аватар",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(84.dp)
-                                .clip(CircleShape)
-                                .clickable {
-                                    avatarPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp"))
-                                },
-                        )
+                        val avatarUrl = if (path.startsWith("http")) path else baseUrl.trimEnd('/') + path
+                        Box(contentAlignment = Alignment.BottomEnd) {
+                            AsyncImage(
+                                model = avatarUrl,
+                                contentDescription = "Аватар",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(84.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        avatarViewerUrl = avatarUrl
+                                        showAvatarViewer = true
+                                    },
+                            )
+                            // Кнопка зміни аватара (перекриває правою нижче).
+                            IconButton(
+                                onClick = { avatarPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp")) },
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .padding(4.dp)
+                                    .graphicsLayer { translationX = 4f; translationY = 4f },
+                            ) {
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = t("Змінити аватар"),
+                                    tint = Color.White,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.6f), CircleShape),
+                                )
+                            }
+                        }
                     } else {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -451,6 +477,13 @@ fun ProfileScreen(
             },
         )
     }
+
+    // 1.6.8: повноекранний перегляд аватара.
+    AvatarViewerDialog(
+        show = showAvatarViewer,
+        url = avatarViewerUrl,
+        onDismiss = { showAvatarViewer = false },
+    )
 }
 
 /** Лічильник у стилі Instagram: число жирним, підпис дрібним снизу. */
@@ -744,6 +777,42 @@ private fun AnimeSearchDialog(
             TextButton(onClick = onDismiss) { Text(t("Закрити")) }
         },
     )
+}
+
+// ===== 1.6.8: повноекранний перегляд аватара =====
+@Composable
+private fun AvatarViewerDialog(
+    show: Boolean,
+    url: String?,
+    onDismiss: () -> Unit,
+) {
+    if (show && url != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { },
+            text = {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .padding(16.dp),
+                ) {
+                    AsyncImage(
+                        model = url,
+                        contentDescription = "Аватар",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(16.dp)),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismiss) { Text("Закрити") }
+            },
+        )
+    }
 }
 
 /** Читає вміст документа з обмеженням розміру; понад ліміт — null. */
