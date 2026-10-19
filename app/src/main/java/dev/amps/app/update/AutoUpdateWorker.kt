@@ -151,7 +151,7 @@ fun maybeAutoInstallPendingUpdate(activity: Activity) {
             info.versionCode.toLong()
         }
     }.getOrNull() ?: 0L
-    if (pending.buildCode in 1..installed) {
+    if (pending.buildCode == 0L || pending.buildCode in 1..installed) {
         AutoUpdatePending.clear(activity)
         return
     }
