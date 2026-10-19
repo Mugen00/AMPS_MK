@@ -49,8 +49,13 @@ class AutoUpdateWorker(
                 val release = check.release
                 val already = AutoUpdatePending.read(applicationContext)
                 val apkExists = already?.let { File(it.apkPath).isFile } == true
-                if (already?.tag == release.tag && apkExists) {
-                    return Result.success() // цей патч уже завантажений
+                // Порівнюємо і tag, і buildCode: патчі мають однаковий tag (v1.6.8),
+                // але різний build-code. Якщо buildCode старіший — качаємо новий.
+                val alreadyUpToDate = already != null && apkExists &&
+                    already.tag == release.tag &&
+                    (release.buildCode == null || already.buildCode >= (release.buildCode ?: 0L))
+                if (alreadyUpToDate) {
+                    return Result.success() // цей патч уже завантажений або новіший
                 }
                 val path = UpdateDownloader(applicationContext).download(release)
                 AutoUpdatePending.write(
@@ -151,7 +156,12 @@ fun maybeAutoInstallPendingUpdate(activity: Activity) {
             info.versionCode.toLong()
         }
     }.getOrNull() ?: 0L
-    if (pending.buildCode == 0L || pending.buildCode in 1..installed) {
+
+    // 1.6.8 (v53): очищуємо застарілі pending якщо змінився тег релізу
+    // (наприклад v1.6.8 -> v1.6.9). Поточний тег з versionName.
+    val checker = UpdateChecker(activity)
+    val currentTag = "v" + checker.currentVersion()
+    if (pending.buildCode == 0L || pending.buildCode in 1..installed || pending.tag != currentTag) {
         AutoUpdatePending.clear(activity)
         return
     }

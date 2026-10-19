@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import android.os.Build
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.amps.app.core.ThemeMode
 import dev.amps.app.core.t
@@ -60,7 +61,15 @@ fun SettingsScreen(
     val context = LocalContext.current
     val installedVersion = remember {
         runCatching {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            val vName = info.versionName
+            val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                info.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode.toLong()
+            }
+            "${vName} ($vCode)"
         }.getOrNull().orEmpty().ifBlank { "—" }
     }
 
