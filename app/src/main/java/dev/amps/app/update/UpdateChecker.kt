@@ -20,8 +20,19 @@ internal const val UPDATE_USER_AGENT = "AMPS/1.0 (android)"
 /** The documented media type of the releases API. */
 internal const val GITHUB_JSON_ACCEPT = "application/vnd.github+json"
 
+/** Інформація про версію з бекенду */
+@Serializable
+data class BackendVersionInfo(
+    val status: String,
+    val version: String,
+    val versionCode: Long,
+    val storage: String
+)
+
+internal const val RAILWAY_VERSION_URL = "https://ampsmk-production.up.railway.app/version"
+
 /** Public repository, so no token is needed. */
-internal const val LATEST_RELEASE_URL = "https://api.github.com/repos/Mugen00/AMPS_MK/releases/latest"
+internal const val RAILWAY_VERSION_URL\n        LATEST_RELEASE_URL = "https://api.github.com/repos/Mugen00/AMPS_MK/releases/latest"
 
 private const val CONNECT_TIMEOUT_SECONDS = 15L
 private const val READ_TIMEOUT_SECONDS = 20L
@@ -126,7 +137,7 @@ class UpdateChecker(
     /** One GET, mapped onto the three documented failures plus everything else. */
     private fun readLatestRelease(): GitHubReleaseDto {
         val request = Request.Builder()
-            .url(LATEST_RELEASE_URL)
+            .url(RAILWAY_VERSION_URL\n        LATEST_RELEASE_URL)
             .header("Accept", GITHUB_JSON_ACCEPT)
             .header("User-Agent", UPDATE_USER_AGENT)
             .get()
@@ -157,12 +168,74 @@ class UpdateChecker(
 
     /** OkHttp reports offline and timeouts in English; the screen speaks Russian. */
     private fun IOException.readableNetworkMessage(): String = when {
-        this is UnknownHostException -> "Нет связи с интернетом: не найден api.github.com"
-        this is SocketTimeoutException -> "GitHub не ответил вовремя — попробуйте позже"
-        this is InterruptedIOException -> "Загрузка прервана — попробуйте ещё раз"
+        this is UnknownHostException -> "Нет связи с інтернетом: не знайдено api.github.com"
+        this is SocketTimeoutException -> "GitHub не відповів вовремя — спробуйте пізніше"
+        this is InterruptedIOException -> "Завантаження перервано — спробуйте ще раз"
         message?.contains("Failed to connect", ignoreCase = true) == true ->
-            "Нет связи с интернетом — проверьте подключение"
+            "Нет связи з інтернетом — перевірте підключення"
         // Russian messages thrown above land here and stay as they are.
         else -> readableMessage()
     }
 }
+
+/** Інформація про версію з бекенду */
+@Serializable
+data class BackendVersionInfo(
+    val status: String,
+    val version: String,
+    val versionCode: Long,
+    val storage: String
+)
+
+internal const val RAILWAY_VERSION_URL = "https://ampsmk-production.up.railway.app/version"
+
+/** Перевіряє версію з Railway бекенду. */
+private suspend fun checkBackendVersion(): UpdateCheck = withContext(Dispatchers.IO) {
+    try {
+        val client = updateHttpClient()
+        val request = Request.Builder()
+            .url(RAILWAY_VERSION_URL)
+            .header("User-Agent", UPDATE_USER_AGENT)
+            .get()
+            .build()
+        val response = client.newCall(request).execute()
+        
+        if (!response.isSuccessful) {
+            return@withContext UpdateCheck.UpToDate(current = currentVersion(), latest = "backend_error")
+        }
+        
+        val body = response.body?.string()
+        if (body.isNullOrEmpty()) {
+            return@withContext UpdateCheck.UpToDate(current = currentVersion(), latest = "backend_empty")
+        }
+        
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val versionInfo = json.decodeFromString<BackendVersionInfo>(body)
+        
+        val backendVersionCode = versionInfo.versionCode ?: 0L
+        val installedBuild = installedVersionCode()
+        val currentRaw = currentVersion()
+        val current = parseVersion(currentRaw) ?: AppVersion(0, 0, 0)
+        
+        // Якщо версія бекенду НОВІША — пропонуємо оновлення
+        if (backendVersionCode > installedBuild) {
+            val backendVersionLabel = versionInfo.version ?: "1.6.8"
+            return@withContext UpdateCheck.Available(
+                UpdateCheck.Available(
+                    tag = "railway_${backendVersionLabel}",
+                    versionLabel = backendVersionLabel,
+                    buildCode = backendVersionCode,
+                    asset = null
+                )
+            )
+        }
+        
+        // Інше — версія актуальна
+        return@withContext UpdateCheck.UpToDate(current = currentRaw, latest = "backend_${backendVersionLabel ?: "unknown"}")
+    } catch (e: Exception) {
+        // Якщо бекенд недоступний — мовчимо та вважаємо, що версія актуальна
+        return@withContext UpdateCheck.UpToDate(current = currentVersion(), latest = "backend_error")
+    }
+}
+"
+
