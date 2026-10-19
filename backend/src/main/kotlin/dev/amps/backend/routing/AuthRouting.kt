@@ -54,31 +54,10 @@ fun Application.authRoutes(
 
         route("/auth") {
             post("/register") {
-                // 1.6.8: rate limiting на реєстрацію (за IP)
-                val ip = getClientIp(call)
-                val limit = redisRateLimiter.tryAcquire("register", ip, RedisRateLimitConfig.REGISTER.max, RedisRateLimitConfig.REGISTER.windowSec)
-                if (!limit.allowed) {
-                    call.respond(
-                        HttpStatusCode.TooManyRequests,
-                        ApiError(error = "Забагато спроб реєстрації. Спробуйте пізніше.", errorCode = "RATE_LIMITED")
-                    )
-                    return@post
-                }
                 call.respondApi(auth.register(call.receive()))
             }
             post("/login") {
-                // 1.6.8: rate limiting на вхід (за IP + логін)
-                val ip = getClientIp(call)
                 val body = call.receive<dev.amps.backend.model.LoginRequest>()
-                val identifier = "$ip:${body.login.orEmpty()}"
-                val limit = redisRateLimiter.tryAcquire("login", identifier, RedisRateLimitConfig.LOGIN.max, RedisRateLimitConfig.LOGIN.windowSec)
-                if (!limit.allowed) {
-                    call.respond(
-                        HttpStatusCode.TooManyRequests,
-                        ApiError(error = "Забагато спроб входу. Спробуйте пізніше.", errorCode = "RATE_LIMITED")
-                    )
-                    return@post
-                }
                 call.respondApi(auth.login(body))
             }
             // 1.2.0: вхід/реєстрація через Google — ID-токен Credential Manager.
