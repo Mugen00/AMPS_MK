@@ -163,9 +163,10 @@ sealed interface UpdateCheck {
     data class Available(val release: UpdateRelease) : UpdateCheck
 }
 
-/** `-release.apk` first, then the first plain `.apk`, then null. */
+/** `app-release.apk` first (our standard name), then `-release.apk`, then plain `.apk`. */
 internal fun GitHubReleaseDto.pickApkAsset(): GitHubAssetDto? =
-    assets.firstOrNull { it.name.endsWith(RELEASE_APK_SUFFIX, ignoreCase = true) }
+    assets.firstOrNull { it.name == "app-release.apk" }
+        ?: assets.firstOrNull { it.name.endsWith(RELEASE_APK_SUFFIX, ignoreCase = true) }
         ?: assets.firstOrNull { it.name.endsWith(APK_SUFFIX, ignoreCase = true) }
 
 /**
