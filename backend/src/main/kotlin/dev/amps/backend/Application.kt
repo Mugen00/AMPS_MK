@@ -78,49 +78,7 @@ import org.slf4j.LoggerFactory
  *
  * Обов'язкові змінні: DATABASE_URL (Railway PostgreSQL), JWT_SECRET.
  * Без них сервер стартує з ясно сформульованою відмовою у журналі —
- * це краще, ніж мовitchie працювати без авторизації.
- */
-fun versionRoutes(
-    config: AppConfig,
-    authService: AuthService,
-    twoFactorService: TwoFactorService,
-    syncService: SyncService,
-    media: MediaStorage,
-    redisRateLimiter: RedisRateLimiter,
-    sessionBlacklist: SessionBlacklist,
-) {
-    // Додаємо Authentication, щоб endpoint був захищений (опціонально)
-    install(Authentication) {
-        jwt("auth-jwt") {
-            verifier(
-                JWT.require(Algorithm.HMAC256(config.jwtSecret))
-                    .withIssuer(AppConfig.ISSUER)
-                    .build()
-            )
-            validate { JWTPrincipal(it.payload) }
-        }
-    }
-
-    // endpoint версії для Android-apponу
-    get("/version") {
-        call.json(
-            mapOf(
-                "status" to "ok",
-                "version" to "1.6.8",
-                "versionCode" to 48,
-                "storage" to "volume"
-            )
-        )
-    }
-}
-
-/**
- * 1.1.0: серверна частина AMPS — Ktor 3 + PostgreSQL, розгортання на
- * Railway через backend/Dockerfile.
- *
- * Обов'язкові змінні: DATABASE_URL (Railway PostgreSQL), JWT_SECRET.
- * Без них сервер стартує з ясно сформульованою відмовою у журналі —
- * це краще, ніж мовitchie працювати без авторизації.
+ * це краще, ніж мовчки працювати без авторизації.
  */
 fun main() {
     val config = AppConfig()
@@ -386,8 +344,6 @@ fun Application.module(
         feedService, profileService, media, groupService, chatService, reelService, followService,
         blockService,
     )
-    // 1.6.8: роут для перевірки версії додатку
-    versionRoutes(config, authService, twoFactorService, syncService, media, redisRateLimiter, sessionBlacklist)
     // 1.6.8: WebSocket routes
     wsRoutes(config, chatService, presenceService, wsPubSub, wsSessionManager, wsScope)
 }
