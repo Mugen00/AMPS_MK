@@ -80,6 +80,9 @@ import dev.amps.app.ui.screens.settings.SettingsScreen
 import dev.amps.app.ui.screens.settings.SettingsViewModel
 import dev.amps.app.ui.screens.wiki.WikiScreen
 import dev.amps.app.update.UpdateUiState
+import dev.amps.app.music.ui.MusicScreen
+import dev.amps.app.music.data.remote.FreeMusicApi
+import dev.amps.app.music.data.repository.MusicRepository
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -598,9 +601,10 @@ private fun AmpsRoot(container: AppContainer, initialSharedImage: Uri?) {
                 )
             }
             composable(Routes.MUSIC) {
-                MusicSearchScreen(
-                    viewModel = musicViewModel,
-                    onOpenTrack = { navController.navigate(Routes.MUSIC_TRACK) },
+                MusicScreen(
+                    repository = container.newMusicRepository,
+                    freeMusicApi = container.freeMusicApi,
+                    onBack = { navController.popBackStack() },
                 )
             }
             composable(Routes.MUSIC_TRACK) {

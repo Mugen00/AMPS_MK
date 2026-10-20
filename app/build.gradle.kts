@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    id("org.jetbrains.kotlin.kapt")
 }
 /**
  * Модель аниме-тегера качается при сборке, а не хранится в git.
@@ -78,8 +79,8 @@ android {
 // всё приложение. Теперь Android убьёт только процесс `:tagger`.
 // Также largeHeap, проверка свободной памяти до загрузки модели и
 // Throwable вместо Exception в разборе кадра.
-        versionCode = 53
-        versionName = "1.6.8"
+        versionCode = 54
+        versionName = "1.6.9"
         resourceConfigurations += listOf("uk", "ru", "en")
 
         ndk {
@@ -174,7 +175,26 @@ dependencies {
     // 1.2.0 (патч 23): анімовані GIF у постах і сторіс — декодер для Coil.
     implementation("io.coil-kt:coil-gif:2.7.0")
 
-    // 1.2.0 (патч 23): вбудований відеоплеєр (як в Instagram) — посты
+    // 1.6.9: Музика — Media3 / ExoPlayer (оновлено до 1.5.1)
+    val media3Version = "1.5.1"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-session:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+    implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
+    implementation("androidx.media3:media3-datasource-cronet:$media3Version")
+
+    // 1.6.9: Room Database для музичної бібліотеки (використовуємо kapt замість KSP)
+    val roomVersion = "2.6.1"
+    implementation("androidx.room:room-runtime:$roomVersion")
+    implementation("androidx.room:room-ktx:$roomVersion")
+    kapt("androidx.room:room-compiler:$roomVersion")
+
+    // 1.6.9: Ktor Client для безкоштовних музичних API (Jamendo, FMA, Archive.org)
+    implementation("io.ktor:ktor-client-okhttp:3.0.3")
+    implementation("io.ktor:ktor-client-content-negotiation:3.0.3")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.3")
+
+    // 1.2.0: вбудований відеоплеєр (як в Instagram) — посты
     // і сторіс грають прямо в стрічці, без системного плеєра.
     implementation("androidx.media3:media3-exoplayer:1.5.0")
     implementation("androidx.media3:media3-ui:1.5.0")

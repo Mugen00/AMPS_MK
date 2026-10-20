@@ -23,6 +23,11 @@ import dev.amps.app.data.repo.MusicRepository
 import dev.amps.app.imaging.AnimeTagger
 import dev.amps.app.imaging.ContentAnalyzer
 import dev.amps.app.media.MediaStoreImporter
+import dev.amps.app.music.data.local.MusicDatabase
+import dev.amps.app.music.data.repository.MusicRepository as NewMusicRepositoryImpl
+import dev.amps.app.music.data.remote.FreeMusicApi
+import dev.amps.app.music.player.ExoPlayerProvider
+import dev.amps.app.music.player.AmpsMediaSessionService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -237,6 +242,24 @@ class AppContainer(private val context: Context) {
             danbooru = danbooru,
         )
     }
+
+    // ===== 1.6.9: Нова музична архітектура (Room + ExoPlayer + SAF) =====
+
+    /** Room database для музичної бібліотеки. */
+    val musicDatabase: MusicDatabase by lazy { MusicDatabase.getInstance(context) }
+
+    /** Нова репозиторій музики (Room-based). */
+    val newMusicRepository: NewMusicRepositoryImpl by lazy { NewMusicRepositoryImpl(context) }
+
+    /** Безкоштовні музичні API (Jamendo, FMA, Archive.org, Openverse). */
+    val freeMusicApi: FreeMusicApi by lazy { FreeMusicApi() }
+
+    /** ExoPlayer singleton. */
+    val exoPlayerProvider: ExoPlayerProvider by lazy { ExoPlayerProvider }
+
+    /** MediaSessionService для фонового відтворення. */
+    val mediaSessionService: AmpsMediaSessionService by lazy { AmpsMediaSessionService() }
+
     val musicRepository: MusicRepository by lazy {
         MusicRepository(
             itunes = itunes,
